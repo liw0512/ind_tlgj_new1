@@ -22,7 +22,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
-from system.model.config.SysConfig import config
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
 import logging
