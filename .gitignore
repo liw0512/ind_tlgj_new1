@@ -1,0 +1,36 @@
+/venv/
+/.idea/
+/system/map_control/saved_model/baseflow_learning.pkl
+/test.spec
+
+# Python/cache artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OS/editor artifacts
+.DS_Store
+._*
+.conda/
+
+# Runtime logs
+logs/
+system/logs/
+**/logs/
+*.log
+
+# Large generated data and model artifacts
+*.bak
+*.bak_*
+*.h5
+*.pkl
+files/*.csv
+files/*.txt
+files/*.png
+system/model/map_control/cluster/models/
+system/model/map_control/q_learning/results/
+system/model/map_control/PH_predict/models/
+system/model/map_control/PH_predict/tmp/
+system/model/map_control/model_csv/*.csv
+system/model/map_control/train_test_saved/*.csv
+system/model/map_control/saved_model/

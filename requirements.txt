@@ -1,0 +1,30 @@
+# Runtime requirements for the Feixian double-tower optimization system.
+# Verified against the local Anaconda env: D:\anaconda\envs\py3921
+
+# GUI
+PyQt5==5.15.4
+PyQt5-Qt5==5.15.2
+
+# Database
+SQLAlchemy==1.4.22
+psycopg2==2.9.10
+
+# Data processing and plotting
+numpy==1.26.4
+pandas==2.3.3
+matplotlib==3.4.3
+Pillow==8.4.0
+
+# Machine learning and model persistence
+scikit-learn==1.3.1
+scipy==1.10.1
+xgboost==2.1.4
+joblib==1.3.2
+
+# Modbus / serial communication
+pymodbus==3.8.6
+pyserial==3.5
+
+# Utilities used by training and runtime scripts
+tqdm==4.62.3
+colorama==0.4.6

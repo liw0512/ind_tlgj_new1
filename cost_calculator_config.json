@@ -1,0 +1,155 @@
+{
+    "electricity": {
+        "U": 1,
+        "cos_phi": 1,
+        "mu": 1,
+        "P_elec": 1
+    },
+    "limestone": {
+        "K": 1,
+        "M": 1,
+        "P_stone": 1
+    },
+    "pollution": {
+        "F": 0.95,
+        "P_pollute": 1,
+        "eta_gypsum": 0.9,
+        "P_gypsum": 1,
+        "C_clean_dust": 0.1
+    },
+    "water": {
+        "S_ye": 0,
+        "P_shui": 0
+    },
+    "equipment_config": {
+        "吸收塔浆液循环泵": {
+            "prefix": "xstjyxhb",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "CDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "DDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                }
+            ]
+        },
+        "APT塔浆液循环泵": {
+            "prefix": "aptjyxhb",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "CDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "DDL",
+                    "rated_power": 315,
+                    "efficiency": 0.9
+                }
+            ]
+        },
+        "搅拌器": {
+            "prefix": "jbq",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 55,
+                    "efficiency": 0.85
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 55,
+                    "efficiency": 0.85
+                },
+                {
+                    "suffix": "CDL",
+                    "rated_power": 55,
+                    "efficiency": 0.85
+                },
+                {
+                    "suffix": "DDL",
+                    "rated_power": 55,
+                    "efficiency": 0.85
+                }
+            ]
+        },
+        "氧化风机": {
+            "prefix": "yhfj",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 200,
+                    "efficiency": 0.9
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 200,
+                    "efficiency": 0.9
+                }
+            ]
+        },
+        "石膏排出泵": {
+            "prefix": "sgpcb",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 45,
+                    "efficiency": 0.85
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 45,
+                    "efficiency": 0.85
+                }
+            ]
+        },
+        "供浆泵": {
+            "prefix": "gjb",
+            "devices": [
+                {
+                    "suffix": "ADL",
+                    "rated_power": 75,
+                    "efficiency": 0.85
+                },
+                {
+                    "suffix": "BDL",
+                    "rated_power": 75,
+                    "efficiency": 0.85
+                }
+            ]
+        }
+    },
+    "current_threshold": 20,
+    "output_mapping": {
+        "xstjyxhb": "xstjyxhb_zdh",
+        "aptjyxhb": "aptjyxhb_zdh",
+        "jbq": "jbq_zdh",
+        "yhfj": "yhfj_zdh",
+        "sgpcb": "sgpcb_zdh",
+        "gjb": "gjb_zdh"
+    }
+}

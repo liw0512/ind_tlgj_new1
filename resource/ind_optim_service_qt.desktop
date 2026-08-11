@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Exec=/home/pgrm/ind_optim_service_qt/startup.sh
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=ind_optim_service_qt
+Comment=ind_optim_service_qt
