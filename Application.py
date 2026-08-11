@@ -14,7 +14,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtWidgets import QApplication
 from collections import deque
-from system.data_opts.DataClientMain import DataClientMain
+from system.data_opts.SlurryDataClientMain import DataClientMain
 from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.ModbusRTUSlaveClient import ModbusRTUSlaveClient
 from system.data_opts.client_helper.ModbusTCPSlaveClient import ModbusTCPSlaveClient
