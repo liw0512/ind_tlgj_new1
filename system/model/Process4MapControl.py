@@ -22,7 +22,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
+from system.model.config.SysConfig import config
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
+from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
 import logging
 import shutil
 from system.model.map_control.MapControPre import MapControPre  #推荐泵以及PH建议
@@ -178,6 +180,10 @@ class ProcessForMapConsole:
 
     def __init__(self,GLOBAL_DATA):
         self.process_config = PROCESS4MAP_CONFIG
+        self.slurry_core_config = dict(SLURRY_CORE_BRIDGE_CONFIG)
+        self._slurry_pipeline = None
+        self._slurry_pipeline_error = None
+        self._slurry_pipeline_lock = threading.RLock()
         # # 测试标值start
         # self.system_state = self.SystemState.NORMAL_OPERATION  # 直接进入正常运行阶段
         # self.model_training_completed = True  # 标记模型已训练完成
@@ -254,6 +260,9 @@ class ProcessForMapConsole:
         self.data_queue = Queue(maxsize=int(self.process_config.runtime.data_queue_size))    # 原始数据队列，最多缓60帧
         self.db_queue = Queue(maxsize=int(self.process_config.runtime.db_queue_size))     # 待写库结果队列
 
+        # 若已有第一/第二模块同版本 active_version.json，则启动时直接恢复在线状态。
+        self._restore_active_runtime_if_available()
+
         # 启动状态检查线程（每5min检查一次）
         self.state_check_thread = threading.Thread(target=self.check_system_state)
         self.state_check_thread.start()
@@ -266,7 +275,7 @@ class ProcessForMapConsole:
         # db_writer_loop 串行从 db_queue 消费，保证写库顺序
         self.db_writer_thread = threading.Thread(target=self._db_writer_loop, daemon=True)
         self.db_writer_thread.start()
-        # 30秒快照调度：基于墙钟从最新处理后快照触发写库与模型推理
+        # 模型判定周期由 runtime.snapshot_interval_seconds 配置，默认30秒。
         self.snapshot_scheduler_thread = threading.Thread(target=self._snapshot_scheduler_loop, daemon=True)
         self.snapshot_scheduler_thread.start()
         self.maintenance_thread = threading.Thread(target=self._maintenance_loop, daemon=True)
@@ -803,6 +812,74 @@ class ProcessForMapConsole:
             return os.path.normpath(expanded)
         return os.path.normpath(os.path.join(self._project_root(), expanded))
 
+    def _core_path(self, key):
+        return os.path.normpath(str(self.slurry_core_config[key]))
+
+    def _active_version_file(self):
+        return Path(self._core_path("active_version_file"))
+
+    @staticmethod
+    def _version_number(version):
+        text = str(version).strip()
+        if text.lower().startswith("v") and text[1:].isdigit():
+            return int(text[1:])
+        raise ValueError("版本必须是 v### 格式: %r" % version)
+
+    def _next_version(self, version):
+        return "v%03d" % (self._version_number(version) + 1)
+
+    def _read_active_version(self):
+        path = self._active_version_file()
+        if not path.is_file():
+            raise FileNotFoundError("增量训练前未找到 active_version.json: %s" % path)
+        with path.open("r", encoding="utf-8") as stream:
+            pointer = json.load(stream)
+        version = str(
+            pointer.get("integrated_version") or pointer.get("policy_version") or ""
+        ).strip()
+        self._version_number(version)
+        return version
+
+    @staticmethod
+    def _parse_activation_time(value):
+        if value in (None, ""):
+            return None
+        try:
+            parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return parsed
+        except Exception:
+            return None
+
+    def _restore_active_runtime_if_available(self):
+        active_path = self._active_version_file()
+        if not active_path.is_file():
+            return False
+        try:
+            with active_path.open("r", encoding="utf-8") as stream:
+                pointer = json.load(stream)
+            version = str(
+                pointer.get("integrated_version") or pointer.get("policy_version") or ""
+            ).strip()
+            self._version_number(version)
+            if not self.reload_models():
+                raise RuntimeError(self._slurry_pipeline_error or "集成在线模型加载失败")
+            self.is_initial_training = False
+            self.model_training_completed = True
+            self.system_state = self.SystemState.NORMAL_OPERATION
+            activated = self._parse_activation_time(pointer.get("activated_at"))
+            self.last_training_time = activated or datetime.datetime.fromtimestamp(
+                active_path.stat().st_mtime
+            )
+            logging.info("检测到已激活同版本模型 %s，恢复 NORMAL_OPERATION", version)
+            return True
+        except Exception as exc:
+            logging.error("恢复 active_version.json 失败，继续原状态机: %s", exc)
+            self._slurry_pipeline = None
+            self._slurry_pipeline_error = str(exc)
+            return False
+
     def _training_mode_settings(self, mode):
         """返回初次/增量训练统一的数据源和数据量配置。"""
         cfg = self.process_config.training
@@ -1130,29 +1207,96 @@ class ProcessForMapConsole:
             traceback.print_exc()
             logging.error("方法产生了异常为insert_data 中的" + str(e))
 
+    def _integration_config(self):
+        import copy
+        from system.model.map_control.condition_model.condition_config import (
+            ONLINE_CONDITION_CLASSIFY_CONFIG,
+        )
+        bridge = copy.deepcopy(
+            ONLINE_CONDITION_CLASSIFY_CONFIG.get("slurry_policy_online", {})
+        )
+        bridge["enabled"] = True
+        bridge["config_spec"] = self._core_path("slurry_policy_config")
+        bridge["external_version_management"] = True
+        integrated = dict(bridge.get("integrated_version") or {})
+        integrated.update({
+            "enabled": True,
+            "active_version_file": self._core_path("active_version_file"),
+            "hot_reload_enabled": True,
+            "reload_check_interval_seconds": max(1.0, float(self.snapshot_interval)),
+            "verify_condition_snapshot_hash": True,
+            "require_atomic_pair_switch": True,
+            "reset_condition_stability_window": True,
+            "preserve_runtime_control_state": True,
+            "keep_current_version_on_failure": True,
+        })
+        bridge["integrated_version"] = integrated
+        return bridge
+
+    def _ensure_slurry_pipeline(self):
+        with self._slurry_pipeline_lock:
+            if self._slurry_pipeline is not None:
+                return True
+        return self.reload_models()
+
+    def _runtime_target(self, data, explicit_target):
+        if explicit_target not in (None, ""):
+            try:
+                return float(explicit_target)
+            except (TypeError, ValueError):
+                pass
+        column = str(self.slurry_core_config.get("target_column", "outlet_so2_target"))
+        value = data.get(column)
+        if value not in (None, ""):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                pass
+        return None
+
+    @staticmethod
+    def _safe_online_hold(data, error):
+        result = dict(data)
+        result.update({
+            "condition_valid": False,
+            "condition_stable": False,
+            "version_consistent": False,
+            "slurry_policy_decision_status": "BLOCKED",
+            "slurry_policy_control_mode": "BLOCKED",
+            "slurry_policy_action_id": "HOLD",
+            "slurry_policy_action_family": "HOLD",
+            "slurry_policy_action_direction": "HOLD",
+            "slurry_policy_action_magnitude": "HOLD",
+            "slurry_policy_recommended_valve_deltas": {},
+            "slurry_policy_projected_valve_openings": {},
+            "slurry_policy_reason_codes": [
+                "INTEGRATED_SLURRY_MODEL_UNAVAILABLE", error or "UNKNOWN"
+            ],
+        })
+        return result
+
     def insert_Mod(self, data, target_so2, store_to_db=True):
-        """
-        模型推理和结果处理
-        Args:
-            data: 输入数据
-            target_so2: 目标SO2值
-            store_to_db: 是否存储到数据库，默认True
-        说明：
-            推理结果使用局部变量，避免 self.result 在异步写库时被下一帧覆盖（线程安全）。
-            写库不再直接调 mod_pre_pool，而是将结果放入 db_queue，
-            由 _db_writer_loop 识别 _write_target='model_result' 后
-            通过独立的 model_result_pool 写入 t_model_result_ 表（每30秒一条）。
-        """
-        str_time = data["date"]
-        # 使用局部变量，避免多帧并发时 self.result 被覆盖
+        """模型推理和结果处理：使用新的 condition + slurry_policy 集成在线入口。"""
+        str_time = data.get("date", pd.Timestamp.now())
         if self.system_state == self.SystemState.NORMAL_OPERATION:
-            result = self.get_map_pre().map_console(row=data)
+            if self._ensure_slurry_pipeline():
+                try:
+                    result = dict(self._slurry_pipeline.process(
+                        dict(data),
+                        target=self._runtime_target(data, target_so2),
+                        execution_context={},
+                    ))
+                except Exception as exc:
+                    logging.error("供浆集成在线推理失败: %s", exc)
+                    traceback.print_exc()
+                    result = self._safe_online_hold(data, str(exc))
+            else:
+                result = self._safe_online_hold(data, self._slurry_pipeline_error)
         else:
-            result = {}  # 非正常运行阶段不推理
+            result = {}
+
         result["date"] = str_time
         result["model_seq"] = data.get("_snapshot_seq", -1)
-
-        # 标记写库目标：model_result -> _db_writer_loop 会调用 add_data_to_databases
         result["_write_target"] = self.process_config.persistence.model_write_target
         result["_is_valid"] = store_to_db
         if not store_to_db:
@@ -1162,14 +1306,19 @@ class ProcessForMapConsole:
             logging.debug("推理结果已标记写入 t_model_result_")
 
         if result:
-            # 取不含内部标记的副本用于发送，保持 self.result / send_data 干净
-            send_copy = {k: v for k, v in result.items() if not k.startswith('_')}
+            send_copy = {k: v for k, v in result.items() if not str(k).startswith('_')}
             self.send_data = send_copy
-            self.result = send_copy  # 保持 self.result 同步，供外部状态读取
+            self.result = send_copy
+            # 新核心完整输出先放到 GLOBAL_DATA；数据库/前端字段后续再单独适配。
+            self._publish_map_control(send_copy)
             self.send()
-            self.send_to_ws()
-            logging.info("返回的数据 result 为===》%s", str(send_copy))
-
+            logging.info(
+                "供浆模型结果: condition=%s, action=%s, magnitude=%s, version=%s",
+                send_copy.get("condition_label"),
+                send_copy.get("slurry_policy_action_family"),
+                send_copy.get("slurry_policy_action_magnitude"),
+                send_copy.get("integrated_active_version"),
+            )
         return result
 
     def check_incremental_training(self):
@@ -1459,13 +1608,14 @@ class ProcessForMapConsole:
         return self.engine.execute(sql, parem).fetchall()
 
     def clean_data(self, message):
+        """实时预处理：保留上游所有附加字段并传给新的在线核心。"""
         try:
             if not message:
                 logging.warning("没有有效数据")
                 return None
-            msg = message[0]
-            # 1. 解析字段
-            row_dict = {}
+            msg = dict(message[0])
+            # 先复制整帧，避免只按 self.titles 取值时把后续新增现场字段丢掉。
+            row_dict = dict(msg)
             if "date" in msg:
                 try:
                     row_dict["date"] = pd.to_datetime(msg["date"])
@@ -1477,12 +1627,14 @@ class ProcessForMapConsole:
             for col in self.titles:
                 if col == "date":
                     continue
-                row_dict[col] = 0.0
-                if col in msg:
-                    try:
-                        row_dict[col] = float(msg[col])
-                    except (ValueError, TypeError):
-                        pass
+                if col not in row_dict:
+                    row_dict[col] = 0.0
+                    continue
+                try:
+                    row_dict[col] = float(row_dict[col])
+                except (ValueError, TypeError):
+                    # 非数值字段不覆盖为0，保持上游原始值继续透传。
+                    pass
             # 透传校验码供 DataValidator 使用（不依赖 titles）
             try:
                 row_dict["jym"] = int(msg.get("jym", self.process_config.data_validation.default_jym))
@@ -1499,6 +1651,10 @@ class ProcessForMapConsole:
             except Exception as e:
                 logging.error(f"基础特征生成失败: {str(e)}")
                 realtime_data = filtered_data.copy()
+            # 再次补回未被预处理器认识的上游字段，保证后续添加字段无需修改这里。
+            for key, value in msg.items():
+                if key != "date":
+                    realtime_data.setdefault(key, value)
             # SO2处理
             # try:
             #     if "jyq_SO2" in realtime_data and "jyq_LL" in realtime_data:
@@ -1582,187 +1738,201 @@ class ProcessForMapConsole:
         if stderr:
             logging.warning('%s 标准错误输出: %s', label, stderr)
 
+    def _training_env(self):
+        project_root = self._project_root()
+        env = os.environ.copy()
+        python_paths = [
+            project_root,
+            os.path.dirname(__file__),
+            os.path.join(project_root, 'system'),
+            os.path.join(project_root, 'system', 'model'),
+            os.path.join(project_root, 'system', 'model', 'map_control'),
+        ]
+        if env.get('PYTHONPATH'):
+            python_paths.append(env['PYTHONPATH'])
+        env['PYTHONPATH'] = os.pathsep.join(python_paths)
+        return project_root, env
+
+    def _condition_paths_for_version(self, version):
+        root = Path(self._core_path("condition_snapshots_dir")) / version
+        return {
+            "snapshot": str(root / "condition_snapshot.json"),
+            "report": str(root / "auto_merge_report.json"),
+        }
+
+    def _run_condition_initial(self, python_exe, env, training_csv, version):
+        paths = self._condition_paths_for_version(version)
+        output_csv = self._core_path("initial_condition_output_csv")
+        script = self._core_path("condition_initial_script")
+        self._run_training_command(
+            "initial-condition-model",
+            [
+                python_exe, script,
+                "--input", training_csv,
+                "--output", output_csv,
+                "--snapshot-output", paths["snapshot"],
+                "--merge-statistics-output", self._core_path("condition_merge_statistics"),
+                "--auto-merge-report", paths["report"],
+                "--snapshot-version", version,
+            ],
+            env,
+            cwd=os.path.dirname(script),
+        )
+        if not os.path.isfile(paths["snapshot"]):
+            raise FileNotFoundError("第一模块初次训练未生成快照: %s" % paths["snapshot"])
+        if not os.path.isfile(output_csv):
+            raise FileNotFoundError("第一模块初次训练未生成标注CSV: %s" % output_csv)
+        return output_csv, paths["snapshot"]
+
+    def _run_condition_incremental(self, python_exe, env, training_csv, active_version, target_version):
+        base_snapshot = self._condition_paths_for_version(active_version)["snapshot"]
+        target_paths = self._condition_paths_for_version(target_version)
+        output_csv = self._core_path("incremental_condition_output_csv")
+        script = self._core_path("condition_incremental_script")
+        if not os.path.isfile(base_snapshot):
+            raise FileNotFoundError("当前激活版本缺少第一模块快照: %s" % base_snapshot)
+        self._run_training_command(
+            "incremental-condition-model",
+            [
+                python_exe, script,
+                "--base-snapshot", base_snapshot,
+                "--input", training_csv,
+                "--output", output_csv,
+                "--snapshot-output", target_paths["snapshot"],
+                "--merge-statistics-output", self._core_path("condition_merge_statistics"),
+                "--auto-merge-report", target_paths["report"],
+                "--snapshot-version", target_version,
+            ],
+            env,
+            cwd=os.path.dirname(script),
+        )
+        if not os.path.isfile(target_paths["snapshot"]):
+            raise FileNotFoundError("第一模块增量训练未生成快照: %s" % target_paths["snapshot"])
+        if not os.path.isfile(output_csv):
+            raise FileNotFoundError("第一模块增量训练未生成标注CSV: %s" % output_csv)
+        return output_csv, target_paths["snapshot"]
+
+    def _run_policy_initial(self, python_exe, env, labeled_csv, condition_snapshot):
+        script = self._core_path("slurry_policy_initial_script")
+        self._run_training_command(
+            "initial-slurry-policy",
+            [
+                python_exe, script,
+                "--input", labeled_csv,
+                "--output", self._core_path("slurry_policy_output_root"),
+                "--condition-snapshot", condition_snapshot,
+                "--config", self._core_path("slurry_policy_config"),
+            ],
+            env,
+            cwd=os.path.dirname(script),
+        )
+
+    def _run_policy_incremental(self, python_exe, env, labeled_csv, condition_snapshot, active_version):
+        script = self._core_path("slurry_policy_incremental_script")
+        previous = Path(self._core_path("slurry_policy_output_root")) / "snapshots" / active_version
+        if not previous.is_dir():
+            raise FileNotFoundError("当前激活版本缺少第二模块快照: %s" % previous)
+        self._run_training_command(
+            "incremental-slurry-policy",
+            [
+                python_exe, script,
+                "--input", labeled_csv,
+                "--output", self._core_path("slurry_policy_output_root"),
+                "--previous", str(previous),
+                "--condition-snapshot", condition_snapshot,
+                "--config", self._core_path("slurry_policy_config"),
+            ],
+            env,
+            cwd=os.path.dirname(script),
+        )
+
     def _do_training(self):
-        """按配置数据源执行 cluster、Q-learning 和单塔 pH 训练。"""
+        """按配置数据源执行 condition_model + slurry_policy_model 两模块训练。"""
+        mode = 'initial' if self.is_initial_training else 'incremental'
         try:
             with self.training_lock:
-                mode = 'initial' if self.is_initial_training else 'incremental'
-                logging.info('=== 开始 %s 训练流程 ===', mode)
+                logging.info('=== 开始供浆核心 %s 训练流程 ===', mode)
                 df, settings = self._load_training_data(mode)
                 training_csv = self._save_training_work_csv(df, settings)
-
-                project_root = self._project_root()
-                env = os.environ.copy()
-                python_paths = [
-                    project_root,
-                    os.path.dirname(__file__),
-                    os.path.join(project_root, 'system'),
-                    os.path.join(project_root, 'system', 'model'),
-                ]
-                env['PYTHONPATH'] = os.pathsep.join(python_paths)
+                _, env = self._training_env()
                 python_exe = config.get('python_exe', 'python')
-                train_cfg = self.process_config.training
-
-                cluster_script = self._resolve_training_path(train_cfg.cluster_script)
-                cluster_result_csv = self._resolve_training_path(train_cfg.cluster_result_csv)
-                cluster_mode = 'init' if mode == 'initial' else 'retrain'
-                self._run_training_command(
-                    f'{mode}-cluster',
-                    [python_exe, cluster_script, '--csv', training_csv, '--mode', cluster_mode],
-                    env,
-                    cwd=os.path.dirname(cluster_script),
-                )
-                if not os.path.isfile(cluster_result_csv):
-                    raise FileNotFoundError(
-                        f'cluster 训练完成但未找到输出 CSV: {cluster_result_csv}'
-                    )
 
                 if mode == 'initial':
-                    q_script = self._resolve_training_path(
-                        train_cfg.q_learning_initial_script
+                    version = str(self.slurry_core_config.get("initial_version", "v001"))
+                    labeled_csv, condition_snapshot = self._run_condition_initial(
+                        python_exe, env, training_csv, version
                     )
-                    self._run_training_command(
-                        'initial-Q-learning',
-                        [python_exe, q_script, '--csv', cluster_result_csv],
-                        env,
-                        cwd=project_root,
+                    self._run_policy_initial(
+                        python_exe, env, labeled_csv, condition_snapshot
                     )
-                    ph_script = self._resolve_training_path(train_cfg.ph_initial_script)
-                    self._run_training_command(
-                        'initial-PH',
-                        [python_exe, ph_script, '--csv', cluster_result_csv],
-                        env,
-                        cwd=project_root,
-                    )
+                    if not self.hot_update_models(version):
+                        raise RuntimeError("初次同版本模型激活/加载失败")
                     self.is_initial_training = False
                     self.model_training_completed = True
                     self.system_state = self.SystemState.NORMAL_OPERATION
                     self.last_training_time = datetime.datetime.now()
-                    logging.info('初次三个模块训练完成，系统切换到正常运行阶段')
-                else:
-                    if self.system_state != self.SystemState.NORMAL_OPERATION:
-                        logging.warning('当前系统状态不是正常运行，禁止增量训练')
-                        return
-                    q_script = self._resolve_training_path(
-                        train_cfg.q_learning_incremental_script
+                    logging.info(
+                        '初次 condition_model + slurry_policy_model 训练完成并激活: %s',
+                        version,
                     )
-                    self._run_training_command(
-                        'incremental-Q-learning',
-                        [python_exe, q_script, '--csv', cluster_result_csv],
-                        env,
-                        cwd=project_root,
-                    )
-                    ph_script = self._resolve_training_path(
-                        train_cfg.ph_incremental_script
-                    )
-                    ph_save_dir = self._resolve_training_path(
-                        train_cfg.ph_incremental_save_dir
-                    )
-                    os.makedirs(ph_save_dir, exist_ok=True)
-                    self._run_training_command(
-                        'incremental-PH',
-                        [
-                            python_exe,
-                            ph_script,
-                            '--csv',
-                            cluster_result_csv,
-                            '--save_dir',
-                            ph_save_dir,
-                        ],
-                        env,
-                        cwd=project_root,
-                    )
-                    self.last_training_time = datetime.datetime.now()
-                    if self.hot_update_models():
-                        logging.info('增量模型热更新成功')
-                    else:
-                        logging.warning('增量模型热更新失败，继续使用旧模型')
+                    return
+
+                if self.system_state != self.SystemState.NORMAL_OPERATION:
+                    logging.warning('当前系统状态不是正常运行，禁止增量训练')
+                    return
+
+                active_version = self._read_active_version()
+                target_version = self._next_version(active_version)
+                labeled_csv, condition_snapshot = self._run_condition_incremental(
+                    python_exe, env, training_csv, active_version, target_version
+                )
+                self._run_policy_incremental(
+                    python_exe, env, labeled_csv, condition_snapshot, active_version
+                )
+                if not self.hot_update_models(target_version):
+                    raise RuntimeError("增量同版本模型激活失败")
+                self.last_training_time = datetime.datetime.now()
+                logging.info(
+                    '增量 condition_model + slurry_policy_model 完成: %s -> %s',
+                    active_version,
+                    target_version,
+                )
         except Exception as exc:
-            logging.error('训练过程发生错误: %s', exc)
+            logging.error('供浆核心 %s 训练失败: %s', mode, exc)
             traceback.print_exc()
+            if mode == 'initial':
+                self.model_training_completed = False
+                self.system_state = self.SystemState.DATA_COLLECTION
+            # 增量失败时 active_version.json 不变，在线继续使用旧版本。
+            raise
         finally:
             self.is_training = False
 
-    def hot_update_models(self):
-        """
-        一次性热更新所有模型
-        将临时目录中的模型复制到原始目录，替换原始模型
-        同时管理备份目录，删除超过14天的备份
-        """
+    def hot_update_models(self, target_version=None):
+        """原子激活第一/第二模块同版本对，不再复制Q-learning/PH模型目录。"""
         try:
-            logging.info("开始执行模型热更新...")
-
-            # 清理旧备份
-            self.clean_model_backups(days=int(self.process_config.training.model_backup_retention_days))
-
-            # 1. 定义模型路径
-            model_paths = {
-                "q_learning": {
-                    "tmp": self._resolve_training_path(self.process_config.training.q_learning_incremental_model_dir),
-                    "orig": self._resolve_training_path(self.process_config.training.q_learning_initial_model_dir)
-                },
-                "ph_predict": {
-                    "tmp": self._resolve_training_path(self.process_config.training.ph_incremental_save_dir),
-                    "orig": self._resolve_training_path(self.process_config.training.ph_model_dir)
-                }
-            }
-
-            # 2. 检查临时目录是否存在
-            for model_type, paths in model_paths.items():
-                if not os.path.exists(paths["tmp"]):
-                    logging.warning(f"{model_type} 模型临时目录不存在: {paths['tmp']}")
-                    continue
-
-                # 检查临时目录中是否有文件
-                tmp_files = os.listdir(paths["tmp"])
-                if not tmp_files:
-                    logging.warning(f"{model_type} 模型临时目录为空: {paths['tmp']}")
-                    continue
-
-                logging.info(f"找到 {model_type} 模型临时文件: {len(tmp_files)} 个")
-
-            # 3. 创建备份目录
-            backup_root = os.path.join(
-                self._resolve_training_path(self.process_config.training.model_backup_dir),
-                datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            if target_version:
+                _, env = self._training_env()
+                python_exe = config.get('python_exe', 'python')
+                script = self._core_path("slurry_policy_activate_script")
+                self._run_training_command(
+                    'activate-integrated-version',
+                    [
+                        python_exe, script,
+                        '--version', str(target_version),
+                        '--config', self._core_path("slurry_policy_config"),
+                    ],
+                    env,
+                    cwd=os.path.dirname(script),
+                )
+            # 初次启动没有在线对象时立即加载；增量时保留当前对象，让其在下一次
+            # evaluate 中读取 active_version.json 并原子切换，保留 WAITING_EFFECT 等状态。
+            if self._slurry_pipeline is None:
+                return self.reload_models()
+            logging.info(
+                'active_version.json 已更新为 %s，在线Pipeline将在后续模型周期原子切换',
+                target_version or self._read_active_version(),
             )
-            os.makedirs(backup_root, exist_ok=True)
-            logging.info(f"创建模型备份目录: {backup_root}")
-
-            # 4. 对每种模型进行热更新
-            for model_type, paths in model_paths.items():
-                if not os.path.exists(paths["tmp"]):
-                    continue
-
-                # 创建对应的备份子目录
-                backup_dir = os.path.join(backup_root, model_type)
-                os.makedirs(backup_dir, exist_ok=True)
-
-                # 备份原始模型
-                if os.path.exists(paths["orig"]):
-                    for file_name in os.listdir(paths["orig"]):
-                        src_file = os.path.join(paths["orig"], file_name)
-                        if os.path.isfile(src_file):
-                            dst_file = os.path.join(backup_dir, file_name)
-                            shutil.copy2(src_file, dst_file)
-                    logging.info(f"已备份 {model_type} 原始模型到: {backup_dir}")
-
-                # 替换原始模型
-                tmp_files = os.listdir(paths["tmp"])
-                for file_name in tmp_files:
-                    src_file = os.path.join(paths["tmp"], file_name)
-                    if os.path.isfile(src_file):
-                        # 确保目标目录存在
-                        os.makedirs(paths["orig"], exist_ok=True)
-                        dst_file = os.path.join(paths["orig"], file_name)
-                        shutil.copy2(src_file, dst_file)
-
-                logging.info(f"已更新 {model_type} 模型: {len(tmp_files)} 个文件")
-
-            # 5. 重新加载模型
-            self.reload_models()
-
-            logging.info("模型热更新完成")
             return True
         except Exception as e:
             logging.error(f"模型热更新失败: {str(e)}")
@@ -1821,22 +1991,35 @@ class ProcessForMapConsole:
             print(f"清理模型备份时出错: {str(e)}")
             traceback.print_exc()
         
-    # 修改 reload_models 方法中的初始化代码
     def reload_models(self):
-        """
-        只重新加载Q-learning（强化学习）和PH预测模块
-        """
+        """重新加载 active_version.json 指向的 condition + policy 集成在线Pipeline。"""
         try:
-            logging.info("开始重新加载Q-learning和PH预测模型...")
-            from system.model.map_control.cluster.online_cluster import RealtimeProcessor
-            RealtimeProcessor().reload_models()  # 只需调用单例的reload方法
-            logging.info("Q-learning和PH预测模型重加载完成")
+            from system.model.map_control.condition_model.online_condition_classifier import (
+                build_online_condition_policy_pipeline,
+            )
+            candidate = build_online_condition_policy_pipeline(
+                snapshot_path='active',
+                integration_config=self._integration_config(),
+            )
+            with self._slurry_pipeline_lock:
+                self._slurry_pipeline = candidate
+                self._slurry_pipeline_error = None
+            logging.info('condition_model + slurry_policy_model 集成在线Pipeline加载完成')
             return True
         except Exception as e:
-            logging.error(f"重新加载模型失败: {str(e)}")
-            import traceback
+            self._slurry_pipeline_error = str(e)
+            logging.error(f"重新加载集成在线模型失败: {str(e)}")
             traceback.print_exc()
             return False
+
+    def record_slurry_execution(self, feedback):
+        """后续DCS实际执行反馈接入口。"""
+        if not self._ensure_slurry_pipeline():
+            raise RuntimeError(
+                'integrated slurry pipeline unavailable: %s'
+                % (self._slurry_pipeline_error or 'UNKNOWN')
+            )
+        return dict(self._slurry_pipeline.record_execution(dict(feedback)))
     
     def check_system_state(self):
         """定期检查系统状态"""
