@@ -265,7 +265,7 @@ test_auto_merge_pipeline.py
 从项目根目录运行：
 
 ```bash
-python -m system.model.slurry_control.condition_model.test_auto_merge_pipeline
+python -m system.model.map_control.condition_model.test_auto_merge_pipeline
 ```
 
 覆盖：

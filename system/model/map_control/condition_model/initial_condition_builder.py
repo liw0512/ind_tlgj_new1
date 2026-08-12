@@ -20,26 +20,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from system.model.slurry_control.condition_model.condition_config import (
+from system.model.map_control.condition_model.condition_config import (
     INITIAL_CONDITION_TRAIN_CONFIG,
     MAX_SNAPSHOT_VERSIONS_TO_KEEP,
     ConditionModelConfig,
     default_config,
 )
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
     PolicyRegion,
 )
-from system.model.slurry_control.condition_model.auto_merge_manager import (
+from system.model.map_control.condition_model.auto_merge_manager import (
     AutoMergeManager,
     write_auto_merge_report,
 )
-from system.model.slurry_control.condition_model.grid_definition import (
+from system.model.map_control.condition_model.grid_definition import (
     build_fixed_adjacency,
     create_complete_grid,
     locate_grid,
 )
-from system.model.slurry_control.condition_model.snapshot_io import (
+from system.model.map_control.condition_model.snapshot_io import (
     cleanup_old_snapshot_versions,
     write_snapshot,
 )

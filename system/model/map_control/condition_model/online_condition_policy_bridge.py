@@ -137,7 +137,7 @@ class SlurryPolicyOnlineBridge:
     ``policy_instance`` and ``policy_factory`` are dependency-injection hooks
     used by tests and by applications that manage a singleton policy object.
     In production, when neither is supplied, the bridge imports
-    ``system.model.slurry_control.slurry_policy_model.slurry_policy_online``.
+    ``system.model.map_control.slurry_policy_model.slurry_policy_online``.
     """
 
     def __init__(
@@ -185,7 +185,7 @@ class SlurryPolicyOnlineBridge:
         config_spec: Optional[str],
         **kwargs: Any,
     ) -> Any:
-        from system.model.slurry_control.slurry_policy_model.slurry_policy_online import (
+        from system.model.map_control.slurry_policy_model.slurry_policy_online import (
             OnlineSlurryPolicy,
         )
 

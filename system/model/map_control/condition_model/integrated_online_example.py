@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """第一模块调用第二模块，并支持同版本对原子热更新的最小示例。"""
 
-from system.model.slurry_control.condition_model.online_condition_classifier import (
+from system.model.map_control.condition_model.online_condition_classifier import (
     build_online_condition_policy_pipeline,
 )
 

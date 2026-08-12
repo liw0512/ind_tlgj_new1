@@ -4,8 +4,8 @@
 import math
 from typing import Dict, List, Tuple
 
-from system.model.slurry_control.condition_model.condition_config import AxisConfig, ConditionModelConfig
-from system.model.slurry_control.condition_model.condition_schema import GridCell
+from system.model.map_control.condition_model.condition_config import AxisConfig, ConditionModelConfig
+from system.model.map_control.condition_model.condition_schema import GridCell
 
 
 def create_complete_grid(config: ConditionModelConfig) -> Dict[str, GridCell]:

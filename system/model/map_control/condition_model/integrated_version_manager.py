@@ -27,14 +27,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from system.model.slurry_control.condition_model.condition_config import (
+from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
     from_dict,
 )
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
 )
-from system.model.slurry_control.condition_model.snapshot_io import read_snapshot
+from system.model.map_control.condition_model.snapshot_io import read_snapshot
 
 
 class IntegratedVersionError(RuntimeError):

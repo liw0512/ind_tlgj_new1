@@ -4,11 +4,11 @@ from pathlib import Path
 import tempfile
 import pandas as pd
 
-from system.model.slurry_control.condition_model.condition_config import from_dict
-from system.model.slurry_control.condition_model.initial_condition_builder import InitialConditionBuilder, normalize_and_validate_training_frame
-from system.model.slurry_control.condition_model.auto_merge_manager import AutoMergeManager
-from system.model.slurry_control.condition_model.condition_merger import ConditionMerger
-from system.model.slurry_control.condition_model.online_condition_classifier import OnlineConditionClassifier
+from system.model.map_control.condition_model.condition_config import from_dict
+from system.model.map_control.condition_model.initial_condition_builder import InitialConditionBuilder, normalize_and_validate_training_frame
+from system.model.map_control.condition_model.auto_merge_manager import AutoMergeManager
+from system.model.map_control.condition_model.condition_merger import ConditionMerger
+from system.model.map_control.condition_model.online_condition_classifier import OnlineConditionClassifier
 
 
 def cfg(mode='evidence_only', enabled=True):

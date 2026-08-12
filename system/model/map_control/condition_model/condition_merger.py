@@ -9,10 +9,10 @@ publication mode.
 import math
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from system.model.slurry_control.condition_model.condition_config import (
+from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
 )
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     GridCell,
 )
 

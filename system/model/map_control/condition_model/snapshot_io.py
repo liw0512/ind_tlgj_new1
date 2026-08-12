@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Tuple
 
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
     GridCell,
     PolicyRegion,

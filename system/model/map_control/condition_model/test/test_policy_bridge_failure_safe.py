@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The bridge must fail closed without deleting first-module output."""
 
-from system.model.slurry_control.condition_model.online_condition_policy_bridge import (
+from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
 )
 

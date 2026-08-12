@@ -30,7 +30,7 @@ PLANT_CONFIG = {
 
         # 第一模块正式快照根目录。初次/增量第二模块均读取这里的
         # v###/condition_snapshot.json，并使用完全相同的 v### 版本号。
-        "condition_snapshots_dir": r"F:\tlgj\system\model\slurry_control\condition_model\snapshots",
+        "condition_snapshots_dir": r"F:\tlgj\system\model\map_control\condition_model\snapshots",
 
         # 第一、第二模块共同使用的正式激活版本指针。第一模块快照先训练完成时
         # 不更新该文件；只有第二模块同版本训练也完成并通过激活校验后才原子更新。

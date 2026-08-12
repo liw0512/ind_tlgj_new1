@@ -2,7 +2,7 @@
 """Minimal regression test for automatic provisional/confirmed/split flow.
 
 Run from the project root after placing this file in condition_model:
-    python -m system.model.slurry_control.condition_model.test_auto_merge_pipeline
+    python -m system.model.map_control.condition_model.test_auto_merge_pipeline
 """
 
 import json
@@ -11,16 +11,16 @@ from pathlib import Path
 
 import pandas as pd
 
-from system.model.slurry_control.condition_model.condition_config import from_dict
-from system.model.slurry_control.condition_model.initial_condition_builder import (
+from system.model.map_control.condition_model.condition_config import from_dict
+from system.model.map_control.condition_model.initial_condition_builder import (
     apply_merge_pairs,
     build_initial_condition_csv,
     load_merge_statistics,
 )
-from system.model.slurry_control.condition_model.incremental_condition_updater import (
+from system.model.map_control.condition_model.incremental_condition_updater import (
     build_incremental_condition_csv,
 )
-from system.model.slurry_control.condition_model.snapshot_io import read_snapshot
+from system.model.map_control.condition_model.snapshot_io import read_snapshot
 
 
 def _frame(first_count, second_count, second_lg=10.5, second_outlet=20.0, second_pumps=2):

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Regression test for the six-sample online condition majority stabilizer."""
 
-from system.model.slurry_control.condition_model.condition_config import from_dict
-from system.model.slurry_control.condition_model.initial_condition_builder import (
+from system.model.map_control.condition_model.condition_config import from_dict
+from system.model.map_control.condition_model.initial_condition_builder import (
     InitialConditionBuilder,
 )
-from system.model.slurry_control.condition_model.online_condition_classifier import (
+from system.model.map_control.condition_model.online_condition_classifier import (
     OnlineConditionClassifier,
 )
 

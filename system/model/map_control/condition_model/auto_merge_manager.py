@@ -20,13 +20,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from system.model.slurry_control.condition_model.condition_config import (
+from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
 )
-from system.model.slurry_control.condition_model.condition_merger import (
+from system.model.map_control.condition_model.condition_merger import (
     ConditionMerger,
 )
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
     GridCell,
     PolicyRegion,

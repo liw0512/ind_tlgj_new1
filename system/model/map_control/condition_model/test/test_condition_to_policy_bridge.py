@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Integration regression test: first-module complete row -> second module."""
 
-from system.model.slurry_control.condition_model.condition_config import from_dict
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_config import from_dict
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
     GridCell,
     PolicyRegion,
 )
-from system.model.slurry_control.condition_model.online_condition_classifier import (
+from system.model.map_control.condition_model.online_condition_classifier import (
     OnlineConditionPolicyPipeline,
 )
 

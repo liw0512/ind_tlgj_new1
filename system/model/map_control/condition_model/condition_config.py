@@ -91,9 +91,9 @@ MAX_SNAPSHOT_VERSIONS_TO_KEEP = 5  # 快照最多保留版本数，超过后自�
 INITIAL_CONDITION_TRAIN_CONFIG = {
     "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p1_60.csv",  # 初次训练输入 CSV。
     "output_csv_path": r"F:\tlgj\files\Initial_train_after_condition.csv",  # 初次训练标注输出 CSV。
-    "merge_statistics_json_path": r"F:\tlgj\system\model\slurry_control\condition_model\condition_merge_statistics.json",  # 工况合并累计统计 JSON。
-    "auto_merge_report_path": r"F:\tlgj\system\model\slurry_control\condition_model\snapshots\v001\auto_merge_report.json",  # 初次自动合并评估报告。
-    "snapshot_output_path": r"F:\tlgj\system\model\slurry_control\condition_model\snapshots\v001\condition_snapshot.json",  # 初次快照输出路径。
+    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 工况合并累计统计 JSON。
+    "auto_merge_report_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\auto_merge_report.json",  # 初次自动合并评估报告。
+    "snapshot_output_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\condition_snapshot.json",  # 初次快照输出路径。
     "snapshot_version": "v001",  # 初次训练固定发布为 v001。
     "encoding": "utf-8-sig",  # CSV 读写编码。
 }
@@ -103,7 +103,7 @@ INCREMENTAL_CONDITION_TRAIN_CONFIG = {
     "base_snapshot_path": "latest",  # 增量基准快照；latest 表示自动读取最新可用版本。
     "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p2_30.csv",  # 增量训练输入 CSV。
     "output_csv_path": r"F:\tlgj\files\Incremental_train_after_condition.csv",  # 增量训练标注输出 CSV。
-    "merge_statistics_json_path": r"F:\tlgj\system\model\slurry_control\condition_model\condition_merge_statistics.json",  # 在已有统计上继续累计。
+    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 在已有统计上继续累计。
     "auto_merge_report_path": "auto",  # auto 表示自动写到新快照同级目录。
     "snapshot_output_path": "auto",  # auto 表示基于最新快照自动生成下一版本目录。
     "snapshot_version": "auto",  # auto 表示 v001 后生成 v002，v002 后生成 v003。
@@ -116,7 +116,7 @@ ONLINE_CONDITION_CLASSIFY_CONFIG = {
     # 由 activate_policy_version.py 原子发布的统一 active_version.json。
     # 显式传 --snapshot 时仍可进行静态 CSV/单版本测试。
     "snapshot_path": "active",
-    "merge_statistics_json_path": r"F:\tlgj\system\model\slurry_control\condition_model\condition_merge_statistics.json",  # 兼容保留，在线正式标签以快照为准。
+    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 兼容保留，在线正式标签以快照为准。
     "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p3_10.csv",  # 在线 CSV 测试输入路径。
 
     # 最终输出保留：原始输入全部字段 + 第一模块全部工况字段 + 第二模块全部决策字段。

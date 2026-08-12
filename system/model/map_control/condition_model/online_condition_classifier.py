@@ -23,29 +23,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from system.model.slurry_control.condition_model.condition_config import (
+from system.model.map_control.condition_model.condition_config import (
     ONLINE_CONDITION_CLASSIFY_CONFIG,
     ConditionModelConfig,
     from_dict,
 )
-from system.model.slurry_control.condition_model.condition_schema import (
+from system.model.map_control.condition_model.condition_schema import (
     ConditionSnapshot,
     OnlineConditionResult,
 )
-from system.model.slurry_control.condition_model.grid_definition import locate_grid
-from system.model.slurry_control.condition_model.initial_condition_builder import (
+from system.model.map_control.condition_model.grid_definition import locate_grid
+from system.model.map_control.condition_model.initial_condition_builder import (
     build_state_key,
     condition_label_from_snapshot,
     get_condition_axis_values,
 )
-from system.model.slurry_control.condition_model.snapshot_io import (
+from system.model.map_control.condition_model.snapshot_io import (
     read_latest_available_snapshot,
 )
-from system.model.slurry_control.condition_model.online_condition_policy_bridge import (
+from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
     csv_safe_row,
 )
-from system.model.slurry_control.condition_model.integrated_version_manager import (
+from system.model.map_control.condition_model.integrated_version_manager import (
     IntegratedVersionError,
     IntegratedVersionManager,
     IntegratedVersionPointer,
