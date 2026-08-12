@@ -1,178 +1,157 @@
 # -*- coding: utf-8 -*-
 """Configuration for the fixed-grid condition model.
 
-Only ``CONDITION_AXES`` decides which process variables define the operating
-condition grid.  One or two numeric axes are supported.  The rest of the
-condition-model pipeline (initial training, incremental training, online
-classification, automatic merge and snapshot reload) consumes the frozen axis
-configuration from the snapshot and does not need plant-specific code changes.
+Plant-specific facts are no longer configured here.  ``condition_axes``, field
+names, tower pH columns and the outlet-SO2 safety limit are derived from the
+single authoritative ``system/model/config/plant_config.py``.
 
-The internal names ``load`` / ``inlet_so2`` that still appear in the dataclass
-are compatibility slots for the historical two-axis implementation.  They no
-longer imply physical meanings: slot 1 may be any configured process variable,
-and slot 2 may be any second configured process variable.  In one-axis mode the
-second slot is an internal singleton and requires no additional source field.
+This file now contains only condition-model algorithm/lifecycle parameters and
+compatibility adapters for historical snapshots.  The internal names
+``load`` / ``inlet_so2`` and ``xst_ph`` / ``apt_ph`` are legacy slots only;
+they no longer imply fixed physical meanings.
 """
 
+import copy
 import math
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG
+
+
 # ---------------------------------------------------------------------------
-# 唯一需要按现场修改的“工况轴”配置。
-#
-# 支持 1 个或 2 个数值型工况变量。顺序决定内部固定网格顺序：
-#   第 1 个轴 -> P1/P2/P3/...（P 仅表示第一轴，不再表示 Power）
-#   第 2 个轴 -> S1/S2/S3/...（S 仅表示第二轴，不再表示 SO2）
-#
-# 电厂默认：机组负荷 + 原烟气 SO2。
-# 如果某厂只有原烟气 SO2，可改成：
-# CONDITION_AXES = [
-#     {"column": "yyq_SO2", "min": 500.0, "max": 7000.0, "step": 200.0},
-# ]
-#
-# 钢厂示例（仅示意字段名）：
-# CONDITION_AXES = [
-#     {"column": "blast_furnace_load", "min": 100.0, "max": 600.0, "step": 20.0},
-#     {"column": "inlet_sulfur", "min": 200.0, "max": 3000.0, "step": 100.0},
-# ]
-#
-# 不建议超过 2 个轴：三个月左右历史数据下，多维笛卡尔网格会迅速造成经验稀疏。
-# 若未来确实需要 3 个及以上工况轴，应重新评估工况表达方式，而不是直接继续加维度。
-CONDITION_AXES: List[Dict[str, Any]] = [
-    {
-        "column": "jzfh",
-        "min": 100.0,
-        "max": 660.0,
-        "step": 10.0,
-    },
-    {
-        "column": "yyq_SO2",
-        "min": 500.0,
-        "max": 7000.0,
-        "step": 200.0,
-    },
+# 厂级事实全部从 plant_config.py 派生；这里保留同名常量只是为了兼容已有调用。
+CONDITION_AXES: List[Dict[str, Any]] = copy.deepcopy(
+    SITE_PLANT_CONFIG["condition_axes"]
+)
+
+_PROCESS_COLUMNS = SITE_PLANT_CONFIG["process_columns"]
+_ENABLED_TOWER_PH_COLUMNS = [
+    str(tower.get("ph_column", "")).strip()
+    for tower in SITE_PLANT_CONFIG.get("towers", [])
+    if tower.get("enabled", True) and str(tower.get("ph_column", "")).strip()
 ]
 
+# 第一模块历史统计结构仍保留两个 pH 兼容槽位，但不再固定绑定“一级塔/二级塔”。
+# 第一个启用塔映射到 xst_ph 槽，第二个启用塔映射到 apt_ph 槽；不存在的槽使用
+# 一个不可能出现在现场 CSV 中的占位字段，因此 pH 继续保持“有则统计、无则忽略”。
+_FIRST_PH_COLUMN = (
+    _ENABLED_TOWER_PH_COLUMNS[0]
+    if _ENABLED_TOWER_PH_COLUMNS
+    else "__unused_condition_ph_1__"
+)
+_SECOND_PH_COLUMN = (
+    _ENABLED_TOWER_PH_COLUMNS[1]
+    if len(_ENABLED_TOWER_PH_COLUMNS) > 1
+    else "__unused_condition_ph_2__"
+)
 
 DEFAULT_DATA_COLUMNS = {
-    "outlet_so2": "jyq_SO2",  # 净烟气 SO2，用于统计超排风险 risk_rate。
-    "xst_ph": "xstjy_PH",  # 一级塔浆液 pH，用于工况解释统计 mean_xst_ph。
-    "apt_ph": "aptjy_PH",  # 二级塔浆液 pH，用于工况解释统计 mean_apt_ph。
-    "liquid_gas": "liquid_gas_ratio",  # 液气比，用于工况合并相似性判断。
+    "outlet_so2": str(_PROCESS_COLUMNS["outlet_so2"]),
+    "xst_ph": _FIRST_PH_COLUMN,
+    "apt_ph": _SECOND_PH_COLUMN,
+    "liquid_gas": str(_PROCESS_COLUMNS["liquid_gas"]),
 }
 
-
-# 净烟气 SO2 排放限值。risk_rate = jyq_SO2 > DEFAULT_EMISSION_LIMIT 的样本占比。
-DEFAULT_EMISSION_LIMIT = 35.0
+# 第一模块 risk_rate 直接使用厂级 SO2 安全范围上限，不再单独维护“35”。
+DEFAULT_EMISSION_LIMIT = float(SITE_PLANT_CONFIG["outlet_so2_safe_range"][1])
 
 
 DEFAULT_MERGE_CONFIG = {
-    "enabled": True,  # 是否启用自动合并评估。
-    # 合并模式：
-    # disabled：关闭自动合并；
-    # evidence_only：满足自动合并证据后发布临时合并；
-    # conservative：必须达到确认样本门槛后才发布合并。
+    "enabled": True,
     "mode": "evidence_only",
-
-    "min_observed_samples": 10,  # 单格样本数达到该值后标记为 OBSERVED。
-    "min_mature_samples": 30,  # 单格样本数达到该值后标记为 MATURE。
-
-    "min_auto_merge_samples": 100,  # 相邻工况参与自动合并判断的最低样本数。
-    "min_auto_confirm_samples": 300,  # 自动合并从临时状态进入确认状态的最低样本数。
-    "min_common_state_samples": 10,  # 泵组合/状态分布对比时，共同状态的最低样本数。
-    "min_risk_samples": 30,  # risk_rate 参与合并判断前要求的最低净烟气 SO2 有效样本数。
-    "min_metric_coverage_ratio": 0.80,  # 两个工况参与合并的统计项覆盖率下限。
-    "min_consecutive_pass_snapshots": 3,  # 连续多少个快照均满足条件后可确认合并。
-    "min_new_samples_per_member_for_confirmation": 10,  # 每轮确认要求每个成员新增的最低样本数。
-    "max_auto_region_cells": 8,  # 一个自动合并区域最多允许包含的基础工况格数量。
-
-    "max_liquid_gas_relative_difference": 0.15,  # 液气比均值相对差异上限。
-    "max_pump_distribution_distance": 0.25,  # 泵组合分布差异上限，越小要求越相似。
-    "max_risk_rate_difference": 0.10,  # 超排风险率差异上限。
+    "min_observed_samples": 10,
+    "min_mature_samples": 30,
+    "min_auto_merge_samples": 100,
+    "min_auto_confirm_samples": 300,
+    "min_common_state_samples": 10,
+    "min_risk_samples": 30,
+    "min_metric_coverage_ratio": 0.80,
+    "min_consecutive_pass_snapshots": 3,
+    "min_new_samples_per_member_for_confirmation": 10,
+    "max_auto_region_cells": 8,
+    "max_liquid_gas_relative_difference": 0.15,
+    "max_pump_distribution_distance": 0.25,
+    "max_risk_rate_difference": 0.10,
 }
 
 
 DEFAULT_ONLINE_CONFIG = {
-    # 在线稳定方式只保留 condition_label 滑动窗口众数，不再使用轴滞回或连续命中。
     "stability_mode": "MAJORITY",
-    "stability_window_size": 6,  # 最近 6 次瞬时 condition_label 取众数。
-    "majority_tie_policy": "KEEP_LAST_STABLE",  # 众数并列时优先保持上一稳定标签。
-    "allow_provisional_region_fallback": True,  # 是否允许临时合并区域提供经验回退。
+    "stability_window_size": 6,
+    "majority_tie_policy": "KEEP_LAST_STABLE",
+    "allow_provisional_region_fallback": True,
 }
 
 
 DEFAULT_CONDITION_MODEL_CONFIG = {
-    "condition_axes": CONDITION_AXES,  # 唯一工况轴来源；支持 1 或 2 个任意数值字段。
-    "data_columns": DEFAULT_DATA_COLUMNS,  # 工况统计用字段映射。
-    "emission_limit": DEFAULT_EMISSION_LIMIT,  # 净烟气 SO2 排放限值。
-    "out_of_range_policy": "clip",  # 越界样本处理策略；clip 表示裁剪到边界工况。
-    "merge": DEFAULT_MERGE_CONFIG,  # 相邻工况自动合并策略。
-    "online": DEFAULT_ONLINE_CONFIG,  # 在线判定防抖和回退策略。
-    "artifact_dir": "artifacts/condition",  # 兼容字段，当前主要产物路径由外层配置指定。
+    "condition_axes": CONDITION_AXES,
+    "data_columns": DEFAULT_DATA_COLUMNS,
+    "emission_limit": DEFAULT_EMISSION_LIMIT,
+    "out_of_range_policy": "clip",
+    "merge": DEFAULT_MERGE_CONFIG,
+    "online": DEFAULT_ONLINE_CONFIG,
+    "artifact_dir": "artifacts/condition",
 }
 
 
-MAX_SNAPSHOT_VERSIONS_TO_KEEP = 5  # 快照最多保留版本数，超过后自动删除最旧版本。
+MAX_SNAPSHOT_VERSIONS_TO_KEEP = 5
 
+
+# ---------------------------------------------------------------------------
+# 单独运行第一模块时使用的项目内默认路径。P4PC 会显式传参覆盖这些路径。
+# 不再维护 F:\\tlgj / F:\\tlgj_new 等机器绝对路径。
+CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
+MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
+POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
 
 INITIAL_CONDITION_TRAIN_CONFIG = {
-    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p1_60.csv",  # 单独运行第一模块时的初次训练输入 CSV；P4PC 启动时会由命令行参数覆盖。
-    "output_csv_path": r"F:\tlgj\files\Initial_train_after_condition.csv",  # 单独运行时的标注输出 CSV；P4PC 会覆盖。
-    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 工况合并累计统计 JSON。
-    "auto_merge_report_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\auto_merge_report.json",  # 初次自动合并评估报告。
-    "snapshot_output_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\condition_snapshot.json",  # 初次快照输出路径。
-    "snapshot_version": "v001",  # 初次训练固定发布为 v001。
-    "encoding": "utf-8-sig",  # CSV 读写编码。
+    "input_csv_path": str(MODEL_CSV_ROOT / "Initial_train.csv"),
+    "output_csv_path": str(MODEL_CSV_ROOT / "Initial_train_after_condition.csv"),
+    "merge_statistics_json_path": str(CONDITION_ROOT / "condition_merge_statistics.json"),
+    "auto_merge_report_path": str(
+        CONDITION_ROOT / "snapshots" / "v001" / "auto_merge_report.json"
+    ),
+    "snapshot_output_path": str(
+        CONDITION_ROOT / "snapshots" / "v001" / "condition_snapshot.json"
+    ),
+    "snapshot_version": "v001",
+    "encoding": "utf-8-sig",
 }
 
 
 INCREMENTAL_CONDITION_TRAIN_CONFIG = {
-    "base_snapshot_path": "latest",  # 增量基准快照；latest 表示自动读取最新可用版本。
-    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p2_30.csv",  # 单独运行第一模块时的增量训练输入 CSV；P4PC 会覆盖。
-    "output_csv_path": r"F:\tlgj\files\Incremental_train_after_condition.csv",  # 单独运行时的标注输出 CSV；P4PC 会覆盖。
-    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 在已有统计上继续累计。
-    "auto_merge_report_path": "auto",  # auto 表示自动写到新快照同级目录。
-    "snapshot_output_path": "auto",  # auto 表示基于最新快照自动生成下一版本目录。
-    "snapshot_version": "auto",  # auto 表示 v001 后生成 v002，v002 后生成 v003。
-    "encoding": "utf-8-sig",  # CSV 读写编码。
+    "base_snapshot_path": "latest",
+    "input_csv_path": str(MODEL_CSV_ROOT / "Update_train.csv"),
+    "output_csv_path": str(MODEL_CSV_ROOT / "Incremental_train_after_condition.csv"),
+    "merge_statistics_json_path": str(CONDITION_ROOT / "condition_merge_statistics.json"),
+    "auto_merge_report_path": "auto",
+    "snapshot_output_path": "auto",
+    "snapshot_version": "auto",
+    "encoding": "utf-8-sig",
 }
 
 
 ONLINE_CONDITION_CLASSIFY_CONFIG = {
-    # 集成在线运行不再读取 snapshots 目录中的 latest，而是读取第二模块训练完成后
-    # 由 activate_policy_version.py 原子发布的统一 active_version.json。
-    # 显式传 --snapshot 时仍可进行静态 CSV/单版本测试。
     "snapshot_path": "active",
-    "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 兼容保留，在线正式标签以快照为准。
-    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p3_10.csv",  # 在线 CSV 测试输入路径。
-
-    # 最终输出保留：原始输入全部字段 + 第一模块全部工况字段 + 第二模块全部决策字段。
-    "output_csv_path": r"F:\tlgj\files\Online_after_condition_and_policy.csv",
-    "encoding": "utf-8-sig",  # CSV 读写编码。
-
-    # 第一模块在线输出调用第二模块在线策略的桥接配置。
+    "merge_statistics_json_path": str(CONDITION_ROOT / "condition_merge_statistics.json"),
+    "input_csv_path": str(MODEL_CSV_ROOT / "Incremental_train_after_condition.csv"),
+    "output_csv_path": str(MODEL_CSV_ROOT / "Online_after_condition_and_policy.csv"),
+    "encoding": "utf-8-sig",
     "slurry_policy_online": {
         "enabled": True,
-
-        # None 表示直接使用 slurry_policy_model/slurry_policy_config.py。
-        # 第二模块仍根据 active_version.json 加载正式激活的同版本策略。
         "config_spec": None,
-
-        # 第一模块负责第一/第二模块同版本原子切换。第二模块在集成模式下禁止
-        # 自行抢先热加载 active_version.json，避免 condition vN + policy vN+1。
         "external_version_management": True,
-
-        # 统一版本指针配置。第一模块候选快照和第二模块候选策略全部准备成功后
-        # 才在同一在线管线锁内提交。第一模块训练完成但第二模块仍训练时，
-        # active_version.json 不变，在线系统继续使用旧版本对。
         "integrated_version": {
             "enabled": True,
-            "active_version_file": (
-                r"F:\tlgj\files\slurry_policy_model_output"
-                r"\active_version.json"
-            ),
+            "active_version_file": str(POLICY_OUTPUT_ROOT / "active_version.json"),
             "hot_reload_enabled": True,
             "reload_check_interval_seconds": 30.0,
             "verify_condition_snapshot_hash": True,
@@ -181,31 +160,17 @@ ONLINE_CONDITION_CLASSIFY_CONFIG = {
             "preserve_runtime_control_state": True,
             "keep_current_version_on_failure": True,
         },
-
-        # True：程序启动时初始化第二模块；加载失败时按 failure_mode 处理。
         "initialize_on_start": True,
-
-        # BLOCKED_OUTPUT：第二模块加载/推理失败时保留第一模块结果，并追加安全 HOLD/BLOCKED 输出。
-        # RAISE：直接抛出异常并中止处理。生产联调初期建议保留 BLOCKED_OUTPUT。
         "failure_mode": "BLOCKED_OUTPUT",
-
-        # 第二模块字段统一增加该前缀，避免覆盖第一模块的 condition_label、raw_grid_id 等字段。
         "output_prefix": "slurry_policy_",
-
-        # 运行时目标优先级：调用 process(..., target=...) > 本列 > fixed_target > 第二模块默认目标。
-        # CSV 中没有该列时自动跳过。
-        "target_column": "outlet_so2_target",
+        "target_column": str(_PROCESS_COLUMNS["target_so2"]),
         "fixed_target": None,
-
-        # 没有现场执行权限字段时，默认只生成推荐，不代表自动下发。
         "default_execution_context": {
             "automatic_control_allowed": False,
             "manual_valves": [],
             "faulted_valves": [],
             "supply_pump_state_changing": False,
         },
-
-        # 可选：从第一模块原始输入行中读取执行上下文。字段不存在时使用上面的默认值。
         "execution_context_columns": {
             "automatic_control_allowed": "automatic_control_allowed",
             "manual_valves": "manual_valves",
@@ -235,10 +200,10 @@ class AxisConfig:
 
 @dataclass(frozen=True)
 class DataColumnConfig:
-    outlet_so2: str = "jyq_SO2"
-    xst_ph: str = "xstjy_PH"
-    apt_ph: str = "aptjy_PH"
-    liquid_gas: str = "liquid_gas_ratio"
+    outlet_so2: str = DEFAULT_DATA_COLUMNS["outlet_so2"]
+    xst_ph: str = DEFAULT_DATA_COLUMNS["xst_ph"]
+    apt_ph: str = DEFAULT_DATA_COLUMNS["apt_ph"]
+    liquid_gas: str = DEFAULT_DATA_COLUMNS["liquid_gas"]
 
     def validate(self) -> None:
         for name, value in self.__dict__.items():
@@ -248,13 +213,7 @@ class DataColumnConfig:
 
 @dataclass(frozen=True)
 class MergeConfig:
-    """Automatic region merge policy.
-
-    ``evidence_only`` publishes provisional merges after the automatic
-    thresholds pass. ``conservative`` requires the confirmation sample
-    threshold even for provisional publication. Both modes require complete
-    liquid-gas and risk evidence; missing risk is never treated as compatible.
-    """
+    """Automatic region merge policy."""
 
     enabled: bool = True
     mode: str = "evidence_only"
@@ -287,8 +246,6 @@ class OnlineConfig:
     allow_provisional_region_fallback: bool = True
 
 
-# 单轴模式下使用的内部第二槽。它只为复用已经稳定的二维网格/合并代码，
-# 不对应任何现场测点，也不会造成额外工况切分或越界。
 _SINGLE_AXIS_PADDING = AxisConfig(
     minimum=-1.0e100,
     maximum=1.0e100,
@@ -298,13 +255,15 @@ _SINGLE_AXIS_PADDING = AxisConfig(
 
 @dataclass(frozen=True)
 class ConditionModelConfig:
-    # 下面四个字段是内部稳定槽位，不再代表固定物理变量。
-    # load/load_column = 第一个配置工况轴；
-    # inlet_so2/inlet_so2_column = 第二个配置工况轴，单轴模式下为内部占位。
+    # Legacy internal slots: first configured axis / optional second configured axis.
     load: AxisConfig
     inlet_so2: AxisConfig
-    load_column: str = "jzfh"
-    inlet_so2_column: str = "yyq_SO2"
+    load_column: str = CONDITION_AXES[0]["column"]
+    inlet_so2_column: str = (
+        CONDITION_AXES[1]["column"]
+        if len(CONDITION_AXES) > 1
+        else CONDITION_AXES[0]["column"]
+    )
     single_axis_mode: bool = False
     data_columns: DataColumnConfig = field(default_factory=DataColumnConfig)
     emission_limit: float = DEFAULT_EMISSION_LIMIT
@@ -398,8 +357,6 @@ class ConditionModelConfig:
             }
             for column, axis in self.condition_axes
         ]
-        # grid_definition 仅作为旧工具读取兼容副本，由 condition_axes 同源生成，
-        # 不允许用户同时维护两份配置。
         grid_definition = {
             item["column"]: {
                 "min": item["min"],
@@ -426,7 +383,6 @@ def _normalize_condition_axes(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     configured = config.get("condition_axes")
     if configured is not None:
         if isinstance(configured, dict):
-            # 兼容有人用 {column: {min,max,step}} 的写法。
             axes = [
                 {"column": str(column), **dict(spec or {})}
                 for column, spec in configured.items()
@@ -436,7 +392,6 @@ def _normalize_condition_axes(config: Dict[str, Any]) -> List[Dict[str, Any]]:
         else:
             raise TypeError("condition_axes must be a list/tuple or mapping")
     else:
-        # 旧 snapshot / 旧配置迁移入口。新项目不再要求维护 grid_definition。
         grid = config.get("grid_definition", config.get("GRID_DEFINITION"))
         if not grid:
             raise KeyError("condition_axes is required")
@@ -524,7 +479,6 @@ def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
 
     online_config = dict(DEFAULT_ONLINE_CONFIG)
     online_config.update(config.get("online", {}))
-    # 兼容旧快照中的已退役在线参数；它们不再影响工况切换。
     for retired in (
         "load_hysteresis",
         "inlet_so2_hysteresis",
@@ -542,7 +496,6 @@ def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
         load=first_axis,
         inlet_so2=second_axis,
         load_column=first["column"],
-        # 单轴时故意复用第一轴字段值；第二槽本身是无限宽单格，不参与划分。
         inlet_so2_column=second["column"],
         single_axis_mode=single_axis_mode,
         data_columns=DataColumnConfig(**data_columns),
