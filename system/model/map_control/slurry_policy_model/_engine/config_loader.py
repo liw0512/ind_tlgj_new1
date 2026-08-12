@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from .exceptions import ConfigurationError
 from .schema import time_column
+
+
+POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V3_PUMP_GATED"
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -49,12 +53,6 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
     if float(safe_range[0]) >= float(safe_range[1]):
         raise ConfigurationError("outlet_so2_safe_range 范围无效")
 
-    pump_columns = plant.get("supply_pump_state_columns", []) or []
-    if not isinstance(pump_columns, list) or any(not str(c).strip() for c in pump_columns):
-        raise ConfigurationError("supply_pump_state_columns 必须为非空字段名组成的列表或空列表")
-    if len({str(c).strip() for c in pump_columns}) != len(pump_columns):
-        raise ConfigurationError("supply_pump_state_columns 不能包含重复字段")
-
     towers = enabled_towers(plant)
     if not towers:
         raise ConfigurationError("至少需要配置一座 enabled=True 的塔")
@@ -63,6 +61,8 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
     ph_columns: set[str] = set()
     valve_ids: set[str] = set()
     valve_columns: set[str] = set()
+    pump_ids: set[str] = set()
+    pump_current_columns: set[str] = set()
     for tower in towers:
         tower_id = str(tower.get("tower_id", "")).strip()
         if not tower_id or tower_id in tower_ids:
@@ -85,6 +85,7 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
         valves = tower.get("valves", [])
         if not valves:
             raise ConfigurationError(f"塔 {tower_id} 至少配置一个供浆阀")
+        tower_valve_ids: set[str] = set()
         for valve in valves:
             valve_id = str(valve.get("valve_id", "")).strip()
             column = str(valve.get("column", "")).strip()
@@ -93,6 +94,7 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
             if not column or column in valve_columns:
                 raise ConfigurationError(f"阀门字段为空或重复: {column!r}")
             valve_ids.add(valve_id)
+            tower_valve_ids.add(valve_id)
             valve_columns.add(column)
             lo = float(valve["min_opening"])
             hi = float(valve["max_opening"])
@@ -106,14 +108,71 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
                     f"阀门 {valve_id} action_threshold 不能大于开度量程"
                 )
 
+        supply_pumps = tower.get("supply_pumps", []) or []
+        if not isinstance(supply_pumps, list):
+            raise ConfigurationError(f"塔 {tower_id} 的 supply_pumps 必须为列表")
+        served_by_any_pump: set[str] = set()
+        for pump in supply_pumps:
+            if not isinstance(pump, dict):
+                raise ConfigurationError(f"塔 {tower_id} 的 supply_pumps 每项必须为字典")
+            pump_id = str(pump.get("pump_id", "")).strip()
+            current_column = str(pump.get("current_column", "")).strip()
+            if not pump_id or pump_id in pump_ids:
+                raise ConfigurationError(f"供浆泵 ID 为空或重复: {pump_id!r}")
+            if not current_column or current_column in pump_current_columns:
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 current_column 为空或重复"
+                )
+            try:
+                run_threshold = float(pump.get("run_current_threshold"))
+            except (TypeError, ValueError, OverflowError):
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 run_current_threshold 必须为数值"
+                )
+            if not math.isfinite(run_threshold) or run_threshold < 0:
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 run_current_threshold 必须为有限非负数"
+                )
+            served = pump.get("served_valve_ids")
+            if not isinstance(served, list) or not served:
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 served_valve_ids 必须为非空列表"
+                )
+            normalized_served = [str(value).strip() for value in served]
+            if any(not value for value in normalized_served):
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 served_valve_ids 不能包含空值"
+                )
+            if len(set(normalized_served)) != len(normalized_served):
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 的 served_valve_ids 不能重复"
+                )
+            unknown = sorted(set(normalized_served) - tower_valve_ids)
+            if unknown:
+                raise ConfigurationError(
+                    f"供浆泵 {pump_id} 只能服务同塔已配置阀门，未知阀门={unknown}"
+                )
+            served_by_any_pump.update(normalized_served)
+            pump_ids.add(pump_id)
+            pump_current_columns.add(current_column)
+
+        # 一旦某塔配置了 supply_pumps，就认为泵电流可用性是该塔的硬执行约束。
+        # 因此每个阀必须至少有一台配置泵为其提供浆液。一个泵可服务多个阀，
+        # 一个阀也可由多台泵共同服务（任一泵运行即认为该阀供浆路径可用）。
+        if supply_pumps:
+            unserved = sorted(tower_valve_ids - served_by_any_pump)
+            if unserved:
+                raise ConfigurationError(
+                    f"塔 {tower_id} 已启用供浆泵拓扑，但阀门未被任何泵服务: {unserved}"
+                )
+
 
 def validate_training_config(training: dict[str, Any]) -> None:
-    # V2 塔级策略的两个语义标记在配置校验阶段统一补齐。这样无需要求每个厂
-    # 手工新增配置项，但 effective_config 会明确记录它们；旧快照缺少这些标记时
-    # 增量训练会识别为旧语义并要求重新初次训练。
+    # 塔级策略语义统一由代码冻结。V3 在 V2 基础上增加“供浆泵电流阈值→
+    # 0/1状态→阀门可用性”的在线硬约束，并将同一判定用于离线 episode 有效性。
     state = training.setdefault("state", {})
     state.setdefault("policy_state_mode", "COARSE_TOWER")
-    training.setdefault("policy_semantics_version", "TOWER_LEVEL_V2")
+    training["policy_semantics_version"] = POLICY_SEMANTICS_VERSION
     mode = str(state.get("policy_state_mode", "COARSE_TOWER")).upper()
     if mode not in {"COARSE_TOWER", "LEGACY_DETAILED"}:
         raise ConfigurationError(
