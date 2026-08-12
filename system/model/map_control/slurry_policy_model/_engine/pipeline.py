@@ -21,7 +21,7 @@ from .tower_policy_projection import project_tower_policy_deltas
 
 
 ProgressCallback = Callable[[float, str], None]
-POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V2"
+POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V3_PUMP_GATED"
 
 
 def _emit_range(
@@ -41,12 +41,50 @@ def _normalized_training_semantics(training: dict[str, Any]) -> dict[str, Any]:
     result = freeze_condition_axes(training)
     result.setdefault("state", {})
     result["state"].setdefault("policy_state_mode", "COARSE_TOWER")
-    result.setdefault("policy_semantics_version", POLICY_SEMANTICS_VERSION)
+    result["policy_semantics_version"] = POLICY_SEMANTICS_VERSION
     return result
+
+
+def _pump_topology_signature(plant: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the policy-relevant pump/current/valve topology in stable order."""
+
+    result: list[dict[str, Any]] = []
+    for tower in plant.get("towers", []):
+        if not tower.get("enabled", True):
+            continue
+        pumps = []
+        for pump in tower.get("supply_pumps", []) or []:
+            pumps.append(
+                {
+                    "pump_id": str(pump.get("pump_id", "")),
+                    "current_column": str(pump.get("current_column", "")),
+                    "run_current_threshold": float(
+                        pump.get("run_current_threshold", 0.0)
+                    ),
+                    "served_valve_ids": sorted(
+                        str(value)
+                        for value in (pump.get("served_valve_ids", []) or [])
+                    ),
+                }
+            )
+        result.append(
+            {
+                "tower_id": str(tower.get("tower_id", "")),
+                "supply_pumps": sorted(
+                    pumps,
+                    key=lambda item: (
+                        item["pump_id"],
+                        item["current_column"],
+                    ),
+                ),
+            }
+        )
+    return sorted(result, key=lambda item: item["tower_id"])
 
 
 def _validate_previous_semantics(
     previous_effective_config: dict[str, Any] | None,
+    plant: dict[str, Any],
     training: dict[str, Any],
 ) -> None:
     if not previous_effective_config:
@@ -69,8 +107,8 @@ def _validate_previous_semantics(
         or previous_semantics != POLICY_SEMANTICS_VERSION
     ):
         raise ValueError(
-            "上一版第二模块仍是旧的分阀/细状态策略语义，不能直接增量混入 "
-            "TOWER_LEVEL_V2。请先用完整历史数据重新执行一次初次训练；"
+            "上一版第二模块仍是旧策略语义，不能直接增量混入 "
+            f"{POLICY_SEMANTICS_VERSION}。请先用完整历史数据重新执行一次初次训练；"
             "新基线建立后，后续版本可继续正常增量训练。"
         )
 
@@ -82,6 +120,16 @@ def _validate_previous_semantics(
         raise ValueError(
             "第一模块 condition axes 已变化，旧第二模块 episode 不能直接增量继承。"
             "请基于完整历史数据重新执行一次初次训练。"
+        )
+
+    # 泵电流阈值和 pump→valve 拓扑会改变 episode 有效性以及在线可执行阀门，
+    # 因此属于模型语义的一部分。任何变化都必须重新初次训练，不能与旧 episode
+    # 混合增量。
+    previous_plant = previous_effective_config.get("plant", {}) or {}
+    if _pump_topology_signature(previous_plant) != _pump_topology_signature(plant):
+        raise ValueError(
+            "供浆泵电流阈值或 pump→valve 拓扑已变化，旧第二模块 episode 不能直接"
+            "增量继承。请基于完整历史数据重新执行一次初次训练。"
         )
 
 
@@ -125,7 +173,7 @@ def run_episode_pipeline(
     progress: ProgressCallback | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[str, Any]]:
     training = _normalized_training_semantics(training)
-    _validate_previous_semantics(previous_effective_config, training)
+    _validate_previous_semantics(previous_effective_config, plant, training)
 
     if progress:
         progress(0.01, "准备工况轴扰动阈值")
