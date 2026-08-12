@@ -57,6 +57,10 @@ jobs:
               '    # Undo the constructor replacements already intentionally using the 4-argument new class is not needed.\n',
               '',
           )
+          s = s.replace(
+              'ast.parse(path.read_text(encoding="utf-8"), filename=str(path))',
+              'ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))',
+          )
           p.write_text(s, encoding='utf-8')
           PY
 
