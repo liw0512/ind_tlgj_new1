@@ -1,0 +1,27 @@
+name: Audit standard field aliases
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/audit-standard-field-aliases.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find legacy aliases
+        shell: bash
+        run: |
+          echo '=== process_columns/time_column ==='
+          grep -RInE 'process_columns|time_column' system/model --include='*.py' || true
+          echo '=== load/inlet axis aliases ==='
+          grep -RInE '\.(load|inlet_so2|load_column|inlet_so2_column)\b|load_level|inlet_so2_level|load_range|inlet_so2_range' system/model/map_control/condition_model --include='*.py' || true
+          echo '=== pH aliases ==='
+          grep -RInE 'xst_ph|apt_ph|mean_xst_ph|mean_apt_ph' system/model/map_control/condition_model --include='*.py' || true
+          echo '=== DEFAULT_DATA_COLUMNS / DataColumnConfig ==='
+          grep -RInE 'DEFAULT_DATA_COLUMNS|DataColumnConfig|data_columns\.' system/model --include='*.py' || true
+          echo '=== legacy condition axis constant ==='
+          grep -RIn 'LEGACY_CONDITION_AXIS_COLUMNS' system/model --include='*.py' || true
