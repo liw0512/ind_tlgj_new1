@@ -1,10 +1,8 @@
 # 第一模块：condition_model 工况划分
 
-`condition_model` 是供浆控制系统的第一模块，负责把连续过程数据映射到稳定、可版本化的工况标签，并把 `condition_label` 等字段追加到原始数据后交给第二模块。
+`condition_model` 是供浆控制系统的第一模块，负责把连续过程数据映射到稳定、可版本化的工况标签。在线模式下它同时作为第一模块→第二模块的统一入口：先完成工况判定，再把“原始实时数据 + 第一模块全部输出”传入 `slurry_policy_model`，最终返回两模块联合结果。
 
 ## 1. 模块职责
-
-第一模块只负责“当前属于哪个工况”，不直接给供浆阀动作。
 
 完整链路：
 
@@ -25,8 +23,13 @@
     ↓
 condition_label / grid_id / state_key ...
     ↓
-第二模块 slurry_policy_model
+第二模块 slurry_policy_model 在线策略
+    ↓
+动作族 / 动作方向 / 动作强度
+推荐阀门增量 / 投影阀位 / 原因码
 ```
+
+第一模块本身不直接定义供浆动作；供浆动作由第二模块决定。但正式在线入口统一放在第一模块 `online_condition_classifier.py` 中。
 
 ## 2. 厂级配置只改一处
 
@@ -43,6 +46,14 @@ system/model/config/plant_config.py
 - 净烟气 SO2 字段及安全上限；
 - 液气比字段；
 - 当前启用塔的 pH 字段。
+
+第二模块也从同一厂级配置读取：
+
+- 单塔/双塔；
+- 每塔 pH 字段和安全范围；
+- 每塔阀门数量及字段；
+- 定频供浆泵电流字段及运行阈值；
+- `pump -> served_valve_ids` 拓扑。
 
 例如只使用原烟气 SO2：
 
@@ -153,7 +164,7 @@ pH 只用于工况解释统计，不决定基础工况坐标。
 没有该塔 pH → 对应统计保持空值
 ```
 
-第二模块的 pH 安全控制仍按中央 `plant_config.py` 中每个 enabled 塔的配置执行。
+第二模块的 pH 安全控制仍按中央 `plant_config.py` 中每个 `enabled=True` 塔的配置执行。
 
 ## 7. 初次训练
 
@@ -195,7 +206,115 @@ P4PC 正式流程：
 
 增量训练失败不会覆盖当前激活版本。
 
-## 9. 在线输出
+## 9. 统一在线入口
+
+正式在线和历史 CSV 回放统一使用：
+
+```text
+system/model/map_control/condition_model/online_condition_classifier.py
+```
+
+长期在线对象：
+
+```python
+from system.model.map_control.condition_model.online_condition_classifier import (
+    build_online_condition_policy_pipeline,
+)
+
+pipeline = build_online_condition_policy_pipeline(snapshot_path="active")
+
+result = pipeline.process(
+    realtime_row,
+    target=20.0,
+    execution_context={},
+)
+```
+
+`pipeline.process()` 的内部顺序固定为：
+
+```text
+原始实时 row
+→ OnlineConditionClassifier.classify()
+→ 追加第一模块全部 condition 字段
+→ 检查第一/第二模块 active 版本一致性
+→ OnlineSlurryPolicy.evaluate()
+→ 追加第二模块全部输出（slurry_policy_ 前缀）
+→ 返回最终联合结果
+```
+
+P4PC 正式运行也复用这个 `build_online_condition_policy_pipeline()` 和长期 `pipeline.process()`，不是另一套在线算法。
+
+实际 DCS 执行后，通过：
+
+```python
+pipeline.record_execution(feedback)
+```
+
+回传真实执行结果，使第二模块状态机进入实际的 `WAITING_EFFECT`、动作间隔和反向锁流程。
+
+## 10. 使用历史 CSV 快速走完整在线判定链
+
+不再保留模块内的合成 `test_core_regression.py`。需要测试第一+第二模块在线逻辑时，直接运行第一模块在线文件：
+
+```bash
+python system/model/map_control/condition_model/online_condition_classifier.py \
+  --snapshot active \
+  --input <历史测试数据.csv> \
+  --output <online_replay_result.csv> \
+  --target 20
+```
+
+也可以让每行从 CSV 自己读取动态目标：
+
+```bash
+python system/model/map_control/condition_model/online_condition_classifier.py \
+  --snapshot active \
+  --input <历史测试数据.csv> \
+  --output <online_replay_result.csv> \
+  --target-column outlet_so2_target
+```
+
+CSV 会按文件中的现有行顺序逐行进入同一个长期 Pipeline。因此第一模块多数窗口、第二模块 FAST/目标/状态机等运行状态会跨行保留，不会每一行重新初始化。
+
+最终输出 CSV 包含三类字段：
+
+```text
+1. 原始历史 CSV 的全部字段
+2. 第一模块在线输出
+   condition_snapshot_version
+   raw_grid_id / stable_grid_id / grid_id
+   condition_label
+   condition_stable
+   condition_switch_state
+   state_key
+   ...
+3. 第二模块在线输出（统一 slurry_policy_ 前缀）
+   slurry_policy_control_mode
+   slurry_policy_disturbance_mode
+   slurry_policy_decision_status
+   slurry_policy_experience_source
+   slurry_policy_action_family
+   slurry_policy_action_direction
+   slurry_policy_action_magnitude
+   slurry_policy_recommended_valve_deltas
+   slurry_policy_projected_valve_openings
+   slurry_policy_reason_codes
+   ...
+```
+
+这个 CSV 回放用于检查“在历史现场状态下算法会如何判定和推荐”，不会写 DCS，也默认不会把每个推荐假装成已经执行。历史数据后续的 SO2 是历史真实操作造成的，因此不能把它当作算法推荐动作的反事实控制结果。
+
+如果只想检查第一模块而完全不调用第二模块：
+
+```bash
+python system/model/map_control/condition_model/online_condition_classifier.py \
+  --snapshot active \
+  --input <历史测试数据.csv> \
+  --output <condition_only.csv> \
+  --condition-only
+```
+
+## 11. 在线输出
 
 第一模块保留原始输入字段，并追加稳定接口字段，主要包括：
 
@@ -211,14 +330,16 @@ coverage_status
 state_key
 condition_experience_source
 condition_valid
+condition_stable
 out_of_range_clipped
 clip_axis
+condition_switch_state
 condition_reason
 ```
 
-在线还会产生 `stable_condition_label / condition_stable / condition_switch_state` 等稳定状态信息供第二模块使用。
+第二模块输出统一加 `slurry_policy_` 前缀，因此不会覆盖第一模块字段。
 
-## 10. 版本管理
+## 12. 版本管理
 
 第一模块不能单独把新快照抢先上线。
 
@@ -238,13 +359,13 @@ condition vN + policy vN
 
 线上始终使用同版本的第一、第二模块组合。
 
-## 11. 核心文件
+## 13. 核心文件
 
 ```text
 condition_config.py                 第一模块算法配置
 initial_condition_builder.py        初次训练
 incremental_condition_updater.py    增量训练
-online_condition_classifier.py      在线工况识别
+online_condition_classifier.py      第一模块+第二模块统一在线入口 / CSV回放入口
 condition_merger.py                 两工况合并证据判断
 auto_merge_manager.py               自动区域生命周期
 condition_schema.py                 快照/统计结构
@@ -253,26 +374,3 @@ snapshot_io.py                      快照读写
 integrated_version_manager.py       两模块统一版本切换
 online_condition_policy_bridge.py   第一模块→第二模块在线桥接
 ```
-
-## 12. 测试
-
-开发过程中的大量一次性测试已合并成一个核心回归文件：
-
-```text
-system/model/map_control/condition_model/tests/test_core_regression.py
-```
-
-运行：
-
-```bash
-python system/model/map_control/condition_model/tests/test_core_regression.py
-```
-
-它只保护最容易在后续改动中被破坏的结构性能力：
-
-- 任意单轴/双轴工况；
-- 初次快照、增量快照和在线识别一致性；
-- 单塔/缺失第二塔 pH；
-- 自动临时合并、确认与拆分生命周期。
-
-这些测试使用小规模合成数据是为了快速验证程序不变量，不代表生产训练只使用少量数据。真实模型训练仍使用完整历史 CSV/数据库数据。
