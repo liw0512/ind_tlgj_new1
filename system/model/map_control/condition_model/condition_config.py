@@ -1,30 +1,59 @@
 # -*- coding: utf-8 -*-
-"""Configuration for the V3 fixed-grid condition model.
+"""Configuration for the fixed-grid condition model.
 
-The published grid, process-field mapping, emission limit, and automatic merge
-policy are frozen into every snapshot.  The automatic merge policy replaces
-manual ``merge_condition_label_pairs`` publication.
+Only ``CONDITION_AXES`` decides which process variables define the operating
+condition grid.  One or two numeric axes are supported.  The rest of the
+condition-model pipeline (initial training, incremental training, online
+classification, automatic merge and snapshot reload) consumes the frozen axis
+configuration from the snapshot and does not need plant-specific code changes.
+
+The internal names ``load`` / ``inlet_so2`` that still appear in the dataclass
+are compatibility slots for the historical two-axis implementation.  They no
+longer imply physical meanings: slot 1 may be any configured process variable,
+and slot 2 may be any second configured process variable.  In one-axis mode the
+second slot is an internal singleton and requires no additional source field.
 """
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 
-DEFAULT_GRID_DEFINITION = {
-    # 工况划分轴 1：机组负荷。修改字段名时直接改这里的 key。
-    "jzfh": {
-        "min": 100.0,  # 机组负荷历史有效下限。
-        "max": 660.0,  # 机组负荷历史有效上限；尾段不足一个 step 时并入最后一档。
-        "step": 10.0,  # 机组负荷单个工况格宽度。
+# ---------------------------------------------------------------------------
+# 唯一需要按现场修改的“工况轴”配置。
+#
+# 支持 1 个或 2 个数值型工况变量。顺序决定内部固定网格顺序：
+#   第 1 个轴 -> P1/P2/P3/...（P 仅表示第一轴，不再表示 Power）
+#   第 2 个轴 -> S1/S2/S3/...（S 仅表示第二轴，不再表示 SO2）
+#
+# 电厂默认：机组负荷 + 原烟气 SO2。
+# 如果某厂只有原烟气 SO2，可改成：
+# CONDITION_AXES = [
+#     {"column": "yyq_SO2", "min": 500.0, "max": 7000.0, "step": 200.0},
+# ]
+#
+# 钢厂示例（仅示意字段名）：
+# CONDITION_AXES = [
+#     {"column": "blast_furnace_load", "min": 100.0, "max": 600.0, "step": 20.0},
+#     {"column": "inlet_sulfur", "min": 200.0, "max": 3000.0, "step": 100.0},
+# ]
+#
+# 不建议超过 2 个轴：三个月左右历史数据下，多维笛卡尔网格会迅速造成经验稀疏。
+# 若未来确实需要 3 个及以上工况轴，应重新评估工况表达方式，而不是直接继续加维度。
+CONDITION_AXES: List[Dict[str, Any]] = [
+    {
+        "column": "jzfh",
+        "min": 100.0,
+        "max": 660.0,
+        "step": 10.0,
     },
-    # 工况划分轴 2：原烟气 SO2。修改字段名时直接改这里的 key。
-    "yyq_SO2": {
-        "min": 500.0,  # 原烟气 SO2 历史有效下限。
-        "max": 7000.0,  # 原烟气 SO2 历史有效上限；尾段不足一个 step 时并入最后一档。
-        "step": 200.0,  # 原烟气 SO2 单个工况格宽度。
+    {
+        "column": "yyq_SO2",
+        "min": 500.0,
+        "max": 7000.0,
+        "step": 200.0,
     },
-}
+]
 
 
 DEFAULT_DATA_COLUMNS = {
@@ -75,13 +104,13 @@ DEFAULT_ONLINE_CONFIG = {
 
 
 DEFAULT_CONDITION_MODEL_CONFIG = {
-    "grid_definition": DEFAULT_GRID_DEFINITION,  # 二维工况网格定义。
+    "condition_axes": CONDITION_AXES,  # 唯一工况轴来源；支持 1 或 2 个任意数值字段。
     "data_columns": DEFAULT_DATA_COLUMNS,  # 工况统计用字段映射。
     "emission_limit": DEFAULT_EMISSION_LIMIT,  # 净烟气 SO2 排放限值。
     "out_of_range_policy": "clip",  # 越界样本处理策略；clip 表示裁剪到边界工况。
     "merge": DEFAULT_MERGE_CONFIG,  # 相邻工况自动合并策略。
     "online": DEFAULT_ONLINE_CONFIG,  # 在线判定防抖和回退策略。
-    "artifact_dir": "artifacts/condition",  # 兼容字段，当前主要产物路径由下方配置指定。
+    "artifact_dir": "artifacts/condition",  # 兼容字段，当前主要产物路径由外层配置指定。
 }
 
 
@@ -89,8 +118,8 @@ MAX_SNAPSHOT_VERSIONS_TO_KEEP = 5  # 快照最多保留版本数，超过后自�
 
 
 INITIAL_CONDITION_TRAIN_CONFIG = {
-    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p1_60.csv",  # 初次训练输入 CSV。
-    "output_csv_path": r"F:\tlgj\files\Initial_train_after_condition.csv",  # 初次训练标注输出 CSV。
+    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p1_60.csv",  # 单独运行第一模块时的初次训练输入 CSV；P4PC 启动时会由命令行参数覆盖。
+    "output_csv_path": r"F:\tlgj\files\Initial_train_after_condition.csv",  # 单独运行时的标注输出 CSV；P4PC 会覆盖。
     "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 工况合并累计统计 JSON。
     "auto_merge_report_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\auto_merge_report.json",  # 初次自动合并评估报告。
     "snapshot_output_path": r"F:\tlgj\system\model\map_control\condition_model\snapshots\v001\condition_snapshot.json",  # 初次快照输出路径。
@@ -101,8 +130,8 @@ INITIAL_CONDITION_TRAIN_CONFIG = {
 
 INCREMENTAL_CONDITION_TRAIN_CONFIG = {
     "base_snapshot_path": "latest",  # 增量基准快照；latest 表示自动读取最新可用版本。
-    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p2_30.csv",  # 增量训练输入 CSV。
-    "output_csv_path": r"F:\tlgj\files\Incremental_train_after_condition.csv",  # 增量训练标注输出 CSV。
+    "input_csv_path": r"F:\tlgj\files\data_preprocessor_test_output_p2_30.csv",  # 单独运行第一模块时的增量训练输入 CSV；P4PC 会覆盖。
+    "output_csv_path": r"F:\tlgj\files\Incremental_train_after_condition.csv",  # 单独运行时的标注输出 CSV；P4PC 会覆盖。
     "merge_statistics_json_path": r"F:\tlgj\system\model\map_control\condition_model\condition_merge_statistics.json",  # 在已有统计上继续累计。
     "auto_merge_report_path": "auto",  # auto 表示自动写到新快照同级目录。
     "snapshot_output_path": "auto",  # auto 表示基于最新快照自动生成下一版本目录。
@@ -258,12 +287,25 @@ class OnlineConfig:
     allow_provisional_region_fallback: bool = True
 
 
+# 单轴模式下使用的内部第二槽。它只为复用已经稳定的二维网格/合并代码，
+# 不对应任何现场测点，也不会造成额外工况切分或越界。
+_SINGLE_AXIS_PADDING = AxisConfig(
+    minimum=-1.0e100,
+    maximum=1.0e100,
+    step=2.0e100,
+)
+
+
 @dataclass(frozen=True)
 class ConditionModelConfig:
+    # 下面四个字段是内部稳定槽位，不再代表固定物理变量。
+    # load/load_column = 第一个配置工况轴；
+    # inlet_so2/inlet_so2_column = 第二个配置工况轴，单轴模式下为内部占位。
     load: AxisConfig
     inlet_so2: AxisConfig
     load_column: str = "jzfh"
     inlet_so2_column: str = "yyq_SO2"
+    single_axis_mode: bool = False
     data_columns: DataColumnConfig = field(default_factory=DataColumnConfig)
     emission_limit: float = DEFAULT_EMISSION_LIMIT
     out_of_range_policy: str = "clip"
@@ -271,24 +313,50 @@ class ConditionModelConfig:
     online: OnlineConfig = field(default_factory=OnlineConfig)
     artifact_dir: str = "artifacts/condition"
 
+    @property
+    def condition_axis_columns(self) -> Tuple[str, ...]:
+        if self.single_axis_mode:
+            return (self.load_column,)
+        return (self.load_column, self.inlet_so2_column)
+
+    @property
+    def condition_axis_count(self) -> int:
+        return len(self.condition_axis_columns)
+
+    @property
+    def condition_axes(self) -> Tuple[Tuple[str, AxisConfig], ...]:
+        if self.single_axis_mode:
+            return ((self.load_column, self.load),)
+        return (
+            (self.load_column, self.load),
+            (self.inlet_so2_column, self.inlet_so2),
+        )
+
     def validate(self) -> None:
         self.load.validate(self.load_column)
-        self.inlet_so2.validate(self.inlet_so2_column)
+        self.inlet_so2.validate(
+            "internal_single_axis_padding"
+            if self.single_axis_mode
+            else self.inlet_so2_column
+        )
         self.data_columns.validate()
-        if not self.load_column or not self.inlet_so2_column:
-            raise ValueError("condition axis columns cannot be empty")
+        if not self.load_column:
+            raise ValueError("first condition axis column cannot be empty")
+        if not self.single_axis_mode and not self.inlet_so2_column:
+            raise ValueError("second condition axis column cannot be empty")
+        if not self.single_axis_mode and self.load_column == self.inlet_so2_column:
+            raise ValueError("two condition axes must use different source columns")
         if not math.isfinite(self.emission_limit) or self.emission_limit <= 0:
             raise ValueError("emission_limit must be a positive finite number")
         if self.out_of_range_policy != "clip":
-            raise ValueError("V3 currently requires out_of_range_policy='clip'")
+            raise ValueError("condition model currently requires out_of_range_policy='clip'")
         if self.online.stability_mode.upper() != "MAJORITY":
-            raise ValueError("V3 online stability_mode currently requires 'MAJORITY'")
+            raise ValueError("online stability_mode currently requires 'MAJORITY'")
         if int(self.online.stability_window_size) < 1:
             raise ValueError("stability_window_size must be at least 1")
         if self.online.majority_tie_policy.upper() != "KEEP_LAST_STABLE":
             raise ValueError(
-                "V3 online majority_tie_policy currently requires "
-                "'KEEP_LAST_STABLE'"
+                "online majority_tie_policy currently requires 'KEEP_LAST_STABLE'"
             )
         if self.merge.mode not in {"disabled", "evidence_only", "conservative"}:
             raise ValueError("Unsupported merge mode")
@@ -321,19 +389,28 @@ class ConditionModelConfig:
                 raise ValueError(f"{name} must be a non-negative finite number")
 
     def to_dict(self) -> Dict[str, Any]:
+        axes = [
+            {
+                "column": column,
+                "min": axis.minimum,
+                "max": axis.maximum,
+                "step": axis.step,
+            }
+            for column, axis in self.condition_axes
+        ]
+        # grid_definition 仅作为旧工具读取兼容副本，由 condition_axes 同源生成，
+        # 不允许用户同时维护两份配置。
+        grid_definition = {
+            item["column"]: {
+                "min": item["min"],
+                "max": item["max"],
+                "step": item["step"],
+            }
+            for item in axes
+        }
         return {
-            "grid_definition": {
-                self.load_column: {
-                    "min": self.load.minimum,
-                    "max": self.load.maximum,
-                    "step": self.load.step,
-                },
-                self.inlet_so2_column: {
-                    "min": self.inlet_so2.minimum,
-                    "max": self.inlet_so2.maximum,
-                    "step": self.inlet_so2.step,
-                },
-            },
+            "condition_axes": axes,
+            "grid_definition": grid_definition,
             "data_columns": self.data_columns.__dict__.copy(),
             "emission_limit": self.emission_limit,
             "out_of_range_policy": self.out_of_range_policy,
@@ -343,25 +420,88 @@ class ConditionModelConfig:
         }
 
 
-def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
-    grid = config.get("grid_definition", config.get("GRID_DEFINITION"))
-    if not grid:
-        raise KeyError("grid_definition is required")
+def _normalize_condition_axes(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Load new one/two-axis config and migrate historical two-axis config."""
 
-    axis_columns = config.get("condition_axis_columns", config.get("axis_columns"))
-    if axis_columns:
-        load_column = str(axis_columns.get("load", "jzfh"))
-        inlet_so2_column = str(axis_columns.get("inlet_so2", "yyq_SO2"))
-        load = grid.get(load_column, grid.get("jzfh"))
-        so2 = grid.get(inlet_so2_column, grid.get("yyq_SO2"))
+    configured = config.get("condition_axes")
+    if configured is not None:
+        if isinstance(configured, dict):
+            # 兼容有人用 {column: {min,max,step}} 的写法。
+            axes = [
+                {"column": str(column), **dict(spec or {})}
+                for column, spec in configured.items()
+            ]
+        elif isinstance(configured, (list, tuple)):
+            axes = [dict(item or {}) for item in configured]
+        else:
+            raise TypeError("condition_axes must be a list/tuple or mapping")
     else:
-        if len(grid) != 2:
-            raise ValueError("grid_definition must contain exactly two condition axis columns")
-        load_column, inlet_so2_column = [str(column) for column in grid.keys()]
-        load = grid[load_column]
-        so2 = grid[inlet_so2_column]
-    if load is None or so2 is None:
-        raise KeyError("grid_definition axis does not match condition axis columns")
+        # 旧 snapshot / 旧配置迁移入口。新项目不再要求维护 grid_definition。
+        grid = config.get("grid_definition", config.get("GRID_DEFINITION"))
+        if not grid:
+            raise KeyError("condition_axes is required")
+        axis_columns = config.get("condition_axis_columns", config.get("axis_columns"))
+        if axis_columns and len(grid) == 2:
+            ordered_columns = [
+                str(axis_columns.get("load", "jzfh")),
+                str(axis_columns.get("inlet_so2", "yyq_SO2")),
+            ]
+            axes = [
+                {"column": column, **dict(grid[column])}
+                for column in ordered_columns
+                if column in grid
+            ]
+            if len(axes) != 2:
+                raise KeyError("legacy grid_definition axis does not match axis_columns")
+        else:
+            axes = [
+                {"column": str(column), **dict(spec or {})}
+                for column, spec in grid.items()
+            ]
+
+    if len(axes) not in {1, 2}:
+        raise ValueError(
+            "condition_axes must contain exactly 1 or 2 axes; "
+            f"got {len(axes)}"
+        )
+
+    normalized: List[Dict[str, Any]] = []
+    seen = set()
+    for index, raw in enumerate(axes, start=1):
+        column = str(raw.get("column", "")).strip()
+        if not column:
+            raise ValueError(f"condition axis {index} column cannot be empty")
+        if column in seen:
+            raise ValueError(f"duplicate condition axis column: {column}")
+        seen.add(column)
+        try:
+            axis = {
+                "column": column,
+                "min": float(raw["min"]),
+                "max": float(raw["max"]),
+                "step": float(raw["step"]),
+            }
+        except KeyError as exc:
+            raise KeyError(
+                f"condition axis {column} is missing {exc.args[0]}"
+            ) from exc
+        AxisConfig(axis["min"], axis["max"], axis["step"]).validate(column)
+        normalized.append(axis)
+    return normalized
+
+
+def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
+    axes = _normalize_condition_axes(config)
+    first = axes[0]
+    first_axis = AxisConfig(first["min"], first["max"], first["step"])
+    single_axis_mode = len(axes) == 1
+
+    if single_axis_mode:
+        second = first
+        second_axis = _SINGLE_AXIS_PADDING
+    else:
+        second = axes[1]
+        second_axis = AxisConfig(second["min"], second["max"], second["step"])
 
     merge_config = dict(DEFAULT_MERGE_CONFIG)
     merge_config.update(config.get("merge", {}))
@@ -384,9 +524,7 @@ def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
 
     online_config = dict(DEFAULT_ONLINE_CONFIG)
     online_config.update(config.get("online", {}))
-    # Backward-compatible loading of snapshots/configs created before the
-    # majority-window stabilizer.  These retired parameters no longer affect
-    # online condition switching.
+    # 兼容旧快照中的已退役在线参数；它们不再影响工况切换。
     for retired in (
         "load_hysteresis",
         "inlet_so2_hysteresis",
@@ -401,10 +539,12 @@ def from_dict(config: Dict[str, Any]) -> ConditionModelConfig:
     ).upper()
 
     result = ConditionModelConfig(
-        load=AxisConfig(float(load["min"]), float(load["max"]), float(load["step"])),
-        inlet_so2=AxisConfig(float(so2["min"]), float(so2["max"]), float(so2["step"])),
-        load_column=load_column,
-        inlet_so2_column=inlet_so2_column,
+        load=first_axis,
+        inlet_so2=second_axis,
+        load_column=first["column"],
+        # 单轴时故意复用第一轴字段值；第二槽本身是无限宽单格，不参与划分。
+        inlet_so2_column=second["column"],
+        single_axis_mode=single_axis_mode,
         data_columns=DataColumnConfig(**data_columns),
         emission_limit=float(config.get("emission_limit", DEFAULT_EMISSION_LIMIT)),
         out_of_range_policy=str(config.get("out_of_range_policy", "clip")).lower(),
