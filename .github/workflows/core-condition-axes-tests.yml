@@ -1,4 +1,4 @@
-name: Core condition axes and topology tests
+name: Core model regression tests
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  configurable-condition-axes-and-topology:
+  core-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -35,17 +35,8 @@ jobs:
       - name: Test unified plant configuration source
         run: python -m system.model.config.test_unified_plant_config
 
-      - name: Test condition model one/two arbitrary axes
-        run: python -m system.model.map_control.condition_model.test.test_configurable_condition_axes
+      - name: Test condition model core regression
+        run: python system/model/map_control/condition_model/tests/test_core_regression.py
 
-      - name: Test condition model optional tower pH
-        run: python -m system.model.map_control.condition_model.test.test_optional_tower_ph
-
-      - name: Test policy model one/two arbitrary axes
-        run: python -m system.model.map_control.slurry_policy_model.test_configurable_condition_axes
-
-      - name: Test policy model single/dual tower topology
-        run: python -m system.model.map_control.slurry_policy_model.test_configurable_tower_topology
-
-      - name: Test fixed-speed supply pump availability
-        run: python -m system.model.map_control.slurry_policy_model.test_supply_pump_availability
+      - name: Test slurry policy core regression
+        run: python system/model/map_control/slurry_policy_model/tests/test_core_regression.py
