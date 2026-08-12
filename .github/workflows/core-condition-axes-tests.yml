@@ -36,7 +36,7 @@ jobs:
         run: python -m system.model.config.test_unified_plant_config
 
       - name: Test condition model core regression
-        run: python system/model/map_control/condition_model/tests/test_core_regression.py
+        run: python -m system.model.map_control.condition_model.tests.test_core_regression
 
       - name: Test slurry policy core regression
-        run: python system/model/map_control/slurry_policy_model/tests/test_core_regression.py
+        run: python -m system.model.map_control.slurry_policy_model.tests.test_core_regression
