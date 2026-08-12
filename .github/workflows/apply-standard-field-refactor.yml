@@ -67,6 +67,26 @@ jobs:
       - name: Apply refactor
         run: python .github/scripts/refactor_standard_field_names.py
 
+      - name: Finish fixed target field migration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('system/model/map_control/condition_model/condition_config.py')
+          s = p.read_text(encoding='utf-8')
+          marker = 'from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG\n'
+          standard_import = 'from system.model.config.standard_fields import TARGET_SO2_COLUMN\n'
+          if standard_import not in s:
+              s = s.replace(marker, marker + standard_import)
+          s = s.replace(
+              '"target_column": str(_PROCESS_COLUMNS["target_so2"]),',
+              '"target_column": TARGET_SO2_COLUMN,',
+          )
+          if '_PROCESS_COLUMNS' in s:
+              raise SystemExit('retired _PROCESS_COLUMNS still exists after migration')
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Compile current model code
         run: python -m compileall -q system/model system/data_opts
 
@@ -74,6 +94,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          from pathlib import Path
           from system.model.config.standard_fields import (
               TIME_COLUMN, OUTLET_SO2_COLUMN, LIQUID_GAS_RATIO_COLUMN, TARGET_SO2_COLUMN,
           )
@@ -135,6 +156,13 @@ jobs:
           from system.model.map_control.condition_model.incremental_condition_updater import IncrementalConditionUpdater
           updated = IncrementalConditionUpdater(cfg).update(snap, [row], 'v002')
           assert sum(cell.sample_count for cell in updated.grid_catalog.values()) == 2
+
+          # If repository snapshots exist, make sure an old published snapshot still loads.
+          from system.model.map_control.condition_model.snapshot_io import read_snapshot
+          candidates = sorted(Path('system/model/map_control/condition_model/snapshots').glob('v*/condition_snapshot.json'))
+          if candidates:
+              existing = read_snapshot(str(candidates[-1]))
+              from_dict(existing.grid_config)
 
           from system.model.map_control.slurry_policy_model.slurry_policy_config import PLANT_CONFIG
           from system.model.map_control.slurry_policy_model._engine.config_loader import validate_plant_config
