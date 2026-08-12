@@ -15,6 +15,7 @@ from .schema import (
     condition_axis_columns,
     time_column,
 )
+from .supply_pump import supply_pump_current_columns
 
 
 def resolve_input_paths(input_specs: Sequence[str] | str) -> list[Path]:
@@ -43,12 +44,7 @@ def resolve_input_paths(input_specs: Sequence[str] | str) -> list[Path]:
 def required_columns(
     plant: dict[str, Any], training: dict[str, Any]
 ) -> list[str]:
-    """Return required fields for the current condition snapshot.
-
-    The condition-axis columns are injected into ``training`` from the matching
-    first-module snapshot.  The policy model therefore never hard-codes unit
-    load or inlet-SO2 as mandatory fields.
-    """
+    """Return required fields for the current condition snapshot and topology."""
     required = [
         time_column(plant),
         *condition_axis_columns(training),
@@ -58,9 +54,7 @@ def required_columns(
     for tower in enabled_towers(plant):
         required.append(tower["ph_column"])
     required.extend(v["column"] for v in all_valves(plant))
-    required.extend(
-        str(c) for c in (plant.get("supply_pump_state_columns", []) or [])
-    )
+    required.extend(supply_pump_current_columns(plant))
     return list(dict.fromkeys(required))
 
 
@@ -153,6 +147,7 @@ def load_input_data(
         raise InputDataError(
             "输入数据缺少第二模块必要字段: "
             f"{missing}。工况轴字段来自指定第一模块 snapshot，"
+            "启用供浆泵拓扑后 pump.current_column 也属于必要字段；"
             "其余第一模块 condition/grid/version 字段必须存在于标注后 CSV。"
         )
 
@@ -178,6 +173,7 @@ def load_input_data(
             OUTLET_SO2_COLUMN,
             *(t["ph_column"] for t in enabled_towers(plant)),
             *(v["column"] for v in all_valves(plant)),
+            *supply_pump_current_columns(plant),
         ]
         numeric_list = list(
             dict.fromkeys(c for c in numeric_cols if c in df.columns)
