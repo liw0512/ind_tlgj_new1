@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+try:
+    from _engine.supply_pump import evaluate_supply_pump_availability
+except ImportError:  # pragma: no cover
+    from .._engine.supply_pump import evaluate_supply_pump_availability
+
 from .action_utils import normalize_blocked_valves, parse_action_family, profile_action
 from .demand_analyzer import MAGNITUDE_ORDER
 from .types import Candidate, ControlDemand, RealtimeState
@@ -53,11 +58,7 @@ class CandidateFilter:
         current_ph: float,
         direction: str,
     ) -> List[str]:
-        """用当前 pH + 该塔历史 ΔpH 分布做连续安全检查。
-
-        不再把 pH 分档加入经验主键。增加供浆时使用历史 ΔpH 的 P75 作为偏保守
-        上行估计；减少供浆时使用 P25 作为偏保守下行估计；缺失时退回中位数。
-        """
+        """用当前 pH + 该塔历史 ΔpH 分布做连续安全检查。"""
         reasons: List[str] = []
         if candidate.synthetic:
             return reasons
@@ -87,9 +88,6 @@ class CandidateFilter:
             if predicted_ph < lo:
                 reasons.append("PREDICTED_PH_BELOW_SAFE_RANGE:%s" % tower_id)
 
-        # pH 越界率继续保留为可解释诊断；不额外引入一个新的厂级硬阈值。
-        # 历史安全性仍由已有 safety_history_score 门槛控制，在线则由上面的
-        # 当前 pH + 历史 ΔpH 预测直接做安全过滤。
         ph_safety = candidate.profile.get("safety", {}).get("tower_ph", {}).get(tower_id, {}) or {}
         out_ratio = self._number(ph_safety.get("out_of_range_ratio"))
         if out_ratio is not None:
@@ -165,15 +163,41 @@ class CandidateFilter:
             except (TypeError, ValueError):
                 continue
 
-        # 只有现场实际传入这些状态时才生效；算法不要求人工维护一份 DCS 状态表。
+        # 供浆泵属于实时 process 状态，不再通过 execution_context 维护另一套泵状态。
+        # 定频泵 current > threshold => 1；否则 0。一个阀只要任一服务泵运行即可。
+        pump_availability = evaluate_supply_pump_availability(
+            self.plant,
+            state.process,
+        )
+        candidate.evaluation["supply_pump_availability"] = pump_availability
+        available_valves = set(pump_availability["available_valve_ids"])
+        tower_map = {
+            str(t["tower_id"]): t
+            for t in self.plant.get("towers", [])
+            if t.get("enabled", True)
+        }
+        if direction != "HOLD":
+            requested = set(valve_ids)
+            for tower_id in tower_ids:
+                tower = tower_map.get(tower_id)
+                if not tower:
+                    continue
+                tower_valves = {
+                    str(v["valve_id"])
+                    for v in tower.get("valves", [])
+                }
+                requested_for_tower = requested & tower_valves
+                if requested_for_tower and not (
+                    requested_for_tower & available_valves
+                ):
+                    reasons.append("NO_AVAILABLE_SUPPLY_PATH:%s" % tower_id)
+
+        # 手动/故障阀仍由 MainControl/DCS 执行上下文显式传入。
         blocked = normalize_blocked_valves(execution.get("manual_valves"), self.plant)
         blocked |= normalize_blocked_valves(execution.get("faulted_valves"), self.plant)
         if blocked.intersection(valve_ids):
             reasons.append("ACTION_USES_MANUAL_OR_FAULTED_VALVE")
-        if bool(execution.get("supply_pump_state_changing", False)) and direction != "HOLD":
-            reasons.append("SUPPLY_PUMP_STATE_CHANGING")
 
-        tower_map = {str(t["tower_id"]): t for t in self.plant.get("towers", []) if t.get("enabled", True)}
         for tower_id in tower_ids:
             tower = tower_map.get(tower_id)
             if not tower:
@@ -181,7 +205,7 @@ class CandidateFilter:
                 continue
             try:
                 ph = float(state.process[str(tower["ph_column"])])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, KeyError):
                 reasons.append("PH_VALUE_INVALID")
                 continue
             lo, hi = [float(x) for x in tower["ph_safe_range"]]
