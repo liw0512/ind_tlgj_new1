@@ -5,7 +5,6 @@ import math
 from typing import Any
 
 from .exceptions import ConfigurationError
-from .schema import time_column
 
 
 POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V3_PUMP_GATED"
@@ -44,9 +43,6 @@ def validate_plant_config(plant: dict[str, Any]) -> None:
         raise ConfigurationError("PLANT_CONFIG.paths.output_root 不能为空")
     if not paths.get("condition_snapshots_dir"):
         raise ConfigurationError("PLANT_CONFIG.paths.condition_snapshots_dir 不能为空")
-    if not time_column(plant):
-        raise ConfigurationError("PLANT_CONFIG.time_column 不能为空")
-
     safe_range = plant.get("outlet_so2_safe_range")
     if not isinstance(safe_range, (list, tuple)) or len(safe_range) != 2:
         raise ConfigurationError("outlet_so2_safe_range 必须为 [min,max]")

@@ -7,6 +7,7 @@ publication mode.
 """
 
 import math
+from system.model.config.standard_fields import LIQUID_GAS_RATIO_COLUMN
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from system.model.map_control.condition_model.condition_config import (
@@ -52,8 +53,8 @@ class ConditionMerger:
 
         first_lg = self._liquid_gas_center(first)
         second_lg = self._liquid_gas_center(second)
-        first_lg_count = self._numeric_count(first, "liquid_gas")
-        second_lg_count = self._numeric_count(second, "liquid_gas")
+        first_lg_count = self._numeric_count(first, LIQUID_GAS_RATIO_COLUMN)
+        second_lg_count = self._numeric_count(second, LIQUID_GAS_RATIO_COLUMN)
         evidence.update({
             "first_mean_liquid_gas": first_lg,
             "second_mean_liquid_gas": second_lg,
@@ -225,9 +226,9 @@ class ConditionMerger:
 
     @classmethod
     def _liquid_gas_center(cls, cell: GridCell) -> Optional[float]:
-        value = cell.statistics.get("mean_liquid_gas")
+        value = cell.statistics.get(f"mean_{LIQUID_GAS_RATIO_COLUMN}")
         if value is None:
-            value = cell.statistics.get("median_liquid_gas")
+            value = cell.statistics.get("mean_liquid_gas") or cell.statistics.get("median_liquid_gas")
         return cls._finite(value)
 
     @staticmethod
@@ -248,8 +249,8 @@ class ConditionMerger:
     @staticmethod
     def _adjacent(first: GridCell, second: GridCell) -> bool:
         return (
-            abs(first.load_level - second.load_level)
-            + abs(first.inlet_so2_level - second.inlet_so2_level)
+            abs(first.axis_1_level - second.axis_1_level)
+            + abs(first.axis_2_level - second.axis_2_level)
             == 1
         )
 
@@ -281,7 +282,7 @@ class ConditionMerger:
     @staticmethod
     def _is_rectangle(cells: Iterable[GridCell]) -> bool:
         coordinates: Set[Tuple[int, int]] = {
-            (cell.load_level, cell.inlet_so2_level)
+            (cell.axis_1_level, cell.axis_2_level)
             for cell in cells
         }
         p_values = {item[0] for item in coordinates}

@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from system.model.config.plant_config import PLANT_CONFIG
+from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -20,7 +21,7 @@ POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
 
 SLURRY_CORE_BRIDGE_CONFIG = {
     # 唯一厂级字段来源：system/model/config/plant_config.py
-    "target_column": str(PLANT_CONFIG["process_columns"]["target_so2"]),
+    "target_column": TARGET_SO2_COLUMN,
     "initial_version": "v001",
 
     # 第一模块训练入口与产物。

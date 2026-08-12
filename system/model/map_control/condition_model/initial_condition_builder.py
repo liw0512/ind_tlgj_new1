@@ -5,9 +5,9 @@ Coverage maturity depends only on sample-count thresholds. The model contains
 no action-event, confidence, or slurry-flow logic.
 
 Important topology rule:
-- condition axes + liquid/gas + outlet SO2 are the structural training inputs;
-- tower pH columns are optional explanatory statistics for this first module;
-- missing XST/APT pH never changes grid mapping or condition_label.
+- condition axes + liquid_gas_ratio + jyq_SO2 are the structural training inputs;
+- enabled-tower pH columns are optional explanatory statistics;
+- missing tower pH never changes grid mapping or condition_label.
 
 This keeps the first module independent from single-/dual-tower plant topology.
 The slurry-policy module owns the enabled tower/valve topology and validates
@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
+
+from system.model.config.standard_fields import (
+    LIQUID_GAS_RATIO_COLUMN,
+    OUTLET_SO2_COLUMN,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
@@ -53,12 +58,6 @@ from system.model.map_control.condition_model.snapshot_io import (
 )
 
 
-NUMERIC_STATISTIC_KEYS = (
-    "liquid_gas",
-    "xst_ph",
-    "apt_ph",
-    "net_so2",
-)
 
 
 def normalize_and_validate_training_frame(
@@ -66,66 +65,37 @@ def normalize_and_validate_training_frame(
     config: ConditionModelConfig,
     context: str = "training",
 ) -> pd.DataFrame:
-    """Normalize headers and validate only structural first-module inputs.
-
-    Required:
-    - the configured one/two condition-axis columns;
-    - liquid/gas ratio, because automatic merge uses it;
-    - outlet SO2, because risk_rate uses it.
-
-    Optional:
-    - xst_ph / apt_ph. They are explanatory statistics only in condition_model.
-      A single-tower plant therefore does not need to manufacture aptjy_PH.
-    """
-
+    """Validate the fixed standard interface plus configured condition axes."""
     normalized = frame.copy()
-    normalized.columns = [
-        str(column).replace("\ufeff", "").strip()
-        for column in normalized.columns
-    ]
+    normalized.columns = [str(column).replace("\ufeff", "").strip() for column in normalized.columns]
     duplicates = normalized.columns[normalized.columns.duplicated()].tolist()
     if duplicates:
-        raise ValueError(
-            f"{context} CSV contains duplicate columns after normalization: "
-            f"{duplicates}"
-        )
+        raise ValueError(f"{context} CSV contains duplicate columns after normalization: {duplicates}")
 
     required: Dict[str, str] = {
         f"condition_axis_{index}": column
         for index, column in enumerate(config.condition_axis_columns, start=1)
     }
-    required.update(
-        {
-            "liquid_gas": config.data_columns.liquid_gas,
-            "outlet_so2": config.data_columns.outlet_so2,
-        }
-    )
+    required.update({
+        LIQUID_GAS_RATIO_COLUMN: LIQUID_GAS_RATIO_COLUMN,
+        OUTLET_SO2_COLUMN: OUTLET_SO2_COLUMN,
+    })
 
-    missing = [
-        f"{logical_name}={column}"
-        for logical_name, column in required.items()
-        if column not in normalized.columns
-    ]
+    missing = [f"{logical_name}={column}" for logical_name, column in required.items() if column not in normalized.columns]
     if missing:
         raise ValueError(
-            f"{context} CSV is missing configured columns: {', '.join(missing)}; "
+            f"{context} CSV is missing required standard/configured columns: {', '.join(missing)}; "
             f"actual columns={list(normalized.columns)}"
         )
 
     invalid = []
     for logical_name, column in required.items():
         numeric = pd.to_numeric(normalized[column], errors="coerce")
-        finite_count = int(
-            numeric.map(
-                lambda value: bool(pd.notna(value) and math.isfinite(float(value)))
-            ).sum()
-        )
+        finite_count = int(numeric.map(lambda value: bool(pd.notna(value) and math.isfinite(float(value)))).sum())
         if finite_count == 0:
             invalid.append(f"{logical_name}={column}")
     if invalid:
-        raise ValueError(
-            f"{context} CSV has no finite numeric values in: {', '.join(invalid)}"
-        )
+        raise ValueError(f"{context} CSV has no finite numeric values in: {', '.join(invalid)}")
     return normalized
 
 
@@ -175,41 +145,23 @@ def build_state_key(row: Dict[str, Any]) -> str:
     return f"XP{_safe_count(xst)}-AP{_safe_count(apt)}-{mode}-{supply}"
 
 
-def get_condition_axis_values(
-    row: Dict[str, Any],
-    config: ConditionModelConfig,
-) -> tuple:
-    """Read configured fixed-grid axis values.
-
-    One-axis mode reuses the first source value for the internal singleton
-    second slot. The second slot is ignored by locate_grid and does not require
-    any additional plant field.
-    """
-
-    first_value = _safe_float(row[config.load_column])
+def get_condition_axis_values(row: Dict[str, Any], config: ConditionModelConfig) -> tuple:
+    first_value = _safe_float(row[config.axis_1.column])
     if first_value is None:
-        raise ValueError(
-            f"condition axis {config.load_column!r} contains a missing or non-finite value"
-        )
+        raise ValueError(f"condition axis {config.axis_1.column!r} contains a missing or non-finite value")
     if config.single_axis_mode:
         return first_value, first_value
-
-    second_value = _safe_float(row[config.inlet_so2_column])
+    second_value = _safe_float(row[config.axis_2.column])
     if second_value is None:
-        raise ValueError(
-            f"condition axis {config.inlet_so2_column!r} contains a missing or non-finite value"
-        )
+        raise ValueError(f"condition axis {config.axis_2.column!r} contains a missing or non-finite value")
     return first_value, second_value
 
 
-def _empty_value_lists() -> Dict[str, List[Any]]:
-    return {
-        "liquid_gas": [],
-        "xst_ph": [],
-        "apt_ph": [],
-        "net_so2": [],
-        "risk": [],
-    }
+def _empty_value_lists(config: ConditionModelConfig) -> Dict[str, List[Any]]:
+    keys = [LIQUID_GAS_RATIO_COLUMN, *config.tower_ph_columns, OUTLET_SO2_COLUMN]
+    result = {key: [] for key in dict.fromkeys(keys)}
+    result["risk"] = []
+    return result
 
 
 class InitialConditionBuilder:
@@ -223,7 +175,7 @@ class InitialConditionBuilder:
     ) -> ConditionSnapshot:
         catalog = create_complete_grid(self.config)
         values_by_grid = {
-            grid_id: _empty_value_lists()
+            grid_id: _empty_value_lists(self.config)
             for grid_id in catalog
         }
 
@@ -249,7 +201,7 @@ class InitialConditionBuilder:
             grid_catalog=catalog,
             grid_adjacency=build_fixed_adjacency(catalog),
             policy_regions=regions,
-            metadata={"snapshot_schema_version": "5.0"},
+            metadata={"snapshot_schema_version": "6.0"},
         )
 
     def _add_row(
@@ -262,36 +214,26 @@ class InitialConditionBuilder:
             return
         try:
             first_value, second_value = get_condition_axis_values(row, self.config)
-            grid_id, clipped, _ = locate_grid(
-                first_value,
-                second_value,
-                self.config,
-            )
+            grid_id, clipped, _ = locate_grid(first_value, second_value, self.config)
         except (KeyError, TypeError, ValueError, OverflowError):
             return
 
         cell = catalog[grid_id]
         cell.sample_count += 1
         cell.clipped_count += int(clipped)
-
         state_key = build_state_key(row)
         profile = cell.state_profiles.setdefault(state_key, {"sample_count": 0})
         profile["sample_count"] += 1
         pump_key = "-".join(state_key.split("-")[:2])
-        cell.pump_distribution[pump_key] = (
-            cell.pump_distribution.get(pump_key, 0) + 1
-        )
+        cell.pump_distribution[pump_key] = cell.pump_distribution.get(pump_key, 0) + 1
 
-        columns = self.config.data_columns
         values = values_by_grid[grid_id]
-        self._append(values["liquid_gas"], row.get(columns.liquid_gas))
-        # pH is deliberately optional in the condition model. The policy model
-        # validates the pH fields of enabled towers using PLANT_CONFIG.towers.
-        self._append(values["xst_ph"], row.get(columns.xst_ph))
-        self._append(values["apt_ph"], row.get(columns.apt_ph))
-        self._append(values["net_so2"], row.get(columns.outlet_so2))
-
-        outlet_so2 = _safe_float(row.get(columns.outlet_so2))
+        self._append(values[LIQUID_GAS_RATIO_COLUMN], row.get(LIQUID_GAS_RATIO_COLUMN))
+        for ph_column in self.config.tower_ph_columns:
+            if ph_column in values:
+                self._append(values[ph_column], row.get(ph_column))
+        self._append(values[OUTLET_SO2_COLUMN], row.get(OUTLET_SO2_COLUMN))
+        outlet_so2 = _safe_float(row.get(OUTLET_SO2_COLUMN))
         if outlet_so2 is not None:
             values["risk"].append(outlet_so2 > self.config.emission_limit)
 
@@ -311,7 +253,7 @@ def _grid_id_to_base_id(grid_id: str, config: ConditionModelConfig) -> str:
     first_part, second_part = grid_id.split("-")
     first_level = int(first_part[1:])
     second_level = int(second_part[1:])
-    return str((first_level - 1) * config.inlet_so2.cell_count + second_level)
+    return str((first_level - 1) * config.axis_2.cell_count + second_level)
 
 
 def _empty_numeric_accumulator() -> Dict[str, Any]:
@@ -345,11 +287,9 @@ def _numeric_accumulator(values: List[float]) -> Dict[str, Any]:
 
 def build_cell_accumulators(values: Dict[str, List[Any]]) -> Dict[str, Any]:
     risk_values = values.get("risk", [])
+    numeric_keys = [key for key in values if key != "risk"]
     return {
-        "numeric": {
-            key: _numeric_accumulator(values.get(key, []))
-            for key in NUMERIC_STATISTIC_KEYS
-        },
+        "numeric": {key: _numeric_accumulator(values.get(key, [])) for key in numeric_keys},
         "risk": {
             "valid_count": len(risk_values),
             "risk_count": sum(1 for value in risk_values if bool(value)),
@@ -402,62 +342,54 @@ def _sanitize_numeric_accumulator(value: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def ensure_cell_accumulators(cell: Any) -> None:
-    """Migrate or create additive accumulators for one snapshot grid cell."""
-
+def ensure_cell_accumulators(cell: Any, config: ConditionModelConfig) -> None:
+    """Create current standard-field accumulators and migrate retired snapshot aliases."""
     sample_count = int(cell.sample_count or 0)
     existing = dict(cell.accumulators or {})
     numeric = dict(existing.get("numeric") or {})
 
-    if "xst_ph" not in numeric and "ph" in numeric:
-        numeric["xst_ph"] = numeric["ph"]
-    numeric.pop("ph", None)
-    numeric.pop("slurry_flow", None)
-
-    legacy_values = {
-        "liquid_gas": _legacy_statistic(
-            cell,
-            "mean_liquid_gas",
-            "median_liquid_gas",
-        ),
-        "xst_ph": _legacy_statistic(
-            cell,
-            "mean_xst_ph",
-            "mean_ph",
-            "median_ph",
-        ),
-        "apt_ph": _legacy_statistic(
-            cell,
-            "mean_apt_ph",
-            "median_apt_ph",
-        ),
-        "net_so2": _legacy_statistic(
-            cell,
-            "mean_net_so2",
-            "median_net_so2",
-        ),
+    alias_map = {
+        "liquid_gas": LIQUID_GAS_RATIO_COLUMN,
+        "net_so2": OUTLET_SO2_COLUMN,
     }
+    if config.tower_ph_columns:
+        alias_map["xst_ph"] = config.tower_ph_columns[0]
+        alias_map["ph"] = config.tower_ph_columns[0]
+    if len(config.tower_ph_columns) > 1:
+        alias_map["apt_ph"] = config.tower_ph_columns[1]
+    for old, new in alias_map.items():
+        if new not in numeric and old in numeric:
+            numeric[new] = numeric[old]
+    for retired in ("liquid_gas", "net_so2", "xst_ph", "apt_ph", "ph", "slurry_flow", "total_coal"):
+        numeric.pop(retired, None)
+
+    statistic_aliases: Dict[str, tuple[str, ...]] = {
+        LIQUID_GAS_RATIO_COLUMN: (f"mean_{LIQUID_GAS_RATIO_COLUMN}", "mean_liquid_gas", "median_liquid_gas"),
+        OUTLET_SO2_COLUMN: (f"mean_{OUTLET_SO2_COLUMN}", "mean_net_so2", "median_net_so2"),
+    }
+    if config.tower_ph_columns:
+        statistic_aliases[config.tower_ph_columns[0]] = (
+            f"mean_{config.tower_ph_columns[0]}", "mean_xst_ph", "mean_ph", "median_ph"
+        )
+    if len(config.tower_ph_columns) > 1:
+        statistic_aliases[config.tower_ph_columns[1]] = (
+            f"mean_{config.tower_ph_columns[1]}", "mean_apt_ph", "median_apt_ph"
+        )
 
     migrated_numeric: Dict[str, Dict[str, Any]] = {}
-    for name in NUMERIC_STATISTIC_KEYS:
+    for name in dict.fromkeys([LIQUID_GAS_RATIO_COLUMN, *config.tower_ph_columns, OUTLET_SO2_COLUMN]):
         if name in numeric:
             migrated_numeric[name] = _sanitize_numeric_accumulator(numeric[name])
         else:
             migrated_numeric[name] = _safe_numeric_accumulator_from_legacy(
-                legacy_values[name],
+                _legacy_statistic(cell, *statistic_aliases.get(name, (f"mean_{name}",))),
                 sample_count,
             )
 
     risk_rate = _safe_float(cell.statistics.get("risk_rate"))
     old_risk = dict(existing.get("risk") or {})
-    risk_valid_count = max(
-        0,
-        int(_safe_float(old_risk.get("valid_count")) or 0),
-    )
-    risk_count = max(
-        0,
-        int(_safe_float(old_risk.get("risk_count")) or 0),
-    )
+    risk_valid_count = max(0, int(_safe_float(old_risk.get("valid_count")) or 0))
+    risk_count = max(0, int(_safe_float(old_risk.get("risk_count")) or 0))
     if risk_valid_count == 0 and risk_rate is not None:
         risk_valid_count = sample_count
         risk_count = int(round(risk_rate * risk_valid_count))
@@ -465,14 +397,8 @@ def ensure_cell_accumulators(cell: Any) -> None:
 
     cell.accumulators = {
         "numeric": migrated_numeric,
-        "risk": {
-            "valid_count": risk_valid_count,
-            "risk_count": risk_count,
-        },
-        "statistics_quality": existing.get(
-            "statistics_quality",
-            "LEGACY_APPROXIMATE",
-        ),
+        "risk": {"valid_count": risk_valid_count, "risk_count": risk_count},
+        "statistics_quality": existing.get("statistics_quality", "MIGRATED_LEGACY_APPROX"),
     }
 
 
@@ -528,11 +454,8 @@ def _set_coverage_status(cell: Any, config: ConditionModelConfig) -> None:
         cell.coverage_status = "MATURE"
 
 
-def finalize_cell_from_accumulators(
-    cell: Any,
-    config: ConditionModelConfig,
-) -> None:
-    ensure_cell_accumulators(cell)
+def finalize_cell_from_accumulators(cell: Any, config: ConditionModelConfig) -> None:
+    ensure_cell_accumulators(cell, config)
     numeric = cell.accumulators.get("numeric", {})
     risk = cell.accumulators.get("risk", {})
 
@@ -545,18 +468,14 @@ def finalize_cell_from_accumulators(
     _set_coverage_status(cell, config)
     risk_valid_count = int(risk.get("valid_count", 0))
     risk_count = int(risk.get("risk_count", 0))
-
-    cell.statistics = {
-        "mean_liquid_gas": mean("liquid_gas"),
-        "mean_xst_ph": mean("xst_ph"),
-        "mean_apt_ph": mean("apt_ph"),
-        "mean_net_so2": mean("net_so2"),
-        "risk_rate": (
-            risk_count / risk_valid_count
-            if risk_valid_count
-            else None
-        ),
+    statistics = {
+        f"mean_{LIQUID_GAS_RATIO_COLUMN}": mean(LIQUID_GAS_RATIO_COLUMN),
+        f"mean_{OUTLET_SO2_COLUMN}": mean(OUTLET_SO2_COLUMN),
+        "risk_rate": risk_count / risk_valid_count if risk_valid_count else None,
     }
+    for ph_column in config.tower_ph_columns:
+        statistics[f"mean_{ph_column}"] = mean(ph_column)
+    cell.statistics = statistics
 
 
 CONDITION_OUTPUT_COLUMNS = (
@@ -951,34 +870,19 @@ def update_merge_statistics(
         if not base_id:
             continue
         base_to_label.setdefault(base_id, base_id)
-        item = base_conditions.setdefault(
-            base_id,
-            _new_condition_item(label["base_grid_id"]),
-        )
+        item = base_conditions.setdefault(base_id, _new_condition_item(label["base_grid_id"]))
         item["sample_count"] += 1
 
-        liquid_gas = _safe_float(
-            row.get(config.data_columns.liquid_gas)
-        )
+        liquid_gas = _safe_float(row.get(LIQUID_GAS_RATIO_COLUMN))
         if liquid_gas is not None:
-            item["liquid_gas_sum"] = (
-                _safe_float(item.get("liquid_gas_sum")) or 0.0
-            ) + liquid_gas
-            item["liquid_gas_count"] = int(
-                item.get("liquid_gas_count", 0)
-            ) + 1
-            item["liquid_gas_mean"] = (
-                item["liquid_gas_sum"] / item["liquid_gas_count"]
-            )
+            item["liquid_gas_sum"] = (_safe_float(item.get("liquid_gas_sum")) or 0.0) + liquid_gas
+            item["liquid_gas_count"] = int(item.get("liquid_gas_count", 0)) + 1
+            item["liquid_gas_mean"] = item["liquid_gas_sum"] / item["liquid_gas_count"]
 
         state_key = label["state_key"]
-        item["state_profile_distribution"][state_key] = (
-            item["state_profile_distribution"].get(state_key, 0) + 1
-        )
+        item["state_profile_distribution"][state_key] = item["state_profile_distribution"].get(state_key, 0) + 1
         pump_key = "-".join(state_key.split("-")[:2])
-        item["pump_distribution"][pump_key] = (
-            item["pump_distribution"].get(pump_key, 0) + 1
-        )
+        item["pump_distribution"][pump_key] = item["pump_distribution"].get(pump_key, 0) + 1
     return rebuild_condition_regions(statistics)
 
 

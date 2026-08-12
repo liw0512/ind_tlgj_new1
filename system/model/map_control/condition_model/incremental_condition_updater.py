@@ -15,6 +15,11 @@ from typing import Any, Dict, Iterable
 
 import pandas as pd
 
+from system.model.config.standard_fields import (
+    LIQUID_GAS_RATIO_COLUMN,
+    OUTLET_SO2_COLUMN,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -107,16 +112,12 @@ class IncrementalConditionUpdater:
     ) -> ConditionSnapshot:
         frozen_config = from_dict(snapshot.grid_config)
         if (
-            frozen_config.load != self.config.load
-            or frozen_config.inlet_so2 != self.config.inlet_so2
-            or frozen_config.load_column != self.config.load_column
-            or frozen_config.inlet_so2_column != self.config.inlet_so2_column
-            or frozen_config.data_columns != self.config.data_columns
+            frozen_config.condition_axes != self.config.condition_axes
+            or frozen_config.tower_ph_columns != self.config.tower_ph_columns
             or frozen_config.emission_limit != self.config.emission_limit
         ):
             raise ValueError(
-                "Incremental update cannot change the published grid, field "
-                "mapping, or emission limit"
+                "Incremental update cannot change the published condition axes, tower pH fields, or emission limit"
             )
 
         updated = deepcopy(snapshot)
@@ -128,71 +129,45 @@ class IncrementalConditionUpdater:
         updated.metadata["snapshot_schema_version"] = SNAPSHOT_SCHEMA_VERSION
 
         for cell in updated.grid_catalog.values():
-            ensure_cell_accumulators(cell)
+            ensure_cell_accumulators(cell, self.config)
         for row in rows:
             self._add_incremental_row(updated, row)
         for cell in updated.grid_catalog.values():
             finalize_cell_from_accumulators(cell, self.config)
         return updated
 
-    def _add_incremental_row(
-        self,
-        snapshot: ConditionSnapshot,
-        row: Dict[str, Any],
-    ) -> None:
+    def _add_incremental_row(self, snapshot: ConditionSnapshot, row: Dict[str, Any]) -> None:
         if row.get("condition_mapping_ok", True) is False:
             return
         try:
-            load_value, inlet_so2 = get_condition_axis_values(row, self.config)
-            grid_id, clipped, _ = locate_grid(
-                load_value,
-                inlet_so2,
-                self.config,
-            )
+            first_value, second_value = get_condition_axis_values(row, self.config)
+            grid_id, clipped, _ = locate_grid(first_value, second_value, self.config)
         except (KeyError, TypeError, ValueError, OverflowError):
             return
 
         cell = snapshot.grid_catalog[grid_id]
-        ensure_cell_accumulators(cell)
+        ensure_cell_accumulators(cell, self.config)
         cell.sample_count += 1
         cell.clipped_count += int(clipped)
-
         state_key = build_state_key(row)
         profile = cell.state_profiles.setdefault(state_key, {"sample_count": 0})
         profile["sample_count"] += 1
         pump_key = "-".join(state_key.split("-")[:2])
-        cell.pump_distribution[pump_key] = (
-            cell.pump_distribution.get(pump_key, 0) + 1
-        )
+        cell.pump_distribution[pump_key] = cell.pump_distribution.get(pump_key, 0) + 1
 
-        columns = self.config.data_columns
         numeric = cell.accumulators.setdefault("numeric", {})
         update_numeric_accumulator(
-            numeric.setdefault("liquid_gas", {}),
-            row.get(columns.liquid_gas),
+            numeric.setdefault(LIQUID_GAS_RATIO_COLUMN, {}),
+            row.get(LIQUID_GAS_RATIO_COLUMN),
         )
+        for ph_column in self.config.tower_ph_columns:
+            update_numeric_accumulator(numeric.setdefault(ph_column, {}), row.get(ph_column))
         update_numeric_accumulator(
-            numeric.setdefault("xst_ph", {}),
-            row.get(columns.xst_ph),
+            numeric.setdefault(OUTLET_SO2_COLUMN, {}),
+            row.get(OUTLET_SO2_COLUMN),
         )
-        update_numeric_accumulator(
-            numeric.setdefault("apt_ph", {}),
-            row.get(columns.apt_ph),
-        )
-        update_numeric_accumulator(
-            numeric.setdefault("net_so2", {}),
-            row.get(columns.outlet_so2),
-        )
-
-        risk = cell.accumulators.setdefault(
-            "risk",
-            {"valid_count": 0, "risk_count": 0},
-        )
-        update_risk_accumulator(
-            risk,
-            row.get(columns.outlet_so2),
-            self.config.emission_limit,
-        )
+        risk = cell.accumulators.setdefault("risk", {"valid_count": 0, "risk_count": 0})
+        update_risk_accumulator(risk, row.get(OUTLET_SO2_COLUMN), self.config.emission_limit)
 
 
 def build_incremental_condition_csv(

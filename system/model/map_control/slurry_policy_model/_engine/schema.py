@@ -11,6 +11,8 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
+from system.model.config.standard_fields import OUTLET_SO2_COLUMN, TIME_COLUMN
+
 
 def _load_site_plant_config() -> dict[str, Any]:
     """Load the one authoritative plant config without depending on cwd."""
@@ -39,10 +41,6 @@ def _load_site_plant_config() -> dict[str, Any]:
 
 
 _SITE_PLANT_CONFIG = _load_site_plant_config()
-OUTLET_SO2_COLUMN = str(
-    _SITE_PLANT_CONFIG["process_columns"]["outlet_so2"]
-)
-LEGACY_CONDITION_AXIS_COLUMNS = ("jzfh", "yyq_SO2")
 
 CONDITION_SNAPSHOT_VERSION_COLUMN = "condition_snapshot_version"
 GRID_ID_COLUMN = "grid_id"
@@ -82,8 +80,10 @@ AUDIT_CONDITION_COLUMNS = (
 ALL_CONDITION_COLUMNS = REQUIRED_CONDITION_COLUMNS + AUDIT_CONDITION_COLUMNS
 
 
-def time_column(plant: dict[str, Any]) -> str:
-    return str(plant.get("time_column", "date")).strip() or "date"
+def time_column(plant: dict[str, Any] | None = None) -> str:
+    """Return the fixed post-preprocessor timestamp field."""
+    del plant
+    return TIME_COLUMN
 
 
 def _configured_condition_axes() -> list[dict[str, Any]]:

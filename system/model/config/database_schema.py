@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 import pandas as pd
 
 from system.model.config.plant_config import PLANT_CONFIG
+from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
 # 用户当前 data_preprocessor1 输出的基础字段。顺序同时作为 INSERT 顺序。
@@ -52,7 +53,7 @@ _BASE_FIELDS = OrderedDict([
     ("liquid_gas_ratio", "float8"),
     ("desulfurization_efficiency", "float8"),
     # 在线目标是运行事实，存在时一起留档；没有时保持 NULL。
-    (str(PLANT_CONFIG["process_columns"]["target_so2"]), "float8"),
+    (TARGET_SO2_COLUMN, "float8"),
 ])
 
 

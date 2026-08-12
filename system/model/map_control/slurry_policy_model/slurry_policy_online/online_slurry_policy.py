@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from system.model.config.standard_fields import TIME_COLUMN
+
 import copy
 import threading
 import uuid
@@ -168,7 +170,7 @@ class OnlineSlurryPolicy:
                 elif target_block is not None:
                     target_value = target_block
             ts_value = realtime_data.get("timestamp") or process.get(
-                self.plant.get("time_column", "date")
+                TIME_COLUMN
             )
         else:
             process = dict(realtime_data)
@@ -176,7 +178,7 @@ class OnlineSlurryPolicy:
             execution = dict(execution_context or {})
             target_value = target
             ts_value = process.get("timestamp") or process.get(
-                self.plant.get("time_column", "date")
+                TIME_COLUMN
             )
         if isinstance(target_value, dict):
             target_value = target_value.get("outlet_so2_target")

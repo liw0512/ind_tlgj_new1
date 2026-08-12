@@ -336,8 +336,8 @@ def _base_condition_id(
     if cell is None:
         return ""
     return str(
-        (cell.load_level - 1) * config.inlet_so2.cell_count
-        + cell.inlet_so2_level
+        (cell.axis_1_level - 1) * config.axis_2.cell_count
+        + cell.axis_2_level
     )
 
 

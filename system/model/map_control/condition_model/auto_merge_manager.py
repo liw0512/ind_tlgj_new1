@@ -34,13 +34,13 @@ from system.model.map_control.condition_model.condition_schema import (
 
 
 AUTO_MERGE_ALGORITHM_VERSION = "auto-merge-v2"
-SNAPSHOT_SCHEMA_VERSION = "5.1"
+SNAPSHOT_SCHEMA_VERSION = "6.0"
 
 
 def _base_id(cell: GridCell, config: ConditionModelConfig) -> str:
     return str(
-        (cell.load_level - 1) * config.inlet_so2.cell_count
-        + cell.inlet_so2_level
+        (cell.axis_1_level - 1) * config.axis_2.cell_count
+        + cell.axis_2_level
     )
 
 
@@ -49,7 +49,7 @@ def _grid_sort_key(
     catalog: Dict[str, GridCell],
 ) -> Tuple[int, int]:
     cell = catalog[grid_id]
-    return cell.load_level, cell.inlet_so2_level
+    return cell.axis_1_level, cell.axis_2_level
 
 
 def _signature(

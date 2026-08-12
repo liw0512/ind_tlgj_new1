@@ -1,6 +1,6 @@
 """湿法脱硫供浆历史动作响应模型——算法配置。
 
-厂级物理/信号参数不再在本文件重复维护。工况轴、现场字段、SO2安全范围、
+厂级物理/信号参数不再在本文件重复维护。工况轴、SO2安全范围、
 单塔/双塔、pH、阀门、供浆泵及 pump->valve 拓扑统一来自：
 ``system/model/config/plant_config.py``。
 
@@ -27,7 +27,7 @@ MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
 POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
 
 # 第二模块使用中央厂级配置的深拷贝，并只补充本模块运行所需的项目路径。
-# towers / valves / supply_pumps / pH / SO2 / time_column 等都不在这里再写一份。
+# towers / valves / supply_pumps / pH / SO2 等都不在这里再写一份；标准过程字段名固定。
 PLANT_CONFIG = copy.deepcopy(SITE_PLANT_CONFIG)
 PLANT_CONFIG["paths"] = {
     "default_initial_input": str(MODEL_CSV_ROOT / "Initial_train_after_condition.csv"),
