@@ -15,6 +15,7 @@ from .calibration import (
 )
 from .data_loader import assign_continuous_segments, load_input_data
 from .episode_extractor import extract_decision_episodes
+from .schema import freeze_condition_axes
 from .signal_processing import add_clean_valve_columns
 from .tower_policy_projection import project_tower_policy_deltas
 
@@ -36,8 +37,8 @@ def _emit_range(
 
 
 def _normalized_training_semantics(training: dict[str, Any]) -> dict[str, Any]:
-    """Attach the canonical V2 semantics to the effective training snapshot."""
-    result = copy.deepcopy(training)
+    """Attach canonical policy semantics and freeze condition-axis metadata."""
+    result = freeze_condition_axes(training)
     result.setdefault("state", {})
     result["state"].setdefault("policy_state_mode", "COARSE_TOWER")
     result.setdefault("policy_semantics_version", POLICY_SEMANTICS_VERSION)
@@ -48,10 +49,11 @@ def _validate_previous_semantics(
     previous_effective_config: dict[str, Any] | None,
     training: dict[str, Any],
 ) -> None:
-    """Do not mix legacy detailed/per-valve episodes into a V2 incremental snapshot."""
     if not previous_effective_config:
         return
-    mode = str(training.get("state", {}).get("policy_state_mode", "COARSE_TOWER")).upper()
+    mode = str(
+        training.get("state", {}).get("policy_state_mode", "COARSE_TOWER")
+    ).upper()
     if mode == "LEGACY_DETAILED":
         return
 
@@ -72,6 +74,16 @@ def _validate_previous_semantics(
             "新基线建立后，后续版本可继续正常增量训练。"
         )
 
+    # 工况轴属于 episode 定义的一部分。字段/顺序变化后旧 episode 的扰动与
+    # 邻域含义已经不同，不能直接增量混用。
+    previous_axes = previous_training.get("_condition_axes")
+    current_axes = training.get("_condition_axes")
+    if previous_axes is not None and previous_axes != current_axes:
+        raise ValueError(
+            "第一模块 condition axes 已变化，旧第二模块 episode 不能直接增量继承。"
+            "请基于完整历史数据重新执行一次初次训练。"
+        )
+
 
 def prepare_raw_data(
     input_specs: list[str] | str,
@@ -79,6 +91,9 @@ def prepare_raw_data(
     training: dict[str, Any],
     progress: ProgressCallback | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
+    # load_input_data 也会从同一 condition_config 读取轴；这里提前冻结，确保本次
+    # 训练从 CSV 读取到最终 effective_config 始终使用完全相同的字段定义。
+    training = freeze_condition_axes(training)
     df, warnings = load_input_data(
         input_specs,
         plant,
@@ -89,7 +104,9 @@ def prepare_raw_data(
         progress(0.78, "划分连续运行数据段")
     df = assign_continuous_segments(df, plant, training)
     if progress:
-        segment_count = int(df["continuous_segment_id"].nunique()) if not df.empty else 0
+        segment_count = (
+            int(df["continuous_segment_id"].nunique()) if not df.empty else 0
+        )
         progress(0.86, f"连续运行段划分完成，共 {segment_count} 段")
         progress(0.90, "执行阀位短窗口中位数去抖")
     df = add_clean_valve_columns(df, plant, training)
@@ -111,19 +128,19 @@ def run_episode_pipeline(
     _validate_previous_semantics(previous_effective_config, training)
 
     if progress:
-        progress(0.01, "准备扰动阈值")
+        progress(0.01, "准备工况轴扰动阈值")
     if previous_effective_config and not recalibrate:
         effective_disturbance = copy.deepcopy(
             previous_effective_config["disturbance"]
         )
         if progress:
-            progress(0.06, "沿用上一版负荷与原烟气 SO2 扰动阈值")
+            progress(0.06, "沿用上一版工况轴扰动阈值")
     else:
         effective_disturbance = calibrate_disturbance_thresholds(
             raw_df, plant, training
         )
         if progress:
-            progress(0.06, "完成负荷与原烟气 SO2 扰动阈值标定")
+            progress(0.06, "完成工况轴扰动阈值标定")
 
     episodes, _actions = extract_decision_episodes(
         raw_df,
@@ -139,7 +156,9 @@ def run_episode_pipeline(
         effective_action = copy.deepcopy(
             previous_effective_config["action_magnitude"]
         )
-        effective_response = copy.deepcopy(previous_effective_config["response"])
+        effective_response = copy.deepcopy(
+            previous_effective_config["response"]
+        )
         if progress:
             progress(0.76, "沿用上一版动作幅度和响应强度参数")
     else:
@@ -155,12 +174,6 @@ def run_episode_pipeline(
         episodes = assign_response_labels(episodes, effective_response)
         valid = episodes[episodes["valid"]].copy()
         invalid = episodes[~episodes["valid"]].copy()
-
-        # V2 的 valid episode 对外同时保留两层事实：
-        # - raw_delta_*：现场真实分阀动作，供审计；
-        # - delta_*：塔级等效策略动作，供所有后续聚合入口使用。
-        # 因此即使正式训练在 slurry_policy_core 中晚些时候才重映射并聚合，
-        # 初次/增量两条路径也都会使用同一塔级动作语义。
         valid = project_tower_policy_deltas(valid, plant)
     else:
         valid = pd.DataFrame()
