@@ -1,15 +1,14 @@
 """p4pc -> condition_model -> slurry_policy_model bridge configuration.
 
 This file contains only fixed project wiring: script locations, fixed interface
-CSV paths, snapshot roots and the integrated active-version pointer.  Plant
-signal names are not configured here; the target field is derived from the
-single ``plant_config.py`` source.
+CSV paths, snapshot roots and the integrated active-version pointer. Standard
+process signal names are fixed in ``standard_fields.py`` and are not configured
+again in this bridge.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from system.model.config.plant_config import PLANT_CONFIG
 from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
@@ -20,7 +19,6 @@ MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
 POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
 
 SLURRY_CORE_BRIDGE_CONFIG = {
-    # 唯一厂级字段来源：system/model/config/plant_config.py
     "target_column": TARGET_SO2_COLUMN,
     "initial_version": "v001",
 
