@@ -23,13 +23,12 @@ from .schema import (
     CONDITION_VALID_COLUMN,
     COVERAGE_STATUS_COLUMN,
     GRID_ID_COLUMN,
-    INLET_SO2_COLUMN,
-    LOAD_COLUMN,
     OUTLET_SO2_COLUMN,
     OUT_OF_RANGE_CLIPPED_COLUMN,
     POLICY_REGION_ID_COLUMN,
     REGION_MEMBER_COUNT_COLUMN,
     REGION_STATUS_COLUMN,
+    condition_axis_columns,
     time_column,
 )
 from .utils import (
@@ -111,42 +110,86 @@ def _populate_windows(
     effective_disturbance: dict[str, Any],
 ) -> dict[str, Any]:
     ts_col = time_column(plant)
-    load_col = LOAD_COLUMN
-    inlet_col = INLET_SO2_COLUMN
+    axes = condition_axis_columns(training)
+    first_axis_col = axes[0]
+    second_axis_col = axes[1] if len(axes) > 1 else None
     outlet_col = OUTLET_SO2_COLUMN
 
-    record["before_load"] = median_or_nan(baseline[load_col])
-    record["before_inlet_so2"] = median_or_nan(baseline[inlet_col])
-    record["before_outlet_so2"] = median_or_nan(baseline[outlet_col])
-    record["after_load"] = median_or_nan(response[load_col])
-    record["after_inlet_so2"] = median_or_nan(response[inlet_col])
-    record["after_outlet_so2"] = median_or_nan(response[outlet_col])
-    record["delta_outlet_so2"] = record["after_outlet_so2"] - record["before_outlet_so2"]
+    record["before_condition_axis_1"] = median_or_nan(baseline[first_axis_col])
+    record["after_condition_axis_1"] = median_or_nan(response[first_axis_col])
+    if second_axis_col is None:
+        record["before_condition_axis_2"] = np.nan
+        record["after_condition_axis_2"] = np.nan
+    else:
+        record["before_condition_axis_2"] = median_or_nan(baseline[second_axis_col])
+        record["after_condition_axis_2"] = median_or_nan(response[second_axis_col])
 
-    record["before_load_rate"] = robust_slope_per_minute(baseline[ts_col], baseline[load_col])
-    record["before_inlet_so2_rate"] = robust_slope_per_minute(baseline[ts_col], baseline[inlet_col])
-    record["before_outlet_so2_rate"] = robust_slope_per_minute(baseline[ts_col], baseline[outlet_col])
-    record["episode_load_rate"] = robust_slope_per_minute(full[ts_col], full[load_col])
-    record["episode_inlet_so2_rate"] = robust_slope_per_minute(full[ts_col], full[inlet_col])
+    record["before_outlet_so2"] = median_or_nan(baseline[outlet_col])
+    record["after_outlet_so2"] = median_or_nan(response[outlet_col])
+    record["delta_outlet_so2"] = (
+        record["after_outlet_so2"] - record["before_outlet_so2"]
+    )
+
+    record["before_condition_axis_1_rate"] = robust_slope_per_minute(
+        baseline[ts_col], baseline[first_axis_col]
+    )
+    record["episode_condition_axis_1_rate"] = robust_slope_per_minute(
+        full[ts_col], full[first_axis_col]
+    )
+    if second_axis_col is None:
+        record["before_condition_axis_2_rate"] = 0.0
+        record["episode_condition_axis_2_rate"] = 0.0
+    else:
+        record["before_condition_axis_2_rate"] = robust_slope_per_minute(
+            baseline[ts_col], baseline[second_axis_col]
+        )
+        record["episode_condition_axis_2_rate"] = robust_slope_per_minute(
+            full[ts_col], full[second_axis_col]
+        )
+    record["before_outlet_so2_rate"] = robust_slope_per_minute(
+        baseline[ts_col], baseline[outlet_col]
+    )
 
     record["disturbance_mode"] = classify_disturbance(
-        record["episode_load_rate"], record["episode_inlet_so2_rate"], effective_disturbance
+        record["episode_condition_axis_1_rate"],
+        (
+            record["episode_condition_axis_2_rate"]
+            if second_axis_col is not None
+            else None
+        ),
+        effective_disturbance,
     )
 
     outlet_values = pd.to_numeric(response[outlet_col], errors="coerce").dropna()
-    record["post_outlet_so2_median"] = float(outlet_values.median()) if not outlet_values.empty else np.nan
-    record["post_outlet_so2_p25"] = float(outlet_values.quantile(0.25)) if not outlet_values.empty else np.nan
-    record["post_outlet_so2_p75"] = float(outlet_values.quantile(0.75)) if not outlet_values.empty else np.nan
-    record["post_outlet_so2_std"] = float(outlet_values.std(ddof=0)) if len(outlet_values) > 1 else 0.0
-    record["post_outlet_so2_range"] = float(outlet_values.max() - outlet_values.min()) if not outlet_values.empty else np.nan
+    record["post_outlet_so2_median"] = (
+        float(outlet_values.median()) if not outlet_values.empty else np.nan
+    )
+    record["post_outlet_so2_p25"] = (
+        float(outlet_values.quantile(0.25)) if not outlet_values.empty else np.nan
+    )
+    record["post_outlet_so2_p75"] = (
+        float(outlet_values.quantile(0.75)) if not outlet_values.empty else np.nan
+    )
+    record["post_outlet_so2_std"] = (
+        float(outlet_values.std(ddof=0)) if len(outlet_values) > 1 else 0.0
+    )
+    record["post_outlet_so2_range"] = (
+        float(outlet_values.max() - outlet_values.min())
+        if not outlet_values.empty
+        else np.nan
+    )
     record["outlet_so2_sign_changes"] = _sign_changes(
-        response[outlet_col], float(training["response"]["oscillation_diff_deadband"])
+        response[outlet_col],
+        float(training["response"]["oscillation_diff_deadband"]),
     )
 
     safe_so2_lo, safe_so2_hi = map(float, plant["outlet_so2_safe_range"])
     record["outlet_so2_out_of_range"] = bool(
         not outlet_values.empty
-        and ((outlet_values < safe_so2_lo).any() or (outlet_values > safe_so2_hi).any())
+        and (
+            (outlet_values < safe_so2_lo).any()
+            or (outlet_values > safe_so2_hi).any()
+        )
     )
     record["outlet_so2_over_hard_max"] = bool(
         not outlet_values.empty and (outlet_values > safe_so2_hi).any()
@@ -179,7 +222,6 @@ def _populate_windows(
             or record[f"ph_above_limit__{tower_id}"]
         )
 
-    # HOLD 的阀位基线和响应值需要从窗口计算。
     if record["episode_type"] == "HOLD":
         for valve in all_valves(plant):
             valve_id = valve["valve_id"]
@@ -194,8 +236,6 @@ def _populate_windows(
                 (after_value - before_value) / span if span > 0 else 0.0
             )
 
-    # V1.6：第一模块细工况完全保留；第二模块使用“锚点工况 + 邻域容忍归属”。
-    # ACTION 锚点为动作开始时刻，HOLD 锚点为窗口内占比最高的 condition_label/grid。
     identity_window = full[
         full[ts_col] >= pd.Timestamp(record["action_start_time"])
     ]
@@ -210,7 +250,6 @@ def _populate_windows(
     anchor_row = attribution.pop("anchor_row")
     record.update(attribution)
 
-    # 供浆泵启停或运行组合变化会破坏阀门动作的独立归因。
     supply_changed, changed_columns = detect_supply_pump_state_change(
         identity_window, plant
     )
@@ -239,8 +278,12 @@ def _populate_windows(
         anchor_row.get(CONDITION_VALID_COLUMN), False
     )
     record["continuous_segment_id"] = int(anchor_row["continuous_segment_id"])
-    record["event_date"] = pd.Timestamp(record["action_start_time"]).date().isoformat()
-    record["source_files"] = ";".join(sorted(set(full["__source_file"].astype(str))))
+    record["event_date"] = pd.Timestamp(
+        record["action_start_time"]
+    ).date().isoformat()
+    record["source_files"] = ";".join(
+        sorted(set(full["__source_file"].astype(str)))
+    )
 
     state_key, state_no_grid = build_policy_state(record, plant, training)
     record["policy_state_key"] = state_key
@@ -262,30 +305,44 @@ def _validate_episode(
         reasons.append("BASELINE_WINDOW_INCOMPLETE")
     if response_coverage < minimum:
         reasons.append("RESPONSE_WINDOW_INCOMPLETE")
-    if training["validity"].get("require_condition_valid", True) and not record["condition_valid"]:
+    if (
+        training["validity"].get("require_condition_valid", True)
+        and not record["condition_valid"]
+    ):
         reasons.append("CONDITION_INVALID")
     if (
         not training["validity"].get("allow_out_of_range_clipped", True)
         and bool_value(record.get("out_of_range_clipped"), False)
     ):
         reasons.append("CONDITION_CLIPPED")
-    if followup_action and training["episode"].get("invalidate_followup_action_in_response", True):
+    if (
+        followup_action
+        and training["episode"].get(
+            "invalidate_followup_action_in_response", True
+        )
+    ):
         reasons.append("FOLLOWUP_ACTION_IN_RESPONSE_WINDOW")
     if (
         bool(record.get("supply_pump_state_changed", False))
-        and training["validity"].get("invalidate_supply_pump_state_change", True)
+        and training["validity"].get(
+            "invalidate_supply_pump_state_change", True
+        )
     ):
         reasons.append("SUPPLY_PUMP_STATE_CHANGED")
 
     required_values = [
-        record.get("before_load"),
-        record.get("before_inlet_so2"),
+        record.get("before_condition_axis_1"),
         record.get("before_outlet_so2"),
         record.get("after_outlet_so2"),
     ]
+    if len(condition_axis_columns(training)) > 1:
+        required_values.append(record.get("before_condition_axis_2"))
     for tower in enabled_towers(plant):
         required_values.extend(
-            [record.get(f"before_ph__{tower['tower_id']}"), record.get(f"after_ph__{tower['tower_id']}")]
+            [
+                record.get(f"before_ph__{tower['tower_id']}"),
+                record.get(f"after_ph__{tower['tower_id']}"),
+            ]
         )
     if any(pd.isna(value) for value in required_values):
         reasons.append("CRITICAL_VALUE_MISSING")
@@ -300,7 +357,11 @@ def _episode_id(record: dict[str, Any]) -> str:
             pd.Timestamp(record["action_end_time"]).isoformat(),
             str(record.get("start_grid_id", "UNKNOWN")),
             str(record["action_family"]),
-            *(f"{k}={record[k]:.6f}" for k in sorted(record) if k.startswith("delta_valve__")),
+            *(
+                f"{k}={record[k]:.6f}"
+                for k in sorted(record)
+                if k.startswith("delta_valve__")
+            ),
         ]
     )
     return "EP_" + hash_text(key, 24)
@@ -320,28 +381,40 @@ def _build_action_records(
     delay_minutes = float(training["episode"]["response_delay_minutes"])
     response_minutes = float(training["episode"]["response_window_minutes"])
     ordered_actions = sorted(actions, key=lambda item: item.start_time)
-    action_start_ns = np.array([pd.Timestamp(item.start_time).value for item in ordered_actions], dtype=np.int64)
+    action_start_ns = np.array(
+        [pd.Timestamp(item.start_time).value for item in ordered_actions],
+        dtype=np.int64,
+    )
     records: list[dict[str, Any]] = []
     if progress and not ordered_actions:
         progress(1.0, "没有 ACTION 决策片段需要构建")
     for index, action in enumerate(ordered_actions):
         if progress:
-            progress(index / max(len(ordered_actions), 1), f"构建 ACTION 片段 {index + 1}/{len(ordered_actions)}")
-        baseline_start = action.start_time - pd.Timedelta(minutes=baseline_minutes)
+            progress(
+                index / max(len(ordered_actions), 1),
+                f"构建 ACTION 片段 {index + 1}/{len(ordered_actions)}",
+            )
+        baseline_start = action.start_time - pd.Timedelta(
+            minutes=baseline_minutes
+        )
         response_start = action.end_time + pd.Timedelta(minutes=delay_minutes)
         response_end = response_start + pd.Timedelta(minutes=response_minutes)
         baseline = _subset(indexer, baseline_start, action.start_time)
         response = _subset(indexer, response_start, response_end)
         full = _subset(indexer, baseline_start, response_end)
         record = _base_episode_record(
-            plant, "ACTION", action.start_time, action.end_time, response_end, action
+            plant,
+            "ACTION",
+            action.start_time,
+            action.end_time,
+            response_end,
+            action,
         )
-        # Actions are time-sorted. Locate the first action strictly later than
-        # the current start time; this is equivalent to scanning all later
-        # actions, but avoids quadratic work.
         next_index = int(
             np.searchsorted(
-                action_start_ns, pd.Timestamp(action.start_time).value, side="right"
+                action_start_ns,
+                pd.Timestamp(action.start_time).value,
+                side="right",
             )
         )
         followup = bool(
@@ -349,7 +422,14 @@ def _build_action_records(
             and ordered_actions[next_index].start_time <= response_end
         )
         record = _populate_windows(
-            record, df, baseline, response, full, plant, training, effective_disturbance
+            record,
+            df,
+            baseline,
+            response,
+            full,
+            plant,
+            training,
+            effective_disturbance,
         )
         baseline_cov = _coverage(baseline, ts_col, baseline_minutes)
         response_cov = _coverage(response, ts_col, response_minutes)
@@ -357,7 +437,12 @@ def _build_action_records(
         record["response_coverage_ratio"] = response_cov
         record["followup_action_in_response"] = followup
         record["valid"], record["invalid_reason"] = _validate_episode(
-            record, baseline_cov, response_cov, plant, training, followup
+            record,
+            baseline_cov,
+            response_cov,
+            plant,
+            training,
+            followup,
         )
         if not record["valid"]:
             record["training_route"] = "INVALID"
@@ -389,7 +474,9 @@ def _build_hold_records(
         left = action.start_time - pd.Timedelta(minutes=guard)
         right = (
             action.end_time
-            + pd.Timedelta(minutes=float(training["episode"]["response_delay_minutes"]))
+            + pd.Timedelta(
+                minutes=float(training["episode"]["response_delay_minutes"])
+            )
             + pd.Timedelta(minutes=response_minutes + guard)
         )
         exclusion.append((left, right))
@@ -399,17 +486,29 @@ def _build_hold_records(
     segments = list(df.groupby("continuous_segment_id", sort=True))
     if progress and not segments:
         progress(1.0, "没有连续运行段可提取 HOLD")
-    for segment_index, (segment_id, segment) in enumerate(segments, start=1):
+    for segment_index, (segment_id, segment) in enumerate(
+        segments, start=1
+    ):
         if progress:
-            progress((segment_index - 1) / max(len(segments), 1), f"提取 HOLD：连续段 {segment_index}/{len(segments)}，已生成 {len(records)} 个")
+            progress(
+                (segment_index - 1) / max(len(segments), 1),
+                f"提取 HOLD：连续段 {segment_index}/{len(segments)}，已生成 {len(records)} 个",
+            )
         if segment.empty:
             continue
-        segment = segment.sort_values(ts_col, kind="stable") if not segment[ts_col].is_monotonic_increasing else segment
+        segment = (
+            segment.sort_values(ts_col, kind="stable")
+            if not segment[ts_col].is_monotonic_increasing
+            else segment
+        )
         segment_indexer = TimeWindowIndexer(segment, ts_col)
         cursor = segment[ts_col].min()
         end_limit = segment[ts_col].max()
         count = 0
-        while cursor + pd.Timedelta(minutes=total_minutes) <= end_limit and count < max_per_segment:
+        while (
+            cursor + pd.Timedelta(minutes=total_minutes) <= end_limit
+            and count < max_per_segment
+        ):
             end = cursor + pd.Timedelta(minutes=total_minutes)
             if exclusion_index.overlaps(cursor, end):
                 cursor += pd.Timedelta(minutes=stride_minutes)
@@ -421,11 +520,14 @@ def _build_hold_records(
             hold_ok = True
             for valve in all_valves(plant):
                 values = pd.to_numeric(
-                    full[f"__clean_valve__{valve['valve_id']}"], errors="coerce"
+                    full[f"__clean_valve__{valve['valve_id']}"],
+                    errors="coerce",
                 ).dropna()
-                # HOLD 的定义：整个片段没有与 ACTION 重叠，且各阀门窗口极差
-                # 均未达到该阀门的有效动作阈值。无需额外 hold_deadband。
-                if values.empty or float(values.max() - values.min()) >= float(valve["action_threshold"]):
+                if (
+                    values.empty
+                    or float(values.max() - values.min())
+                    >= float(valve["action_threshold"])
+                ):
                     hold_ok = False
                     break
             if not hold_ok:
@@ -433,15 +535,28 @@ def _build_hold_records(
                 continue
 
             baseline = _subset(
-                segment_indexer, cursor, cursor + pd.Timedelta(minutes=baseline_minutes)
+                segment_indexer,
+                cursor,
+                cursor + pd.Timedelta(minutes=baseline_minutes),
             )
             response = _subset(
-                segment_indexer, end - pd.Timedelta(minutes=response_minutes), end
+                segment_indexer,
+                end - pd.Timedelta(minutes=response_minutes),
+                end,
             )
             action_start = cursor + pd.Timedelta(minutes=baseline_minutes)
-            record = _base_episode_record(plant, "HOLD", action_start, action_start, end, None)
+            record = _base_episode_record(
+                plant, "HOLD", action_start, action_start, end, None
+            )
             record = _populate_windows(
-                record, df, baseline, response, full, plant, training, effective_disturbance
+                record,
+                df,
+                baseline,
+                response,
+                full,
+                plant,
+                training,
+                effective_disturbance,
             )
             baseline_cov = _coverage(baseline, ts_col, baseline_minutes)
             response_cov = _coverage(response, ts_col, response_minutes)
@@ -449,7 +564,12 @@ def _build_hold_records(
             record["response_coverage_ratio"] = response_cov
             record["followup_action_in_response"] = False
             record["valid"], record["invalid_reason"] = _validate_episode(
-                record, baseline_cov, response_cov, plant, training, False
+                record,
+                baseline_cov,
+                response_cov,
+                plant,
+                training,
+                False,
             )
             if not record["valid"]:
                 record["training_route"] = "INVALID"
@@ -467,18 +587,28 @@ def _mark_short_reverse_actions(
 ) -> pd.DataFrame:
     result = episodes.copy()
     result["short_reverse_action"] = False
-    action = result[result["episode_type"] == "ACTION"].sort_values("action_start_time")
-    limit = pd.Timedelta(minutes=float(training["episode"]["short_reverse_action_minutes"]))
+    action = result[result["episode_type"] == "ACTION"].sort_values(
+        "action_start_time"
+    )
+    limit = pd.Timedelta(
+        minutes=float(training["episode"]["short_reverse_action_minutes"])
+    )
     indices = list(action.index)
     for left_idx, right_idx in zip(indices[:-1], indices[1:]):
         left = result.loc[left_idx]
         right = result.loc[right_idx]
-        gap = pd.Timestamp(right["action_start_time"]) - pd.Timestamp(left["action_end_time"])
+        gap = pd.Timestamp(right["action_start_time"]) - pd.Timestamp(
+            left["action_end_time"]
+        )
         opposite = {
             ("INCREASE", "DECREASE"),
             ("DECREASE", "INCREASE"),
         }
-        if gap <= limit and (left["action_direction"], right["action_direction"]) in opposite:
+        if (
+            gap <= limit
+            and (left["action_direction"], right["action_direction"])
+            in opposite
+        ):
             result.loc[left_idx, "short_reverse_action"] = True
     return result
 
@@ -493,15 +623,27 @@ def extract_decision_episodes(
     def emit(start: float, end: float):
         if not progress:
             return None
-        return lambda value, message: progress(start + (end - start) * value, message)
+        return lambda value, message: progress(
+            start + (end - start) * value, message
+        )
 
     actions = detect_actions(df, plant, training, emit(0.00, 0.55))
     records = _build_action_records(
-        df, actions, plant, training, effective_disturbance, emit(0.55, 0.75)
+        df,
+        actions,
+        plant,
+        training,
+        effective_disturbance,
+        emit(0.55, 0.75),
     )
     records.extend(
         _build_hold_records(
-            df, actions, plant, training, effective_disturbance, emit(0.75, 0.96)
+            df,
+            actions,
+            plant,
+            training,
+            effective_disturbance,
+            emit(0.75, 0.96),
         )
     )
     if not records:
@@ -509,15 +651,28 @@ def extract_decision_episodes(
             progress(1.0, "未生成 ACTION 或 HOLD 决策片段")
         return pd.DataFrame(), actions
     episodes = pd.DataFrame(records)
-    episodes["action_start_time"] = pd.to_datetime(episodes["action_start_time"])
-    episodes["action_end_time"] = pd.to_datetime(episodes["action_end_time"])
-    episodes["response_end_time"] = pd.to_datetime(episodes["response_end_time"])
-    episodes.sort_values(["action_start_time", "episode_type"], inplace=True)
-    episodes.drop_duplicates(subset=["episode_id"], keep="last", inplace=True)
+    episodes["action_start_time"] = pd.to_datetime(
+        episodes["action_start_time"]
+    )
+    episodes["action_end_time"] = pd.to_datetime(
+        episodes["action_end_time"]
+    )
+    episodes["response_end_time"] = pd.to_datetime(
+        episodes["response_end_time"]
+    )
+    episodes.sort_values(
+        ["action_start_time", "episode_type"], inplace=True
+    )
+    episodes.drop_duplicates(
+        subset=["episode_id"], keep="last", inplace=True
+    )
     episodes.reset_index(drop=True, inplace=True)
     episodes = _mark_short_reverse_actions(episodes, training)
     if progress:
         action_count = int((episodes["episode_type"] == "ACTION").sum())
         hold_count = int((episodes["episode_type"] == "HOLD").sum())
-        progress(1.0, f"决策片段完成：ACTION={action_count}，HOLD={hold_count}")
+        progress(
+            1.0,
+            f"决策片段完成：ACTION={action_count}，HOLD={hold_count}",
+        )
     return episodes, actions
