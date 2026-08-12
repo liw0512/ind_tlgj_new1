@@ -1,4 +1,3 @@
-
 """Process4MapControl 专用配置。
 
 本文件集中管理 ``system/model/Process4MapControl.py`` 的可调参数。
@@ -82,11 +81,16 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    """自动初次训练、增量训练、测试数据源和训练路径参数。
+    """自动初次训练、增量训练与测试数据源配置。
 
     路径既支持绝对路径，也支持相对项目根目录的路径。
     ``initial_data_source`` / ``incremental_data_source`` 仅支持 ``database`` 和 ``csv``。
-    使用 CSV 只改变数据来源，不会跳过系统状态机或增量训练触发周期。
+    使用 CSV 只改变最前端训练数据来源，不会改变后续训练链：
+    原始数据统一落盘为工作 CSV -> condition_model -> 带 condition_label 的 CSV -> slurry_policy_model。
+
+    condition_model / slurry_policy_model 的训练脚本、snapshot 目录和 active_version.json
+    统一由 ``slurry_core_bridge_config.py`` 管理，这里不再保留旧 cluster / Q-learning /
+    PH_predict / model_backup 路径配置。
     """
 
     # 初次训练数据来源与数据量。
@@ -96,7 +100,7 @@ class TrainingConfig:
     initial_minimum_records: int = 2880*7*0.9  # 初次训练最终允许启动的最少记录数；测试时可调小。
     initial_database_record_limit: int = 2880*7  # 数据库最多读取条数；0 表示按 initial_training_days 自动计算。
     initial_database_use_model_result_table: bool = False  # False=过滤数据表t_data1_filter_，True=模型结果表t_model_result_。
-    initial_work_csv: str = 'system/model/map_control/model_csv/Initial_train.csv'  # 统一落盘后交给 cluster 的 CSV。
+    initial_work_csv: str = 'system/model/map_control/model_csv/Initial_train.csv'  # 初次训练统一工作 CSV；database/csv 均先落盘到这里，再交给 condition_model。
 
     # 增量训练周期、数据来源与数据量。
     incremental_trigger_interval_days: int = 3  # 距离上次训练达到多少天后触发；CSV 测试也遵守该周期。
@@ -106,25 +110,11 @@ class TrainingConfig:
     incremental_minimum_records: int = 3*2880*0.9  # 增量训练最终允许启动的最少记录数。
     incremental_database_record_limit: int = 0  # 数据库最多读取条数；0 表示按 incremental_training_days 自动计算。
     incremental_database_use_model_result_table: bool = False  # False=过滤数据表，True=模型结果表。
-    incremental_work_csv: str = 'system/model/map_control/model_csv/Update_train.csv'  # 增量工作 CSV。
+    incremental_work_csv: str = 'system/model/map_control/model_csv/Update_train.csv'  # 增量训练统一工作 CSV；database/csv 均先落盘到这里，再交给 condition_model。
 
     # 数据库取数换算与完整率。
     database_records_per_day: int = 2880  # 30 秒一条时每天 2880 条；用于 record_limit=0 的自动计算。
     database_minimum_data_ratio: float = 0.90  # 数据库模式要求至少取得目标条数的比例。
-
-    # 训练脚本和产物路径。相对路径均以项目根目录为基准。
-    cluster_script: str = 'system/model/map_control/cluster/cluster_main.py'
-    cluster_result_csv: str = 'system/model/map_control/cluster/models/julei/cluster_full_features_latest.csv'
-    q_learning_initial_script: str = 'system/model/map_control/q_learning/train/test_q_learning.py'
-    q_learning_incremental_script: str = 'system/model/map_control/q_learning/update/update_Q_final.py'
-    ph_initial_script: str = 'system/model/map_control/PH_predict/ph_main.py'
-    ph_incremental_script: str = 'system/model/map_control/PH_predict/main_incremental.py'
-    ph_incremental_save_dir: str = 'system/model/map_control/PH_predict/tmp'
-    ph_model_dir: str = 'system/model/map_control/PH_predict/models'
-    q_learning_initial_model_dir: str = 'system/model/map_control/q_learning/results/train'
-    q_learning_incremental_model_dir: str = 'system/model/map_control/q_learning/results/update'
-    model_backup_dir: str = 'system/model/map_control/model_backups'
-    model_backup_retention_days: int = 14  # 热更新模型备份保留天数。
 
 
 @dataclass(frozen=True)
