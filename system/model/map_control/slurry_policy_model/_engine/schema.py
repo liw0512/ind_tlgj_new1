@@ -1,9 +1,8 @@
 """第二模块固定接口字段与决策片段输出结构。
 
-第一模块输出的 condition/grid/version 字段名是稳定接口；用于划分工况的原始
-过程字段不再在第二模块写死为 ``jzfh`` / ``yyq_SO2``。新训练直接读取第一模块
-``condition_config.CONDITION_AXES``，并在 effective training config 中冻结为
-``_condition_axes``；在线加载旧/新 policy snapshot 时优先使用冻结值。
+第一模块输出的 condition/grid/version 字段名是稳定接口；所有随厂变化的原始
+过程字段与工况轴统一从 ``system/model/config/plant_config.py`` 读取。训练时再将
+工况轴冻结进 effective config，保证活动 snapshot 不受后续配置编辑影响。
 """
 from __future__ import annotations
 
@@ -13,7 +12,36 @@ from pathlib import Path
 from typing import Any
 
 
-OUTLET_SO2_COLUMN = "jyq_SO2"
+def _load_site_plant_config() -> dict[str, Any]:
+    """Load the one authoritative plant config without depending on cwd."""
+    try:
+        from system.model.config.plant_config import PLANT_CONFIG
+        return copy.deepcopy(PLANT_CONFIG)
+    except ImportError:
+        config_path = (
+            Path(__file__).resolve().parents[3]
+            / "config"
+            / "plant_config.py"
+        )
+        if not config_path.is_file():
+            raise ImportError(f"plant_config.py not found: {config_path}")
+        spec = importlib.util.spec_from_file_location(
+            "slurry_policy_site_plant_config", config_path
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load plant config: {config_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        value = getattr(module, "PLANT_CONFIG", None)
+        if not isinstance(value, dict):
+            raise ImportError("plant_config.PLANT_CONFIG is unavailable")
+        return copy.deepcopy(value)
+
+
+_SITE_PLANT_CONFIG = _load_site_plant_config()
+OUTLET_SO2_COLUMN = str(
+    _SITE_PLANT_CONFIG["process_columns"]["outlet_so2"]
+)
 LEGACY_CONDITION_AXIS_COLUMNS = ("jzfh", "yyq_SO2")
 
 CONDITION_SNAPSHOT_VERSION_COLUMN = "condition_snapshot_version"
@@ -58,49 +86,16 @@ def time_column(plant: dict[str, Any]) -> str:
     return str(plant.get("time_column", "date")).strip() or "date"
 
 
-def _load_condition_axes_from_sibling_file() -> list[dict[str, Any]]:
-    """Load condition_config.py without depending on cwd/PYTHONPATH."""
-    config_path = (
-        Path(__file__).resolve().parents[2]
-        / "condition_model"
-        / "condition_config.py"
-    )
-    if not config_path.is_file():
-        raise ImportError(
-            f"condition_model/condition_config.py not found: {config_path}"
-        )
-    spec = importlib.util.spec_from_file_location(
-        "slurry_policy_condition_config_bridge", config_path
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load condition config: {config_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    axes = getattr(module, "CONDITION_AXES", None)
-    if not isinstance(axes, (list, tuple)):
-        raise ImportError("condition_config.CONDITION_AXES is unavailable")
-    return [copy.deepcopy(dict(item)) for item in axes]
-
-
 def _configured_condition_axes() -> list[dict[str, Any]]:
-    """Read the one authoritative plant condition-axis definition."""
-    try:
-        from system.model.map_control.condition_model.condition_config import (
-            CONDITION_AXES,
-        )
-        axes = CONDITION_AXES
-    except ImportError:  # standalone trainer may not have project root in sys.path
-        axes = _load_condition_axes_from_sibling_file()
+    """Read current condition axes directly from the central plant config."""
+    axes = _SITE_PLANT_CONFIG.get("condition_axes")
+    if not isinstance(axes, (list, tuple)):
+        raise ImportError("plant_config.PLANT_CONFIG.condition_axes is unavailable")
     return [copy.deepcopy(dict(item)) for item in axes]
 
 
 def condition_axis_specs(training: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return frozen policy axes, or derive them from condition_config.
-
-    ``run_episode_pipeline`` freezes the derived list into the policy snapshot's
-    effective config. Therefore a later edit of ``CONDITION_AXES`` cannot
-    silently alter an already-active online policy version.
-    """
+    """Return frozen policy axes, or derive them from the central plant config."""
     raw = training.get("_condition_axes")
     if not isinstance(raw, (list, tuple)) or not raw:
         raw = _configured_condition_axes()
@@ -127,7 +122,7 @@ def condition_axis_columns(training: dict[str, Any]) -> tuple[str, ...]:
 
 
 def freeze_condition_axes(training: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy with the current first-module axes frozen into it."""
+    """Return a copy with the current central condition axes frozen into it."""
     result = copy.deepcopy(training)
     result["_condition_axes"] = condition_axis_specs(result)
     return result
