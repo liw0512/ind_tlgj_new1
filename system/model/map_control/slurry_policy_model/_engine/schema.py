@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
+from pathlib import Path
 from typing import Any
 
 
@@ -56,28 +58,47 @@ def time_column(plant: dict[str, Any]) -> str:
     return str(plant.get("time_column", "date")).strip() or "date"
 
 
+def _load_condition_axes_from_sibling_file() -> list[dict[str, Any]]:
+    """Load condition_config.py without depending on cwd/PYTHONPATH."""
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "condition_model"
+        / "condition_config.py"
+    )
+    if not config_path.is_file():
+        raise ImportError(
+            f"condition_model/condition_config.py not found: {config_path}"
+        )
+    spec = importlib.util.spec_from_file_location(
+        "slurry_policy_condition_config_bridge", config_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load condition config: {config_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    axes = getattr(module, "CONDITION_AXES", None)
+    if not isinstance(axes, (list, tuple)):
+        raise ImportError("condition_config.CONDITION_AXES is unavailable")
+    return [copy.deepcopy(dict(item)) for item in axes]
+
+
 def _configured_condition_axes() -> list[dict[str, Any]]:
     """Read the one authoritative plant condition-axis definition."""
     try:
         from system.model.map_control.condition_model.condition_config import (
             CONDITION_AXES,
         )
-    except ImportError:  # pragma: no cover - standalone execution from module dir
-        try:
-            from condition_model.condition_config import CONDITION_AXES
-        except ImportError:
-            return [
-                {"column": column}
-                for column in LEGACY_CONDITION_AXIS_COLUMNS
-            ]
-    return [copy.deepcopy(dict(item)) for item in CONDITION_AXES]
+        axes = CONDITION_AXES
+    except ImportError:  # standalone trainer may not have project root in sys.path
+        axes = _load_condition_axes_from_sibling_file()
+    return [copy.deepcopy(dict(item)) for item in axes]
 
 
 def condition_axis_specs(training: dict[str, Any]) -> list[dict[str, Any]]:
     """Return frozen policy axes, or derive them from condition_config.
 
     ``run_episode_pipeline`` freezes the derived list into the policy snapshot's
-    effective config.  Therefore a later edit of ``CONDITION_AXES`` cannot
+    effective config. Therefore a later edit of ``CONDITION_AXES`` cannot
     silently alter an already-active online policy version.
     """
     raw = training.get("_condition_axes")
