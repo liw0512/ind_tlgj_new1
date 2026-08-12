@@ -16,7 +16,7 @@ config = {
     "base_path": str(BASE_PATH),  # 程序部署根目录；不同环境必须改为实际路径
     "filename": str(BASE_PATH / "logs"),  # 日志输出目录
     # "dbconnetion": "postgresql+psycopg2://root:tswcbyy5413LX@127.0.0.1:5432/ind_optim_sys",
-    "dbconnetion": "postgresql+psycopg2://postgres:lw123@127.0.0.1:5432/xrdc",  # 数据库连接串；建议通过环境变量管理，不要提交真实生产密码
+    "dbconnetion": "postgresql+psycopg2://postgres:lw123@127.0.0.1:5432/ind_tlgj",  # 数据库连接串；建议通过环境变量管理，不要提交真实生产密码
     # "dbconnetion": "postgresql+psycopg2://root:tswcbyy5413LX@v1.pgrm.top:9326/ind_optim_sys_2",
     "mod_args_path": str(BASE_PATH / "files" / "model"),  # 模型参数文件目录
     "download_path": str(BASE_PATH / "files"),  # 下载、历史数据和模型文件的公共目录
