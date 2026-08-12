@@ -290,6 +290,30 @@ class PolicySnapshotLoader:
                         }
                         for valve in tower.get("valves", [])
                     ],
+                    "supply_pumps": sorted(
+                        [
+                            {
+                                "pump_id": str(pump.get("pump_id")),
+                                "current_column": str(
+                                    pump.get("current_column")
+                                ),
+                                "run_current_threshold": float(
+                                    pump.get("run_current_threshold")
+                                ),
+                                "served_valve_ids": sorted(
+                                    str(value)
+                                    for value in (
+                                        pump.get("served_valve_ids", []) or []
+                                    )
+                                ),
+                            }
+                            for pump in (tower.get("supply_pumps", []) or [])
+                        ],
+                        key=lambda item: (
+                            item["pump_id"],
+                            item["current_column"],
+                        ),
+                    ),
                 }
             )
         return {
@@ -409,7 +433,7 @@ class PolicySnapshotLoader:
             self._configured_plant
         ):
             raise PolicySnapshotError(
-                "当前配置的塔/阀门/pH/SO2安全结构与离线快照不一致"
+                "当前配置的塔/阀门/供浆泵/pH/SO2安全结构与离线快照不一致"
             )
 
         return {
