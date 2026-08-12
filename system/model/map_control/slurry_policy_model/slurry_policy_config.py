@@ -5,11 +5,12 @@
 2. 输入 CSV 的时间列名；
 3. 塔数量、每座塔的 pH 安全区间；
 4. 每座塔的供浆阀数量、字段、开度范围和有效动作阈值；
-5. 必要的时间窗口和自适应训练参数。
+5. 每座塔的定频供浆泵电流字段、运行阈值和 pump→valve 拓扑；
+6. 必要的时间窗口和自适应训练参数。
 
 固定约定：
 - 第一模块输出字段名保持不变，第二模块内部直接读取，不再重复配置字段映射；
-- 负荷、原烟气 SO2、净烟气 SO2 固定读取 jzfh、yyq_SO2、jyq_SO2；
+- 工况轴字段跟随第一模块 condition snapshot；净烟气 SO2 固定读取 jyq_SO2；
 - 不需要配置厂区 ID、时区、condition_snapshot.json；
 - 初次训练默认读取 Initial_train_after_condition.csv；
 - 增量训练默认读取 Incremental_train_after_condition.csv；
@@ -46,15 +47,13 @@ PLANT_CONFIG = {
     # 净烟气 SO2 硬安全范围。动态控制目标不参与离线训练。
     "outlet_so2_safe_range": [0.0, 35.0],
 
-    # 可选：实际供浆泵启停状态字段。
-    # 某列在一个阀门动作响应窗口内发生 0→1、1→0 或运行组合变化时，
-    # 该片段无法只归因于阀门动作，默认判为 INVALID。没有接入测点时保持空列表。
-    "supply_pump_state_columns": [],
-
     # 塔配置：
     # - 某厂只有一级塔：删除二级塔项，或设置 enabled=False；
     # - 某塔有 1/2/3 个阀门：直接增删 valves 列表项；
-    # - 塔数量、pH 安全区间、阀门数量及开度范围属于厂级固定结构。
+    # - supply_pumps 为空：保持旧行为，不使用泵电流限制阀门；
+    # - supply_pumps 非空：current > run_current_threshold 判泵状态=1，否则=0；
+    #   一个阀只要任一服务它的泵状态=1，就认为该阀供浆路径可用。
+    # - 塔数量、pH范围、阀门和供浆泵拓扑都属于厂级固定结构。
     "towers": [
         {
             "tower_id": "xst",
@@ -89,6 +88,18 @@ PLANT_CONFIG = {
                     "action_threshold": 0.50,
                 },
             ],
+
+            # 定频供浆泵拓扑。默认空列表表示暂不启用泵电流阀门可用性约束。
+            # 启用时直接按实际设备增删泵，例如“一台泵同时服务两个阀”：
+            # {
+            #     "pump_id": "xst_pump_A",
+            #     "current_column": "xstgjb_ADL",
+            #     "run_current_threshold": 10.0,
+            #     "served_valve_ids": ["xst_v1", "xst_v2"],
+            # }
+            # 多泵共母管时，多台泵可以填写相同的 served_valve_ids；任一泵运行
+            # 即认为这些阀门具备供浆路径。电流缺失/NaN按状态0做 fail-safe。
+            "supply_pumps": [],
         },
         {
             "tower_id": "apt",
@@ -107,6 +118,15 @@ PLANT_CONFIG = {
                     "action_threshold": 0.50,
                 }
             ],
+
+            # 示例：二级塔一台泵服务 apt_v1 时，可填写：
+            # {
+            #     "pump_id": "apt_pump_A",
+            #     "current_column": "aptgjb_ADL",
+            #     "run_current_threshold": 10.0,
+            #     "served_valve_ids": ["apt_v1"],
+            # }
+            "supply_pumps": [],
         },
     ],
 }
@@ -224,7 +244,7 @@ TRAINING_CONFIG = {
         "action_anchor_mode": "ACTION_START",
         "hold_anchor_mode": "MAJORITY_CONDITION",
 
-        # 允许邻域：负荷轴上下 2 个基础格，原烟气 SO2 轴上下 3 个基础格。
+        # 允许邻域：第一工况轴上下 2 个基础格，第二工况轴上下 3 个基础格。
         "max_load_grid_offset": 2,
         "max_inlet_so2_grid_offset": 3,
 
@@ -240,7 +260,7 @@ TRAINING_CONFIG = {
         "nearby_evidence_weight_mode": "COVERAGE_RATIO",
     },
 
-    # 临近工况回退策略。空间半径直接复用上面的 ±2/±3，避免无限跨工况。
+    # 临近工况回退策略。空间半径直接复用上面的轴偏移，避免无限跨工况。
     "neighbor_policy": {
         "enabled": True,
         "include_same_condition": True,
@@ -270,13 +290,13 @@ TRAINING_CONFIG = {
         "auto_slow_quantile": 0.75,
         "auto_fast_quantile": 0.92,
 
-        # fixed 模式阈值，单位为字段单位/分钟。
+        # fixed 模式阈值，分别对应第一/第二配置工况轴，单位为字段单位/分钟。
         "load_slow_rate": 1.0,
         "load_fast_rate": 3.0,
         "inlet_so2_slow_rate": 20.0,
         "inlet_so2_fast_rate": 60.0,
 
-        # auto 标定的最小阈值下限。
+        # auto 标定的最小阈值下限；内部旧键名保留用于快照兼容。
         "minimum_load_slow_rate": 0.10,
         "minimum_load_fast_rate": 0.30,
         "minimum_inlet_so2_slow_rate": 1.0,
@@ -342,7 +362,9 @@ TRAINING_CONFIG = {
         "require_condition_valid": True,
         "allow_out_of_range_clipped": True,
 
-        # 配置了 supply_pump_state_columns 后，供浆泵启停/组合变化判 INVALID。
+        # 某塔配置 supply_pumps 后，离线按 current > run_current_threshold
+        # 推导每台定频泵的0/1状态；一个动作/响应窗口内状态发生变化则判 INVALID。
+        # 正常运行电流的小幅波动只要不跨阈值，不会误判成泵状态变化。
         "invalidate_supply_pump_state_change": True,
 
         # 结果出现安全越界的事件仍保留，作为风险历史；不能只保留好结果。
