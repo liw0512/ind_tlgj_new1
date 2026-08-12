@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
 """Initial V3 condition snapshot builder from normalized historical rows.
 
-Coverage maturity depends only on sample-count thresholds.  The model contains
+Coverage maturity depends only on sample-count thresholds. The model contains
 no action-event, confidence, or slurry-flow logic.
+
+Important topology rule:
+- condition axes + liquid/gas + outlet SO2 are the structural training inputs;
+- tower pH columns are optional explanatory statistics for this first module;
+- missing XST/APT pH never changes grid mapping or condition_label.
+
+This keeps the first module independent from single-/dual-tower plant topology.
+The slurry-policy module owns the enabled tower/valve topology and validates
+only the pH/valve fields of enabled towers.
 """
 
 import argparse
@@ -15,7 +24,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 
-sys.path.append("F:/tlgj")
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -58,7 +66,17 @@ def normalize_and_validate_training_frame(
     config: ConditionModelConfig,
     context: str = "training",
 ) -> pd.DataFrame:
-    """Normalize CSV headers and fail fast on missing/all-null source fields."""
+    """Normalize headers and validate only structural first-module inputs.
+
+    Required:
+    - the configured one/two condition-axis columns;
+    - liquid/gas ratio, because automatic merge uses it;
+    - outlet SO2, because risk_rate uses it.
+
+    Optional:
+    - xst_ph / apt_ph. They are explanatory statistics only in condition_model.
+      A single-tower plant therefore does not need to manufacture aptjy_PH.
+    """
 
     normalized = frame.copy()
     normalized.columns = [
@@ -72,14 +90,17 @@ def normalize_and_validate_training_frame(
             f"{duplicates}"
         )
 
-    required = {
-        "load": config.load_column,
-        "inlet_so2": config.inlet_so2_column,
-        "liquid_gas": config.data_columns.liquid_gas,
-        "outlet_so2": config.data_columns.outlet_so2,
-        "xst_ph": config.data_columns.xst_ph,
-        "apt_ph": config.data_columns.apt_ph,
+    required: Dict[str, str] = {
+        f"condition_axis_{index}": column
+        for index, column in enumerate(config.condition_axis_columns, start=1)
     }
+    required.update(
+        {
+            "liquid_gas": config.data_columns.liquid_gas,
+            "outlet_so2": config.data_columns.outlet_so2,
+        }
+    )
+
     missing = [
         f"{logical_name}={column}"
         for logical_name, column in required.items()
@@ -158,13 +179,27 @@ def get_condition_axis_values(
     row: Dict[str, Any],
     config: ConditionModelConfig,
 ) -> tuple:
-    """Read the two fixed-grid axis values from configured source columns."""
+    """Read configured fixed-grid axis values.
 
-    load_value = _safe_float(row[config.load_column])
-    inlet_so2 = _safe_float(row[config.inlet_so2_column])
-    if load_value is None or inlet_so2 is None:
-        raise ValueError("condition axis contains a missing or non-finite value")
-    return load_value, inlet_so2
+    One-axis mode reuses the first source value for the internal singleton
+    second slot. The second slot is ignored by locate_grid and does not require
+    any additional plant field.
+    """
+
+    first_value = _safe_float(row[config.load_column])
+    if first_value is None:
+        raise ValueError(
+            f"condition axis {config.load_column!r} contains a missing or non-finite value"
+        )
+    if config.single_axis_mode:
+        return first_value, first_value
+
+    second_value = _safe_float(row[config.inlet_so2_column])
+    if second_value is None:
+        raise ValueError(
+            f"condition axis {config.inlet_so2_column!r} contains a missing or non-finite value"
+        )
+    return first_value, second_value
 
 
 def _empty_value_lists() -> Dict[str, List[Any]]:
@@ -226,10 +261,10 @@ class InitialConditionBuilder:
         if row.get("condition_mapping_ok", True) is False:
             return
         try:
-            load_value, inlet_so2 = get_condition_axis_values(row, self.config)
+            first_value, second_value = get_condition_axis_values(row, self.config)
             grid_id, clipped, _ = locate_grid(
-                load_value,
-                inlet_so2,
+                first_value,
+                second_value,
                 self.config,
             )
         except (KeyError, TypeError, ValueError, OverflowError):
@@ -250,6 +285,8 @@ class InitialConditionBuilder:
         columns = self.config.data_columns
         values = values_by_grid[grid_id]
         self._append(values["liquid_gas"], row.get(columns.liquid_gas))
+        # pH is deliberately optional in the condition model. The policy model
+        # validates the pH fields of enabled towers using PLANT_CONFIG.towers.
         self._append(values["xst_ph"], row.get(columns.xst_ph))
         self._append(values["apt_ph"], row.get(columns.apt_ph))
         self._append(values["net_so2"], row.get(columns.outlet_so2))
@@ -271,10 +308,10 @@ class InitialConditionBuilder:
 
 
 def _grid_id_to_base_id(grid_id: str, config: ConditionModelConfig) -> str:
-    load_part, so2_part = grid_id.split("-")
-    load_level = int(load_part[1:])
-    so2_level = int(so2_part[1:])
-    return str((load_level - 1) * config.inlet_so2.cell_count + so2_level)
+    first_part, second_part = grid_id.split("-")
+    first_level = int(first_part[1:])
+    second_level = int(second_part[1:])
+    return str((first_level - 1) * config.inlet_so2.cell_count + second_level)
 
 
 def _empty_numeric_accumulator() -> Dict[str, Any]:
@@ -372,7 +409,6 @@ def ensure_cell_accumulators(cell: Any) -> None:
     existing = dict(cell.accumulators or {})
     numeric = dict(existing.get("numeric") or {})
 
-    # Legacy generic pH represented the first-stage tower pH.
     if "xst_ph" not in numeric and "ph" in numeric:
         numeric["xst_ph"] = numeric["ph"]
     numeric.pop("ph", None)
@@ -547,13 +583,6 @@ def resolve_condition_experience_source(
     state_key: str,
     config: ConditionModelConfig,
 ) -> str:
-    """Resolve the condition-statistics experience source for one row.
-
-    This source describes only the first-module condition statistics.  The
-    downstream slurry-policy module must resolve its own policy experience
-    source independently.
-    """
-
     profile = (cell.state_profiles or {}).get(state_key)
     if (
         profile
@@ -582,23 +611,14 @@ def condition_label_for_row(
     statistics: Optional[Dict[str, Any]] = None,
     snapshot: Optional[ConditionSnapshot] = None,
 ) -> Dict[str, Any]:
-    """Build complete condition context for one source row.
-
-    The returned fields are designed as the stable interface from
-    ``condition_model`` to downstream offline policy training.  ``grid_id``
-    is the immutable base-condition identity; ``condition_label`` and
-    ``policy_region_id`` describe the currently published policy region and
-    may change after automatic merge or split.
-    """
-
     state_key = build_state_key(row)
     snapshot_version = snapshot.snapshot_version if snapshot else ""
 
     try:
-        load_value, inlet_so2 = get_condition_axis_values(row, config)
+        first_value, second_value = get_condition_axis_values(row, config)
         grid_id, clipped, clip_axis = locate_grid(
-            load_value,
-            inlet_so2,
+            first_value,
+            second_value,
             config,
         )
         base_condition_id = _grid_id_to_base_id(grid_id, config)
@@ -646,7 +666,6 @@ def condition_label_for_row(
         return {
             "condition_snapshot_version": snapshot_version,
             "grid_id": grid_id,
-            # Compatibility alias used by the existing merge-statistics code.
             "base_grid_id": grid_id,
             "base_condition_id": base_condition_id,
             "condition_label": condition_label,
@@ -665,7 +684,6 @@ def condition_label_for_row(
         return {
             "condition_snapshot_version": snapshot_version,
             "grid_id": "",
-            # Compatibility alias used by the existing merge-statistics code.
             "base_grid_id": "",
             "base_condition_id": "",
             "condition_label": "",
@@ -688,14 +706,6 @@ def append_condition_columns(
     config: ConditionModelConfig,
     statistics: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
-    """Append the complete downstream condition interface to a DataFrame.
-
-    All original input columns are retained unchanged.  Therefore process and
-    actuator columns such as ``xst_FMKD1``, ``xst_FMKD2`` and ``apt_FMKD`` are
-    automatically carried into the output CSV without being consumed by the
-    condition model.
-    """
-
     rows = []
     for row in frame.to_dict(orient="records"):
         context = condition_label_for_row(
@@ -918,8 +928,6 @@ def apply_merge_pairs(
     statistics: Dict[str, Any],
     merge_pairs: Iterable[Iterable[Any]],
 ) -> Dict[str, Any]:
-    """Deprecated guard against unvalidated direct label publication."""
-
     if list(merge_pairs or []):
         raise RuntimeError(
             "Direct merge_condition_label_pairs publication is disabled. "
