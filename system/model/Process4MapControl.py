@@ -24,6 +24,12 @@ from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
+from system.model.config.database_schema import (
+    ensure_filter_table,
+    ensure_model_result_table,
+    insert_filter_row,
+    insert_model_result_row,
+)
 import logging
 import shutil
 from system.model.map_control.MapControPre import MapControPre  #推荐泵以及PH建议
@@ -639,7 +645,7 @@ class ProcessForMapConsole:
                 traceback.print_exc()
                 time.sleep(float(self.process_config.runtime.snapshot_error_retry_seconds))
     def _build_write_key(self, data, write_target):
-        """构造写库幂等键，避免同一条结果重复入库"""
+        """构造当前两模块结果的写库幂等键。"""
         try:
             return "|".join([
                 str(write_target),
@@ -648,8 +654,8 @@ class ProcessForMapConsole:
                 str(data.get(self.process_config.unit_stop.field, "")),
                 str(data.get("yyq_SO2", "")),
                 str(data.get("jyq_SO2", "")),
-                str(data.get("combined_pump_status", "")),
-                str(data.get("recommended_pump", "")),
+                str(data.get("condition_label", "")),
+                str(data.get("slurry_policy_action_id", "")),
             ])
         except Exception:
             return None
@@ -712,92 +718,20 @@ class ProcessForMapConsole:
             self.pump_name_def[str(i[1])] = i[0]
 
     def getNewDataTableName(self):
-        result = self.engine.execute("select tablename from pg_tables where schemaname ='public'").fetchall()
-        # 打印所有表名
-        all_tables = [str(i[0]) for i in result]
-        logging.info(f"数据库中所有表: {all_tables}")
-        djh = {
-            "t_data1_filter_rt": [],
-        }
-
-        for i in result:
-            table_name = str(i[0])
-            if table_name.startswith("t_data1_filter_rt_"):
-                # 分割表名
-                parts = table_name.split('_')
-                # 正确的表名应该有6个部分: t_data1_filter_rt_YYYY_M
-                if len(parts) == 6:
-                    # 检查最后两部分是否为数字
-                    year = parts[4]
-                    month = parts[5]
-                    djh["t_data1_filter_rt"].append(table_name)
-
-                else:
-                    logging.info(f"跳过不符合格式的表名: {table_name}")
-
-        # 自定义排序函数，按年份和月份数值排序
-        def sort_by_year_month(table_name):
-            parts = table_name.split('_')
-            year = int(parts[4])    
-            month = int(parts[5])
-            return (year, month)  # 返回元组(年,月)用于排序
-
-        for r in djh.keys():
-            djh[r] = (sorted(djh[r], key=sort_by_year_month, reverse=True))
-
-        if len(djh["t_data1_filter_rt"]) > 0:
-            self.filter_table_name = djh["t_data1_filter_rt"][0]
-        else:
-            # 使用当前年月创建默认表名
-            now = datetime.datetime.now()
-            self.filter_table_name = f"t_data1_filter_rt_{now.year}_{now.month}"
-            logging.info(f"未找到已有的过滤表，将创建新表: {self.filter_table_name}")
-            
-            # 直接调用创建表的SQL语句，复用insert_data中的表定义
-            self.engine.execute(
-            f"""
-            DROP TABLE IF EXISTS "public".{self.filter_table_name}; 
-            CREATE TABLE "public".{self.filter_table_name} (
-                    "id" uuid NOT NULL, 
-                    "date" timestamp(6) NOT NULL, 
-                    "xstshsjy_MD" float8,
-                    "yyq_SO2" float8,
-                    "jyq_SO2" float8,
-                    "yyq_O2" float8,
-                    "yyq_LL" float8,
-                    "jyq_LL" float8,
-                    "xst_YW" float8,
-                    "xstjyxhb_ADL" float8,   
-                    "xstjyxhb_BDL" float8,
-                    "xstjyxhb_CDL" float8,
-                    "xstjyxhb_DDL" float8,
-                    "xstjyxhb_EDL" float8,
-                    "xstyhfj_ADL" float8,
-                    "xstjy_PH" float8,
-                    "xst_ADL_status" int,
-                    "xst_BDL_status" int,
-                    "xst_CDL_status" int,
-                    "xst_DDL_status" int,
-                    "xst_EDL_status" int,
-                    "xst_pump_status" varchar(20),
-                    "combined_pump_status" varchar(20),
-                    "liquid_gas_ratio" float8,
-                    "desulfurization_efficiency" float8
-                );
-            """
-            )
-            self.engine.execute('ALTER TABLE "' + self.filter_table_name + '" ADD PRIMARY KEY ("id")')
-            index_name = "index_" + self.filter_table_name
-            self.engine.execute(
-                f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "public".{self.filter_table_name} '
-                'USING btree ("date" "pg_catalog"."timestamp_ops" ASC NULLS LAST);'
-            )
-            
-            self.engine.execute("insert into t_table_name(id,table_name,table_alias) values (%s,%s,%s)", (
-                uuid.uuid4(), self.filter_table_name,
-                "数据过滤表_" + str(datetime.datetime.now().year) + "_" + str(datetime.datetime.now().month)))
-            
-            logging.info(f"成功创建新表: {self.filter_table_name}")
+        """初始化当前两类月表；不再创建/查找旧 t_data1_rt_*。"""
+        self.filter_table_name = ensure_filter_table(
+            self.engine,
+            self.process_config.persistence.filter_table_prefix,
+        )
+        self.mod_pre_table_name = ensure_model_result_table(
+            self.engine,
+            self.process_config.persistence.model_result_table_prefix,
+        )
+        logging.info(
+            "当前数据库月表: filter=%s, model_result=%s",
+            self.filter_table_name,
+            self.mod_pre_table_name,
+        )
 
     def _project_root(self):
         return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -1109,102 +1043,17 @@ class ProcessForMapConsole:
             logging.error('检查 %s 训练数据时发生错误: %s', mode, exc)
             return False
 
-    def insert_data(self, data): # 数据预处理
+    def insert_data(self, data):
+        """写入 data_preprocessor1 处理后的基础数据月表。"""
         try:
-            #logging.info("insert_data 中的数据为 ======>%s", str(data))
-            if not self.filter_table_name.endswith(
-                    str(datetime.datetime.now().year) + "_" + str(datetime.datetime.now().month)):
-                self.filter_table_name = self.process_config.persistence.filter_table_prefix + str(datetime.datetime.now().year) + "_" + str(
-                    datetime.datetime.now().month)
-                #self.engine.execute(f'DROP TABLE IF EXISTS "{self.filter_table_name}";')
-                self.engine.execute(
-                f"""
-                DROP TABLE IF EXISTS "public".{self.filter_table_name}; 
-                CREATE TABLE "public".{self.filter_table_name} (
-                    "id" uuid NOT NULL, 
-                    "date" timestamp(6) NOT NULL, 
-                    "xstshsjy_MD" float8,
-                    "yyq_SO2" float8,
-                    "jyq_SO2" float8,
-                    "yyq_O2" float8,
-                    "yyq_LL" float8,
-                    "jyq_LL" float8,
-                    "xst_YW" float8,
-                    "xstjyxhb_ADL" float8,   
-                    "xstjyxhb_BDL" float8,
-                    "xstjyxhb_CDL" float8,
-                    "xstjyxhb_DDL" float8,
-                    "xstjyxhb_EDL" float8,
-                    "xstyhfj_ADL" float8,         
-                    "xstjy_PH" float8,
-                    "xst_ADL_status" int,
-                    "xst_BDL_status" int,
-                    "xst_CDL_status" int,
-                    "xst_DDL_status" int,
-                    "xst_EDL_status" int,
-                    "xst_pump_status" varchar(20),
-                    "combined_pump_status" varchar(20),
-                    "liquid_gas_ratio" float8,
-                    "desulfurization_efficiency" float8
-                    );
-                    """
-                )
-                self.engine.execute('ALTER TABLE "' + self.filter_table_name + '" ADD PRIMARY KEY ("id")')
-                index_name = "index_" + self.filter_table_name
-                self.engine.execute(
-                    f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "public".{self.filter_table_name} '
-                    'USING btree ("date" "pg_catalog"."timestamp_ops" ASC NULLS LAST);'
-                )
-
-                self.engine.execute("insert into t_table_name(id,table_name,table_alias) values (%s,%s,%s)", (
-                uuid.uuid4(), self.filter_table_name,
-                "数据过滤表_" + str(datetime.datetime.now().year) + "_" + str(datetime.datetime.now().month)))
-            self.data_cal_no_fentch(
-
-                f"""
-                    insert into {self.filter_table_name} (
-                        "id", "date", "xstshsjy_MD","yyq_SO2","jyq_SO2",
-                        "yyq_O2","yyq_LL","jyq_LL",
-                        "xst_YW",
-                        "xstjyxhb_ADL", "xstjyxhb_BDL", "xstjyxhb_CDL", "xstjyxhb_DDL", "xstjyxhb_EDL","xstyhfj_ADL",
-                        "xstjy_PH", 
-                        "xst_ADL_status", "xst_BDL_status", "xst_CDL_status", "xst_DDL_status","xst_EDL_status", "xst_pump_status", 
-                        "combined_pump_status", "liquid_gas_ratio", "desulfurization_efficiency"
-                    ) values
-                    (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                    uuid.uuid4(),
-                    data.get("date", pd.Timestamp.now()),
-                    data.get("xstshsjy_MD", 0), #一级塔石灰石浆液密度
-                    data.get("yyq_SO2", 0), #原烟气SO2
-                    data.get("jyq_SO2", 0), #净烟气SO2
-                    data.get("yyq_O2", 0), #原烟气O2
-                    data.get("yyq_LL", 0), #原烟气流量
-                    data.get("jyq_LL", 0), #净烟气流量
-                    # 一级塔参数
-                    data.get("xst_YW", 0), #一级塔液位
-                    data.get("xstjyxhb_ADL", 0),    #一级塔浆液循环泵电流
-                    data.get("xstjyxhb_BDL", 0),
-                    data.get("xstjyxhb_CDL", 0),
-                    data.get("xstjyxhb_DDL", 0),
-                    data.get("xstjyxhb_EDL", 0),
-                    data.get("xstyhfj_ADL", 0), #一级塔氧化风机电流
-                    #二级塔参数
-                    data.get("xstjy_PH", 0), #一级塔浆液PH（平均）
-                    data.get("xst_ADL_status", 0),  #一级塔泵状态
-                    data.get("xst_BDL_status", 0), 
-                    data.get("xst_CDL_status", 0),
-                    data.get("xst_DDL_status", 0),
-                    data.get("xst_EDL_status", 0),
-                    data.get("xst_pump_status", ""), #一级塔泵状态（组合）
-                    data.get("combined_pump_status", ""), #泵状态（组合）
-                    data.get("liquid_gas_ratio", 0), #液气比
-                    data.get("desulfurization_efficiency", 0), #脱硫效率
-                ))  
-        except Exception as e:
+            self.filter_table_name = ensure_filter_table(
+                self.engine,
+                self.process_config.persistence.filter_table_prefix,
+            )
+            insert_filter_row(self.engine, self.filter_table_name, dict(data))
+        except Exception as exc:
             traceback.print_exc()
-            logging.error("方法产生了异常为insert_data 中的" + str(e))
+            logging.error("写入 t_data1_filter_rt_ 失败: %s", exc)
 
     def _integration_config(self):
         import copy
@@ -1388,25 +1237,32 @@ class ProcessForMapConsole:
             logging.error(f"发送实时数据到DCS失败: {str(e)}")
             traceback.print_exc()
     def send_to_ws(self):
+        """发布当前 condition + slurry policy 的关键字段，不再发布旧 cluster 结果。"""
         try:
-            if self.send_data:
-                model_key_fields = {
-                    'recommended_pump': self.send_data.get('recommended_pump', ''),
-                    'suggested_xst_ph': self.send_data.get('suggested_xst_ph'),
-                    'cluster_label': self.send_data.get('cluster_label'),
-                    'confidence': self.send_data.get('confidence', 0),
-                    'model_seq': self.send_data.get('model_seq', -1),
-                    'last_model_update': datetime.datetime.now().isoformat(),
-                }
-                self._publish_map_control(model_key_fields)
-                logging.debug(
-                    '已发送模型关键推理结果：泵组合=%s, 一级塔PH建议=%s',
-                    model_key_fields['recommended_pump'],
-                    model_key_fields['suggested_xst_ph'],
-                )
+            if not self.send_data:
+                return
+            model_key_fields = {
+                "condition_label": self.send_data.get("condition_label"),
+                "condition_stable": self.send_data.get("condition_stable", False),
+                "condition_switch_state": self.send_data.get("condition_switch_state"),
+                "integrated_active_version": self.send_data.get("integrated_active_version"),
+                "slurry_policy_control_mode": self.send_data.get("slurry_policy_control_mode"),
+                "slurry_policy_action_family": self.send_data.get("slurry_policy_action_family", "HOLD"),
+                "slurry_policy_action_direction": self.send_data.get("slurry_policy_action_direction", "HOLD"),
+                "slurry_policy_action_magnitude": self.send_data.get("slurry_policy_action_magnitude", "HOLD"),
+                "slurry_policy_recommended_valve_deltas": self.send_data.get(
+                    "slurry_policy_recommended_valve_deltas", {}
+                ),
+                "slurry_policy_projected_valve_openings": self.send_data.get(
+                    "slurry_policy_projected_valve_openings", {}
+                ),
+                "model_seq": self.send_data.get("model_seq", -1),
+                "last_model_update": datetime.datetime.now().isoformat(),
+            }
+            self._publish_map_control(model_key_fields)
         except Exception as exc:
             traceback.print_exc()
-            logging.error('send_to_ws 方法产生异常: %s', exc)
+            logging.error("send_to_ws 方法产生异常: %s", exc)
 
     def send(self):
         try:
@@ -1417,163 +1273,18 @@ class ProcessForMapConsole:
             traceback.print_exc()
             logging.error("send 方法产生了异常 为" + str(e))
 
-    def add_data_to_databases(self, data): #结果表
-        if not self.mod_pre_table_name.endswith(
-                str(datetime.datetime.now().year) + "_" + str(datetime.datetime.now().month)):
-            self.mod_pre_table_name = self.process_config.persistence.model_result_table_prefix + str(datetime.datetime.now().year) + "_" + str(
-                datetime.datetime.now().month)
-
-          
-            # 定义字段列表
-            fields = [
-                '"id" uuid NOT NULL',
-                '"date" timestamp(6) NOT NULL',
-                '"xstshsjy_MD" float8',
-                '"yyq_SO2" float8',
-                '"jyq_SO2" float8',
-                '"yyq_O2" float8',
-                '"yyq_LL" float8',
-                '"jyq_LL" float8',
-                '"xst_YW" float8',
-                '"xstjyxhb_ADL" float8',
-                '"xstjyxhb_BDL" float8',
-                '"xstjyxhb_CDL" float8',
-                '"xstjyxhb_DDL" float8',
-                '"xstjyxhb_EDL" float8',
-                '"xstyhfj_ADL" float8',
-                '"xstjy_PH" float8',
-                '"xst_ADL_status" int',
-                '"xst_BDL_status" int',
-                '"xst_CDL_status" int',
-                '"xst_DDL_status" int',
-                '"xst_EDL_status" int',
-                '"xst_pump_status" varchar(20)',
-                '"combined_pump_status" varchar(20)',
-                '"liquid_gas_ratio" float8',
-                '"desulfurization_efficiency" float8',
-                '"cluster_label" int',
-                '"timestamp" timestamp(6)',
-                '"confidence" float8',
-                '"recommended_pump" varchar(20)',
-                '"drop_flag" varchar(20)',
-                '"suggested_xst_ph" float8',
-                '"event_type" varchar(80)',
-                '"is_stable" varchar(20)',
-                '"cache_size" int',
-                '"final_condition" int'
-            ]
-
-            # 构建并执行SQL语句
-            sql = f'DROP TABLE IF EXISTS "public".{self.mod_pre_table_name}; CREATE TABLE "public".{self.mod_pre_table_name} ({", ".join(fields)})'
-            self.engine.execute(sql)
-            self.engine.execute(
-                'ALTER TABLE "public".' + self.mod_pre_table_name + ' ADD CONSTRAINT "%s" PRIMARY KEY ("id");',
-                ("primary_" + self.mod_pre_table_name))
-
-            self.engine.execute(
-                'CREATE INDEX "%s" ON "public".' + self.mod_pre_table_name + '  USING btree ("timestamp" "pg_catalog"."timestamp_ops" ASC NULLS LAST);',
-                ("index_" + self.mod_pre_table_name))
-
-            self.engine.execute("insert into t_table_name(id,table_name,table_alias) values (%s,%s,%s)", (
-                uuid.uuid4(), self.mod_pre_table_name,
-                "推荐结果表_" + str(datetime.datetime.now().year) + "_" + str(datetime.datetime.now().month)))
-
+    def add_data_to_databases(self, data):
+        """写入新 t_model_result_*：基础字段 + 第一模块 + 第二模块结果。"""
         try:
-            data = data[0]
-
-            if "date" in data:
-                if isinstance(data["date"], str):
-                    try:
-                        # 尝试将字符串转换为 datetime 对象
-                        data["date"] = pd.to_datetime(data["date"])
-                    except Exception as e:
-                        logging.error(f"转换 date 字段失败: {str(e)}")
-            if "timestamp" in data:
-                if isinstance(data["timestamp"], str):
-                    try:
-                        # 尝试将字符串转换为 datetime 对象
-                        data["timestamp"] = pd.to_datetime(data["timestamp"])
-                    except Exception as e:
-                        logging.error(f"转换 timestamp 字段失败: {str(e)}")  
-            # 1. 处理 is_stable 字段
-            if "is_stable" in data:
-                if isinstance(data["is_stable"], bool):
-                    data["is_stable"] = "true" if data["is_stable"] else "false"
-                elif data["is_stable"] is None:
-                    data["is_stable"] = "false"  # 设置默认值
-            else:
-                data["is_stable"] = "false"  # 字段不存在时的默认值
-                
-            # 2. 处理 drop_flag 字段
-            if "drop_flag" in data:
-                if data["drop_flag"] is None:
-                    data["drop_flag"] = ""  # 空值处理为空字符串
-                else:
-                    data["drop_flag"] = str(data["drop_flag"])  # 其他值转换为字符串
-            else:
-                data["drop_flag"] = ""  # 字段不存在时的默认值
-                
-      
-            sql = f"""
-                insert into {self.mod_pre_table_name}(
-                "id", "date","xstshsjy_MD", "yyq_SO2","jyq_SO2",
-                "yyq_O2", "yyq_LL", "jyq_LL",
-                "xst_YW", 
-                "xstjyxhb_ADL", "xstjyxhb_BDL", "xstjyxhb_CDL", "xstjyxhb_DDL", "xstjyxhb_EDL",
-                "xstyhfj_ADL",
-                "xstjy_PH",
-                "xst_ADL_status", "xst_BDL_status", "xst_CDL_status", "xst_DDL_status","xst_EDL_status",
-                "xst_pump_status", 
-                "combined_pump_status", "liquid_gas_ratio", "desulfurization_efficiency",
-                "cluster_label","timestamp","confidence","recommended_pump","drop_flag","suggested_xst_ph","event_type","is_stable","cache_size","final_condition"
-                ) 
-                values(
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s
-                )
-                """
-            args = (
-            uuid.uuid4(),
-            data.get("date", pd.Timestamp.now()),
-            data.get("xstshsjy_MD", 0),
-            data.get("yyq_SO2", 0),
-            data.get("jyq_SO2", 0),
-            data.get("yyq_O2", 0),
-            data.get("yyq_LL", 0),
-            data.get("jyq_LL", 0),
-            data.get("xst_YW", 0),
-            data.get("xstjyxhb_ADL", 0),
-            data.get("xstjyxhb_BDL", 0),
-            data.get("xstjyxhb_CDL", 0),
-            data.get("xstjyxhb_DDL", 0),
-            data.get("xstjyxhb_EDL", 0),
-            data.get("xstyhfj_ADL", 0),
-            data.get("xstjy_PH", 0),
-            data.get("xst_ADL_status", 0),
-            data.get("xst_BDL_status", 0),
-            data.get("xst_CDL_status", 0),
-            data.get("xst_DDL_status", 0),
-            data.get("xst_EDL_status", 0),
-            data.get("xst_pump_status", ""),
-            data.get("combined_pump_status", ""),
-            data.get("liquid_gas_ratio", 0),
-            data.get("desulfurization_efficiency", 0),
-            data.get("cluster_label", None),
-            data.get("timestamp", pd.Timestamp.now()),
-            data.get("confidence", 0),
-            data.get("recommended_pump", ""),
-            data.get("drop_flag", ""),
-            data.get("suggested_xst_ph", 0),
-            data.get("event_type", ""),
-            data.get("is_stable", "false"),
-            data.get("cache_size", 0),
-            data.get("final_condition",0)
-        )
-            self.engine.execute(str(sql), args)
-            # time.sleep(0.02)  # 已移除：无意义延迟，每条节省 20ms
-        except Exception as e:
+            row = dict(data[0]) if isinstance(data, (list, tuple)) else dict(data)
+            self.mod_pre_table_name = ensure_model_result_table(
+                self.engine,
+                self.process_config.persistence.model_result_table_prefix,
+            )
+            insert_model_result_row(self.engine, self.mod_pre_table_name, row)
+        except Exception as exc:
             traceback.print_exc()
-            logging.error("model_pre,add_data_to_databases ==>%s", str(e))
+            logging.error("写入 t_model_result_ 失败: %s", exc)
 
     def limiter(self, data, limit):
         try:

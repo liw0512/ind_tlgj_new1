@@ -128,10 +128,15 @@ class PersistenceConfig:
 
 
 DEFAULT_INPUT_FIELDS: Tuple[str, ...] = (
-    'id', 'date', 'xstshsjy_MD', 'yyq_SO2', 'jyq_SO2', 'yyq_O2', 'yyq_LL',
-    'jyq_LL', 'xstjy_PH', 'xst_YW', 'xstjyxhb_ADL', 'xstjyxhb_BDL',
+    # data_preprocessor1 当前基础输出；额外现场字段仍会由 clean_data 原样透传。
+    'id', 'date', 'xstshsjy_MD', 'xstgjb_ADL', 'xstgjb_BDL',
+    'xst_FMKD1', 'xst_FMKD2', 'yyq_SO2', 'jyq_SO2', 'yyq_O2',
+    'yyq_LL', 'jyq_LL', 'xst_YW', 'xstjyxhb_ADL', 'xstjyxhb_BDL',
     'xstjyxhb_CDL', 'xstjyxhb_DDL', 'xstjyxhb_EDL', 'xstyhfj_ADL',
-    'jym', 'connection_status',
+    'xstjy_PH', 'xst_ADL_status', 'xst_BDL_status', 'xst_CDL_status',
+    'xst_DDL_status', 'xst_EDL_status', 'xst_pump_status',
+    'combined_pump_status', 'liquid_gas_ratio', 'desulfurization_efficiency',
+    'outlet_so2_target', 'jym', 'connection_status',
 )
 
 DEFAULT_LIMITS: Dict[str, Dict[str, float | str]] = {
