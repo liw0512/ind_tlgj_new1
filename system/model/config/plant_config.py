@@ -5,8 +5,7 @@ slurry_policy_model 以及 P4PC 集成层都从这里读取真正随厂变化的
 标准过程字段名已经固定在 ``standard_fields.py``，不再在这里做二次字段映射。
 
 本文件只放“随厂变化”的内容：
-- 工况划分轴及范围；
-- 工况轴选择及其范围；
+- 工况轴选择、范围与步长；
 - 净烟气 SO2 安全范围；
 - 单塔/双塔结构、各塔 pH 字段和安全范围；
 - 每塔供浆阀数量/字段/量程；
@@ -19,7 +18,6 @@ from __future__ import annotations
 
 
 PLANT_CONFIG = {
-
     # 净烟气 SO2 硬安全范围。上限同时作为第一模块 risk_rate 的排放限值。
     "outlet_so2_safe_range": [0.0, 35.0],
 
