@@ -1,19 +1,20 @@
-"""第二模块固定输入字段与决策片段输出结构。
+"""第二模块固定接口字段与决策片段输出结构。
 
-第一模块输出字段已经稳定，因此第二模块直接读取固定字段名，不再要求每个厂
-重复配置“逻辑字段 -> CSV 字段”映射。V1.8B 将 ``condition_label`` 作为
-人工审查和工况级聚合的主展示标识，同时继续保留 ``grid_id`` 作为局部经验
-与永久追溯主键。
+第一模块输出的 condition/grid/version 字段名是稳定接口；用于划分工况的原始
+过程字段不再在第二模块写死为 ``jzfh`` / ``yyq_SO2``。正式训练时，P4PC/第二
+模块会从当前 condition_snapshot.json 中读取 ``condition_axes`` 并注入有效训练
+配置，因此换厂只需要修改第一模块 ``condition_config.CONDITION_AXES``。
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 
-# 第一模块输出 CSV 中固定使用的过程字段。
-LOAD_COLUMN = "jzfh"
-INLET_SO2_COLUMN = "yyq_SO2"
 OUTLET_SO2_COLUMN = "jyq_SO2"
+
+# 仅用于读取旧第二模块 effective_config 的兼容默认值。新训练不会把这两个字段
+# 当成固定必要字段。
+LEGACY_CONDITION_AXIS_COLUMNS = ("jzfh", "yyq_SO2")
 
 # 第一模块固定追加的详细工况字段。
 CONDITION_SNAPSHOT_VERSION_COLUMN = "condition_snapshot_version"
@@ -31,7 +32,6 @@ OUT_OF_RANGE_CLIPPED_COLUMN = "out_of_range_clipped"
 CLIP_AXIS_COLUMN = "clip_axis"
 CONDITION_REASON_COLUMN = "condition_reason"
 
-# V1.8B 按锚点 condition_label 建立工况级输出，因此 condition_label 为必要字段。
 REQUIRED_CONDITION_COLUMNS = (
     CONDITION_SNAPSHOT_VERSION_COLUMN,
     GRID_ID_COLUMN,
@@ -42,7 +42,6 @@ REQUIRED_CONDITION_COLUMNS = (
     OUT_OF_RANGE_CLIPPED_COLUMN,
 )
 
-# 其余字段主要用于人工审计和目录说明。
 AUDIT_CONDITION_COLUMNS = (
     BASE_CONDITION_ID_COLUMN,
     REGION_STATUS_COLUMN,
@@ -61,15 +60,36 @@ def time_column(plant: dict[str, Any]) -> str:
     return str(plant.get("time_column", "date")).strip() or "date"
 
 
-def episode_output_columns(plant: dict[str, Any]) -> list[str]:
-    """返回稳定的决策片段 CSV 表头。
+def condition_axis_specs(training: dict[str, Any]) -> list[dict[str, Any]]:
+    """返回由第一模块 snapshot 注入的工况轴定义。
 
-    工况身份字段放在动作字段之前，便于直接用 Excel 审查。初次数据即使一个
-    有效事件都没有，也会写出完整表头，供第一次增量训练安全继承。
+    新训练必须由 slurry_policy_core 在读取 condition snapshot 后注入
+    ``_condition_axes``。兼容读取历史 effective_config 时，若缺少该字段则退回
+    旧电厂两轴字段，避免旧快照连读取都失败；旧语义是否允许增量仍由版本/配置
+    兼容校验决定。
     """
+    raw = training.get("_condition_axes")
+    if isinstance(raw, (list, tuple)) and raw:
+        result = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            column = str(item.get("column", "")).strip()
+            if column:
+                result.append(dict(item, column=column))
+        if result:
+            return result
+    return [{"column": column} for column in LEGACY_CONDITION_AXIS_COLUMNS]
+
+
+def condition_axis_columns(training: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(item["column"] for item in condition_axis_specs(training))
+
+
+def episode_output_columns(plant: dict[str, Any]) -> list[str]:
+    """返回稳定的决策片段 CSV 表头。"""
     columns = [
         "episode_id",
-        # 人工审查优先字段。
         "condition_label",
         "anchor_condition_label",
         "anchor_grid_id",
@@ -91,8 +111,8 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
         "end_grid_id",
         "grid_transition_path",
         "grid_change_count",
-        "max_load_grid_offset",
-        "max_inlet_so2_grid_offset",
+        "max_first_axis_grid_offset",
+        "max_second_axis_grid_offset",
         "valid_grid_point_count",
         "neighborhood_inside_point_count",
         "neighborhood_coverage_ratio",
@@ -109,7 +129,6 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
         "clip_axis",
         "condition_reason",
         "condition_valid",
-        # 决策片段和动作身份。
         "episode_type",
         "action_start_time",
         "action_end_time",
@@ -152,18 +171,18 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
 
     columns.extend(
         [
-            "before_load",
-            "before_inlet_so2",
+            "before_condition_axis_1",
+            "before_condition_axis_2",
             "before_outlet_so2",
-            "after_load",
-            "after_inlet_so2",
+            "after_condition_axis_1",
+            "after_condition_axis_2",
             "after_outlet_so2",
             "delta_outlet_so2",
-            "before_load_rate",
-            "before_inlet_so2_rate",
+            "before_condition_axis_1_rate",
+            "before_condition_axis_2_rate",
             "before_outlet_so2_rate",
-            "episode_load_rate",
-            "episode_inlet_so2_rate",
+            "episode_condition_axis_1_rate",
+            "episode_condition_axis_2_rate",
             "disturbance_mode",
             "post_outlet_so2_median",
             "post_outlet_so2_p25",
