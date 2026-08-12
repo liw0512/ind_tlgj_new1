@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+try:
+    from _engine.supply_pump import evaluate_supply_pump_availability
+except ImportError:  # pragma: no cover
+    from .._engine.supply_pump import evaluate_supply_pump_availability
+
 from .action_utils import parse_action_family, profile_action, valve_lookup
 from .types import Candidate, ResolvedAction, RealtimeState
 
@@ -13,10 +18,9 @@ class ActionResolutionError(ValueError):
 class ValveActionResolver:
     """把塔级供浆动作转换为当前厂的具体分阀命令。
 
-    第二模块学习的主对象已经是塔，而不是“阀1/阀2怎么分配”的操作习惯。
-    新 ``TOWER:<id>|SUPPLY`` 动作先从历史各分阀代表 delta 求该塔等效归一化
-    变化，再把同一塔级等效变化映射到该厂全部分阀；阀位边界和单阀动作上限
-    仍在本层统一处理。
+    第二模块学习的主对象是塔级等效供浆动作。在线解析时先根据实时供浆泵
+    电流判断每个阀门是否存在可用供浆路径，再只向可用阀门映射动作。
+    停泵支路不会把缺失动作补偿到其他阀门。
     """
 
     def __init__(self, plant: dict, online_config: dict) -> None:
@@ -76,13 +80,47 @@ class ValveActionResolver:
         if not family_valves:
             raise ActionResolutionError("动作族无法解析阀门: %s" % family)
 
+        requested_family_valves = list(dict.fromkeys(family_valves))
+        pump_availability = evaluate_supply_pump_availability(
+            self.plant,
+            state.process,
+        )
+        candidate.evaluation["supply_pump_availability"] = pump_availability
+        available_valves = set(pump_availability["available_valve_ids"])
+        family_valves = [
+            valve_id
+            for valve_id in requested_family_valves
+            if valve_id in available_valves
+        ]
+        if not family_valves:
+            raise ActionResolutionError("动作族没有运行供浆泵对应的可用阀门")
+
+        # 对多塔动作再做一次安全校验：不能因为某一座塔全部停泵而把原多塔动作
+        # 悄悄退化成另一座塔的单塔动作。
+        for tower_id in tower_ids:
+            tower = self._tower(tower_id)
+            if not tower:
+                continue
+            tower_valves = {
+                str(v["valve_id"])
+                for v in tower.get("valves", [])
+            }
+            requested_for_tower = tower_valves & set(requested_family_valves)
+            if requested_for_tower and not (
+                requested_for_tower & available_valves
+            ):
+                raise ActionResolutionError(
+                    "塔 %s 没有运行供浆泵对应的可用阀门" % tower_id
+                )
+
         representative = action.get("representative_delta", {}) or {}
         deltas: Dict[str, float] = {key: 0.0 for key in self.valves}
         historical_available = False
         resolution_reason = "RULE_DELTA"
 
-        # V2 新动作：历史分阀 delta 只用来恢复“塔级等效动作”，不照搬历史
-        # 某个操作员具体动了哪个分阀。这样一阀/两阀/三阀电厂使用同一塔级逻辑。
+        # 历史分阀 delta 只用于恢复塔级等效动作。等效量仍基于完整历史塔动作，
+        # 但在线只映射到当前有运行供浆泵支撑的阀门；不会把停泵支路的份额
+        # 额外补到其他阀门。
         if family.startswith("TOWER:") and "|SUPPLY" in family and len(tower_ids) == 1:
             tower_id = tower_ids[0]
             equivalent = self._historical_tower_equivalent(tower_id, representative)
@@ -95,8 +133,8 @@ class ValveActionResolver:
                     deltas[valve_id] = equivalent * span
                 candidate.evaluation["tower_equivalent_normalized_delta"] = equivalent
         else:
-            # 兼容旧快照：旧动作族仍按原来的分阀代表增量执行。
-            for valve_id in self.valves:
+            # 兼容旧动作族：仍读取原代表分阀增量，但只允许当前泵可用阀门执行。
+            for valve_id in family_valves:
                 value = representative.get(valve_id)
                 try:
                     number = float(value)
@@ -114,7 +152,6 @@ class ValveActionResolver:
             for valve_id in family_valves:
                 deltas[valve_id] = signed
 
-        # 历史中非动作族阀门的微小中位数不作为本次命令。
         allowed = set(family_valves)
         for valve_id in deltas:
             if valve_id not in allowed:
@@ -156,6 +193,12 @@ class ValveActionResolver:
 
         projected = {key: current[key] + deltas[key] for key in self.valves}
         active_towers = sorted({str(self.valves[valve_id]["tower_id"]) for valve_id in active_valves})
+        reason_codes = [resolution_reason]
+        if set(requested_family_valves) - set(family_valves):
+            reason_codes.append("SUPPLY_PUMP_VALVE_AVAILABILITY_APPLIED")
+        if pump_availability.get("invalid_pump_ids"):
+            reason_codes.append("SUPPLY_PUMP_CURRENT_INVALID_FAILSAFE")
+        reason_codes.append("VALVE_LIMITS_APPLIED")
         return ResolvedAction(
             action_id=candidate.action_id,
             action_family=family,
@@ -165,5 +208,5 @@ class ValveActionResolver:
             projected_valve_openings=projected,
             active_valve_ids=active_valves,
             active_tower_ids=active_towers,
-            reason_codes=[resolution_reason, "VALVE_LIMITS_APPLIED"],
+            reason_codes=reason_codes,
         )
