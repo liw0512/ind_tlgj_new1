@@ -41,3 +41,6 @@ jobs:
 
       - name: Test policy model single/dual tower topology
         run: python -m system.model.map_control.slurry_policy_model.test_configurable_tower_topology
+
+      - name: Test fixed-speed supply pump availability
+        run: python -m system.model.map_control.slurry_policy_model.test_supply_pump_availability
