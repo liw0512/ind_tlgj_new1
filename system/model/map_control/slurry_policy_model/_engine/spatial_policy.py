@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .schema import CONDITION_LABEL_COLUMN, GRID_ID_COLUMN
+from .supply_pump import detect_supply_pump_state_change
 from .utils import normalize_condition_label
 
 _GRID_PATTERN = re.compile(r"^P(?P<p>\d+)-S(?P<s>\d+)$", re.IGNORECASE)
@@ -228,28 +229,6 @@ def analyze_condition_attribution(
         "is_transient": training_route == "TRANSIENT",
         "anchor_row": anchor_row,
     }
-
-
-def detect_supply_pump_state_change(
-    identity_window: pd.DataFrame, plant: dict[str, Any]
-) -> tuple[bool, list[str]]:
-    """检测供浆泵启停或运行组合变化。"""
-    changed: list[str] = []
-    for column in plant.get("supply_pump_state_columns", []) or []:
-        if column not in identity_window.columns:
-            continue
-        values = (
-            identity_window[column]
-            .dropna()
-            .map(lambda v: str(v).strip())
-            .tolist()
-        )
-        values = [
-            v for v in values if v and v.lower() not in {"nan", "none"}
-        ]
-        if len(set(values)) > 1:
-            changed.append(str(column))
-    return bool(changed), changed
 
 
 def distance_mapping_weight(
