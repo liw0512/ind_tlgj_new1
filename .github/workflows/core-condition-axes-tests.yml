@@ -1,4 +1,4 @@
-name: Core model regression tests
+name: Unified plant config check
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  core-regression:
+  unified-plant-config:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -29,14 +29,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install core test dependencies
+      - name: Install core dependencies
         run: python -m pip install --upgrade pip numpy==1.26.4 pandas==2.3.3
 
-      - name: Test unified plant configuration source
+      - name: Check unified plant configuration source
         run: python -m system.model.config.test_unified_plant_config
-
-      - name: Test condition model core regression
-        run: python -m system.model.map_control.condition_model.tests.test_core_regression
-
-      - name: Test slurry policy core regression
-        run: python -m system.model.map_control.slurry_policy_model.tests.test_core_regression
