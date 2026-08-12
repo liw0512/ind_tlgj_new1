@@ -1,4 +1,4 @@
-name: Core condition axes tests
+name: Core condition axes and topology tests
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  configurable-condition-axes:
+  configurable-condition-axes-and-topology:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -33,5 +33,11 @@ jobs:
       - name: Test condition model one/two arbitrary axes
         run: python -m system.model.map_control.condition_model.test.test_configurable_condition_axes
 
+      - name: Test condition model optional tower pH
+        run: python -m system.model.map_control.condition_model.test.test_optional_tower_ph
+
       - name: Test policy model one/two arbitrary axes
         run: python -m system.model.map_control.slurry_policy_model.test_configurable_condition_axes
+
+      - name: Test policy model single/dual tower topology
+        run: python -m system.model.map_control.slurry_policy_model.test_configurable_tower_topology
