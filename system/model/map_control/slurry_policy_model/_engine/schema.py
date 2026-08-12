@@ -1,22 +1,19 @@
 """第二模块固定接口字段与决策片段输出结构。
 
 第一模块输出的 condition/grid/version 字段名是稳定接口；用于划分工况的原始
-过程字段不再在第二模块写死为 ``jzfh`` / ``yyq_SO2``。正式训练时，P4PC/第二
-模块会从当前 condition_snapshot.json 中读取 ``condition_axes`` 并注入有效训练
-配置，因此换厂只需要修改第一模块 ``condition_config.CONDITION_AXES``。
+过程字段不再在第二模块写死为 ``jzfh`` / ``yyq_SO2``。新训练直接读取第一模块
+``condition_config.CONDITION_AXES``，并在 effective training config 中冻结为
+``_condition_axes``；在线加载旧/新 policy snapshot 时优先使用冻结值。
 """
 from __future__ import annotations
 
-from typing import Any, Iterable
+import copy
+from typing import Any
 
 
 OUTLET_SO2_COLUMN = "jyq_SO2"
-
-# 仅用于读取旧第二模块 effective_config 的兼容默认值。新训练不会把这两个字段
-# 当成固定必要字段。
 LEGACY_CONDITION_AXIS_COLUMNS = ("jzfh", "yyq_SO2")
 
-# 第一模块固定追加的详细工况字段。
 CONDITION_SNAPSHOT_VERSION_COLUMN = "condition_snapshot_version"
 GRID_ID_COLUMN = "grid_id"
 BASE_CONDITION_ID_COLUMN = "base_condition_id"
@@ -56,38 +53,66 @@ ALL_CONDITION_COLUMNS = REQUIRED_CONDITION_COLUMNS + AUDIT_CONDITION_COLUMNS
 
 
 def time_column(plant: dict[str, Any]) -> str:
-    """返回输入 CSV 的原始时间列名。"""
     return str(plant.get("time_column", "date")).strip() or "date"
 
 
-def condition_axis_specs(training: dict[str, Any]) -> list[dict[str, Any]]:
-    """返回由第一模块 snapshot 注入的工况轴定义。
+def _configured_condition_axes() -> list[dict[str, Any]]:
+    """Read the one authoritative plant condition-axis definition."""
+    try:
+        from system.model.map_control.condition_model.condition_config import (
+            CONDITION_AXES,
+        )
+    except ImportError:  # pragma: no cover - standalone execution from module dir
+        try:
+            from condition_model.condition_config import CONDITION_AXES
+        except ImportError:
+            return [
+                {"column": column}
+                for column in LEGACY_CONDITION_AXIS_COLUMNS
+            ]
+    return [copy.deepcopy(dict(item)) for item in CONDITION_AXES]
 
-    新训练必须由 slurry_policy_core 在读取 condition snapshot 后注入
-    ``_condition_axes``。兼容读取历史 effective_config 时，若缺少该字段则退回
-    旧电厂两轴字段，避免旧快照连读取都失败；旧语义是否允许增量仍由版本/配置
-    兼容校验决定。
+
+def condition_axis_specs(training: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return frozen policy axes, or derive them from condition_config.
+
+    ``run_episode_pipeline`` freezes the derived list into the policy snapshot's
+    effective config.  Therefore a later edit of ``CONDITION_AXES`` cannot
+    silently alter an already-active online policy version.
     """
     raw = training.get("_condition_axes")
-    if isinstance(raw, (list, tuple)) and raw:
-        result = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            column = str(item.get("column", "")).strip()
-            if column:
-                result.append(dict(item, column=column))
-        if result:
-            return result
-    return [{"column": column} for column in LEGACY_CONDITION_AXIS_COLUMNS]
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raw = _configured_condition_axes()
+
+    result: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        column = str(item.get("column", "")).strip()
+        if column:
+            result.append(dict(item, column=column))
+    if len(result) not in {1, 2}:
+        raise ValueError(
+            "policy condition axes must contain exactly 1 or 2 fields; "
+            f"got {len(result)}"
+        )
+    if len({item["column"] for item in result}) != len(result):
+        raise ValueError("policy condition axes contain duplicate columns")
+    return result
 
 
 def condition_axis_columns(training: dict[str, Any]) -> tuple[str, ...]:
     return tuple(item["column"] for item in condition_axis_specs(training))
 
 
+def freeze_condition_axes(training: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with the current first-module axes frozen into it."""
+    result = copy.deepcopy(training)
+    result["_condition_axes"] = condition_axis_specs(result)
+    return result
+
+
 def episode_output_columns(plant: dict[str, Any]) -> list[str]:
-    """返回稳定的决策片段 CSV 表头。"""
     columns = [
         "episode_id",
         "condition_label",
