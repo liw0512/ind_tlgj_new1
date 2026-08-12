@@ -9,11 +9,11 @@ import pandas as pd
 
 try:
     from _engine.config_loader import all_valves, enabled_towers
-    from _engine.schema import INLET_SO2_COLUMN, LOAD_COLUMN, OUTLET_SO2_COLUMN
+    from _engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from _engine.utils import normalize_condition_label
 except ImportError:  # pragma: no cover
     from .._engine.config_loader import all_valves, enabled_towers
-    from .._engine.schema import INLET_SO2_COLUMN, LOAD_COLUMN, OUTLET_SO2_COLUMN
+    from .._engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from .._engine.utils import normalize_condition_label
 
 from .action_utils import profile_action
@@ -131,15 +131,11 @@ class OnlineSlurryPolicy:
         return reasons
 
     def export_runtime_state(self) -> Dict[str, Any]:
-        """复制现场运行事实，供同版本对原子切换后的候选策略继承。"""
-
         with self.lock:
             self.store.save()
             return copy.deepcopy(dict(self.store.state))
 
     def mark_external_reload(self) -> None:
-        """通知下一次 evaluate 输出一次 MODEL_VERSION_RELOADED 原因。"""
-
         with self.lock:
             self._external_reload_pending = True
 
@@ -149,11 +145,21 @@ class OnlineSlurryPolicy:
         condition_result: Optional[Dict[str, Any]],
         target: Optional[Any],
         execution_context: Optional[Dict[str, Any]],
-    ) -> Tuple[pd.Timestamp, Dict[str, Any], Dict[str, Any], Optional[float], Dict[str, Any]]:
+    ) -> Tuple[
+        pd.Timestamp,
+        Dict[str, Any],
+        Dict[str, Any],
+        Optional[float],
+        Dict[str, Any],
+    ]:
         if "process" in realtime_data:
             process = dict(realtime_data.get("process") or {})
-            condition = dict(condition_result or realtime_data.get("condition") or {})
-            execution = dict(execution_context or realtime_data.get("execution") or {})
+            condition = dict(
+                condition_result or realtime_data.get("condition") or {}
+            )
+            execution = dict(
+                execution_context or realtime_data.get("execution") or {}
+            )
             target_value = target
             if target_value is None:
                 target_block = realtime_data.get("target")
@@ -161,41 +167,69 @@ class OnlineSlurryPolicy:
                     target_value = target_block.get("outlet_so2_target")
                 elif target_block is not None:
                     target_value = target_block
-            ts_value = realtime_data.get("timestamp") or process.get(self.plant.get("time_column", "date"))
+            ts_value = realtime_data.get("timestamp") or process.get(
+                self.plant.get("time_column", "date")
+            )
         else:
             process = dict(realtime_data)
-            # 第一模块在线输出通常是“原始实时字段 + 工况字段”的同一行；
-            # 未单独传 condition_result 时直接从该行提取工况字段。
             condition = dict(condition_result or realtime_data)
             execution = dict(execution_context or {})
             target_value = target
-            ts_value = process.get("timestamp") or process.get(self.plant.get("time_column", "date"))
+            ts_value = process.get("timestamp") or process.get(
+                self.plant.get("time_column", "date")
+            )
         if isinstance(target_value, dict):
             target_value = target_value.get("outlet_so2_target")
-        return _timestamp(ts_value), process, condition, (None if target_value is None else float(target_value)), execution
+        return (
+            _timestamp(ts_value),
+            process,
+            condition,
+            None if target_value is None else float(target_value),
+            execution,
+        )
 
     def _condition_context(self, value: Dict[str, Any]) -> ConditionContext:
-        stable_label = value.get("stable_condition_label", value.get("condition_label", "UNKNOWN"))
+        stable_label = value.get(
+            "stable_condition_label", value.get("condition_label", "UNKNOWN")
+        )
         return ConditionContext(
-            condition_snapshot_version=str(value.get("condition_snapshot_version", "")),
+            condition_snapshot_version=str(
+                value.get("condition_snapshot_version", "")
+            ),
             condition_label=normalize_condition_label(stable_label),
-            raw_grid_id=str(value.get("raw_grid_id", value.get("grid_id", "UNKNOWN"))),
-            raw_condition_label=normalize_condition_label(value.get("raw_condition_label", stable_label)),
+            raw_grid_id=str(
+                value.get("raw_grid_id", value.get("grid_id", "UNKNOWN"))
+            ),
+            raw_condition_label=normalize_condition_label(
+                value.get("raw_condition_label", stable_label)
+            ),
             condition_stable=_as_bool(value.get("condition_stable"), False),
-            condition_switch_state=str(value.get("condition_switch_state", "UNKNOWN")),
+            condition_switch_state=str(
+                value.get("condition_switch_state", "UNKNOWN")
+            ),
             condition_valid=_as_bool(value.get("condition_valid"), False),
-            out_of_range_clipped=_as_bool(value.get("out_of_range_clipped"), False),
-            state_key=str(value.get("state_key", value.get("condition_state_key", "")) or ""),
+            out_of_range_clipped=_as_bool(
+                value.get("out_of_range_clipped"), False
+            ),
+            state_key=str(
+                value.get("state_key", value.get("condition_state_key", ""))
+                or ""
+            ),
         )
 
     def _zero_deltas(self) -> Dict[str, float]:
-        return {str(valve["valve_id"]): 0.0 for valve in all_valves(self.plant)}
+        return {
+            str(valve["valve_id"]): 0.0
+            for valve in all_valves(self.plant)
+        }
 
     def _current_openings(self, process: Dict[str, Any]) -> Dict[str, float]:
         values: Dict[str, float] = {}
         for valve in all_valves(self.plant):
             try:
-                values[str(valve["valve_id"])] = float(process[str(valve["column"])])
+                values[str(valve["valve_id"])] = float(
+                    process[str(valve["column"])]
+                )
             except Exception:
                 values[str(valve["valve_id"])] = float("nan")
         return values
@@ -216,15 +250,23 @@ class OnlineSlurryPolicy:
             decision_id="D-%s" % uuid.uuid4().hex[:16],
             timestamp=timestamp.isoformat(),
             model_version=self.loader.policy_version,
-            condition_snapshot_version=(condition.condition_snapshot_version if condition else None),
+            condition_snapshot_version=(
+                condition.condition_snapshot_version if condition else None
+            ),
             condition_label=(condition.condition_label if condition else None),
             raw_grid_id=(condition.raw_grid_id if condition else None),
             control_mode=control_mode,
             disturbance_mode=disturbance_mode,
-            current_so2=(float(process[OUTLET_SO2_COLUMN]) if OUTLET_SO2_COLUMN in process else None),
+            current_so2=(
+                float(process[OUTLET_SO2_COLUMN])
+                if OUTLET_SO2_COLUMN in process
+                else None
+            ),
             commanded_target=(demand.commanded_target if demand else None),
             effective_target=(demand.effective_target if demand else None),
-            desired_so2_response=(demand.desired_so2_response if demand else "UNKNOWN"),
+            desired_so2_response=(
+                demand.desired_so2_response if demand else "UNKNOWN"
+            ),
             experience_source="NONE",
             action_id="HOLD",
             action_family="HOLD",
@@ -254,14 +296,28 @@ class OnlineSlurryPolicy:
                 reasons.append("PH_ABOVE_SAFE_RANGE:%s" % tower["tower_id"])
         return reasons
 
-    def _candidate_sources(self, state: RealtimeState) -> List[Tuple[str, Any]]:
+    def _candidate_sources(
+        self, state: RealtimeState
+    ) -> List[Tuple[str, Any]]:
         if state.control_mode == "FAST_CHANGE":
-            sources: List[Tuple[str, Any]] = [("TRANSIENT", lambda: self.retriever.transient(state))]
-            if bool(self.online["fast_mode"].get("allow_regular_policy_fallback", False)):
+            sources: List[Tuple[str, Any]] = [
+                ("TRANSIENT", lambda: self.retriever.transient(state))
+            ]
+            if bool(
+                self.online["fast_mode"].get(
+                    "allow_regular_policy_fallback", False
+                )
+            ):
                 sources.extend(
                     [
-                        ("LOCAL_CONDITION", lambda: self.retriever.local(state)),
-                        ("NEIGHBOR_STATE", lambda: self.retriever.neighbor(state)),
+                        (
+                            "LOCAL_CONDITION",
+                            lambda: self.retriever.local(state),
+                        ),
+                        (
+                            "NEIGHBOR_STATE",
+                            lambda: self.retriever.neighbor(state),
+                        ),
                         ("PLANT_ACTION_PRIOR", self.retriever.plant_prior),
                     ]
                 )
@@ -283,24 +339,45 @@ class OnlineSlurryPolicy:
     ) -> Dict[str, Any]:
         with self.lock:
             reload_reasons = self._refresh_model()
-            timestamp, process, condition_raw, runtime_target, execution = self._normalize_input(
+            (
+                timestamp,
+                process,
+                condition_raw,
+                runtime_target,
+                execution,
+            ) = self._normalize_input(
                 realtime_data, condition_result, target, execution_context
             )
             condition = self._condition_context(condition_raw)
 
             if not condition.condition_valid:
                 return self._make_hold(
-                    timestamp, condition, process, "BLOCKED", "BLOCKED", "UNKNOWN",
+                    timestamp,
+                    condition,
+                    process,
+                    "BLOCKED",
+                    "BLOCKED",
+                    "UNKNOWN",
                     reload_reasons + ["CONDITION_INVALID"],
                 )
             if not condition.condition_stable:
                 return self._make_hold(
-                    timestamp, condition, process, "INITIALIZING", "INITIALIZING", "UNKNOWN",
+                    timestamp,
+                    condition,
+                    process,
+                    "INITIALIZING",
+                    "INITIALIZING",
+                    "UNKNOWN",
                     reload_reasons + ["CONDITION_NOT_STABLE"],
                 )
             if condition.condition_snapshot_version != self.loader.condition_version:
                 return self._make_hold(
-                    timestamp, condition, process, "BLOCKED", "BLOCKED", "UNKNOWN",
+                    timestamp,
+                    condition,
+                    process,
+                    "BLOCKED",
+                    "BLOCKED",
+                    "UNKNOWN",
                     reload_reasons + ["CONDITION_POLICY_VERSION_MISMATCH"],
                     debug={
                         "input_condition_version": condition.condition_snapshot_version,
@@ -309,22 +386,49 @@ class OnlineSlurryPolicy:
                 )
 
             try:
-                load = float(process[LOAD_COLUMN])
-                inlet = float(process[INLET_SO2_COLUMN])
+                axes = condition_axis_columns(self.training)
+                first_axis_value = float(process[axes[0]])
+                second_axis_value = (
+                    float(process[axes[1]]) if len(axes) > 1 else None
+                )
                 outlet = float(process[OUTLET_SO2_COLUMN])
-                disturbance = self.disturbance.update(timestamp, load, inlet, outlet)
+                disturbance = self.disturbance.update(
+                    timestamp,
+                    first_axis_value,
+                    second_axis_value,
+                    outlet,
+                )
                 state = self.state_builder.validate_and_build(
                     timestamp, process, condition, disturbance
                 )
-                commanded, effective, target_changed, target_hold = self.target_manager.resolve(
-                    runtime_target, timestamp
-                )
+                (
+                    commanded,
+                    effective,
+                    target_changed,
+                    target_hold,
+                ) = self.target_manager.resolve(runtime_target, timestamp)
                 demand = analyze_demand(
-                    outlet, commanded, effective, target_changed, self.plant, self.online
+                    outlet,
+                    commanded,
+                    effective,
+                    target_changed,
+                    self.plant,
+                    self.online,
                 )
-            except (KeyError, TypeError, ValueError, RealtimeDataError, TargetError) as exc:
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                RealtimeDataError,
+                TargetError,
+            ) as exc:
                 return self._make_hold(
-                    timestamp, condition, process, "BLOCKED", "BLOCKED", "UNKNOWN",
+                    timestamp,
+                    condition,
+                    process,
+                    "BLOCKED",
+                    "BLOCKED",
+                    "UNKNOWN",
                     reload_reasons + ["REALTIME_INPUT_INVALID", str(exc)],
                 )
 
@@ -332,7 +436,9 @@ class OnlineSlurryPolicy:
             self.state_machine.notify_condition(
                 condition.condition_label, condition.condition_switch_state
             )
-            progressive_reasons = self.state_machine.apply_progressive_magnitude_limit(demand)
+            progressive_reasons = (
+                self.state_machine.apply_progressive_magnitude_limit(demand)
+            )
             common_reasons = (
                 reload_reasons
                 + list(disturbance.get("reason_codes", []))
@@ -343,45 +449,86 @@ class OnlineSlurryPolicy:
 
             if (
                 "MODEL_VERSION_RELOADED" in reload_reasons
-                and int(self.online["action_stability"].get("model_reload_hold_cycles", 1)) > 0
+                and int(
+                    self.online["action_stability"].get(
+                        "model_reload_hold_cycles", 1
+                    )
+                )
+                > 0
                 and demand.safety_level != "EMERGENCY"
             ):
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", "MODEL_TRANSITION",
-                    state.disturbance_mode, common_reasons + ["MODEL_RELOAD_HOLD"], demand,
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    "MODEL_TRANSITION",
+                    state.disturbance_mode,
+                    common_reasons + ["MODEL_RELOAD_HOLD"],
+                    demand,
                 )
 
             if target_hold and demand.safety_level != "EMERGENCY":
                 self.target_manager.consume_hold_cycle()
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", "TARGET_TRANSITION",
-                    state.disturbance_mode, common_reasons + ["TARGET_TRANSITION_HOLD"], demand,
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    "TARGET_TRANSITION",
+                    state.disturbance_mode,
+                    common_reasons + ["TARGET_TRANSITION_HOLD"],
+                    demand,
                 )
-            if self.state_machine.condition_hold_required() and demand.safety_level != "EMERGENCY":
+            if (
+                self.state_machine.condition_hold_required()
+                and demand.safety_level != "EMERGENCY"
+            ):
                 self.state_machine.consume_condition_hold()
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", "CONDITION_TRANSITION",
-                    state.disturbance_mode, common_reasons + ["CONDITION_JUST_SWITCHED"], demand,
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    "CONDITION_TRANSITION",
+                    state.disturbance_mode,
+                    common_reasons + ["CONDITION_JUST_SWITCHED"],
+                    demand,
                 )
-            if state.control_mode == "FAST_RECOVERY" and demand.safety_level != "EMERGENCY":
+            if (
+                state.control_mode == "FAST_RECOVERY"
+                and demand.safety_level != "EMERGENCY"
+            ):
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", "FAST_RECOVERY",
-                    state.disturbance_mode, common_reasons + ["FAST_RECOVERY_HOLD"], demand,
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    "FAST_RECOVERY",
+                    state.disturbance_mode,
+                    common_reasons + ["FAST_RECOVERY_HOLD"],
+                    demand,
                 )
 
-            blocking = self.state_machine.blocking_reasons(timestamp, demand.safety_level)
+            blocking = self.state_machine.blocking_reasons(
+                timestamp, demand.safety_level
+            )
             if blocking:
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", self.state_machine.state.get("state", "HOLD"),
-                    state.disturbance_mode, common_reasons + blocking, demand,
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    self.state_machine.state.get("state", "HOLD"),
+                    state.disturbance_mode,
+                    common_reasons + blocking,
+                    demand,
                 )
 
             stability_context = self.state_machine.stability_context(timestamp)
             rejected_debug: Dict[str, Any] = {}
             selected: Optional[Candidate] = None
             resolved = None
-            # 先跨经验层级寻找首选SO2效果方向，再考虑次选方向。
-            # 例如WARNING中，临近工况的DECREASE效果优先于本地仅NEUTRAL的动作。
             for effect_direction in demand.acceptable_effect_directions:
                 effect_demand = ControlDemand(
                     commanded_target=demand.commanded_target,
@@ -398,17 +545,27 @@ class OnlineSlurryPolicy:
                 )
                 for source_name, provider in self._candidate_sources(state):
                     candidates = (
-                        [self.retriever.rule(effect_demand, state, effect_direction)]
+                        [
+                            self.retriever.rule(
+                                effect_demand, state, effect_direction
+                            )
+                        ]
                         if provider is None
                         else provider()
                     )
                     accepted, rejected = self.filter.filter(
-                        candidates, state, effect_demand, execution, stability_context
+                        candidates,
+                        state,
+                        effect_demand,
+                        execution,
+                        stability_context,
                     )
                     debug_key = "%s:%s" % (effect_direction, source_name)
                     rejected_debug[debug_key] = rejected
                     while accepted:
-                        candidate = self.ranker.rank(accepted, effect_demand)
+                        candidate = self.ranker.rank(
+                            accepted, effect_demand
+                        )
                         if candidate is None:
                             break
                         try:
@@ -417,7 +574,9 @@ class OnlineSlurryPolicy:
                             resolved = action
                             break
                         except ActionResolutionError as exc:
-                            rejected_debug[debug_key].setdefault(candidate.action_id, []).append(
+                            rejected_debug[debug_key].setdefault(
+                                candidate.action_id, []
+                            ).append(
                                 "ACTION_RESOLUTION_FAILED:%s" % exc
                             )
                             accepted.remove(candidate)
@@ -428,9 +587,18 @@ class OnlineSlurryPolicy:
 
             if selected is None or resolved is None:
                 return self._make_hold(
-                    timestamp, condition, process, "HOLD", state.control_mode,
-                    state.disturbance_mode, common_reasons + ["NO_EXECUTABLE_CANDIDATE"], demand,
-                    debug={"rejected_candidates": rejected_debug, "policy_state_key": state.policy_state_key_no_grid},
+                    timestamp,
+                    condition,
+                    process,
+                    "HOLD",
+                    state.control_mode,
+                    state.disturbance_mode,
+                    common_reasons + ["NO_EXECUTABLE_CANDIDATE"],
+                    demand,
+                    debug={
+                        "rejected_candidates": rejected_debug,
+                        "policy_state_key": state.policy_state_key_no_grid,
+                    },
                 )
 
             profile = selected.profile
@@ -455,12 +623,32 @@ class OnlineSlurryPolicy:
                 action_magnitude=resolved.action_magnitude,
                 recommended_valve_deltas=resolved.recommended_valve_deltas,
                 projected_valve_openings=resolved.projected_valve_openings,
-                historical_reliability=(None if selected.synthetic else float(reliability.get("total_score", 0.0))),
-                historical_safety_score=(None if selected.synthetic else float(reliability.get("safety_history_score", 0.0))),
-                historical_direction_consistency=(
-                    None if selected.synthetic else float(profile.get("so2_effect", {}).get("direction_consistency", 0.0))
+                historical_reliability=(
+                    None
+                    if selected.synthetic
+                    else float(reliability.get("total_score", 0.0))
                 ),
-                decision_status=("HOLD" if resolved.action_family == "HOLD" else "RECOMMENDED"),
+                historical_safety_score=(
+                    None
+                    if selected.synthetic
+                    else float(
+                        reliability.get("safety_history_score", 0.0)
+                    )
+                ),
+                historical_direction_consistency=(
+                    None
+                    if selected.synthetic
+                    else float(
+                        profile.get("so2_effect", {}).get(
+                            "direction_consistency", 0.0
+                        )
+                    )
+                ),
+                decision_status=(
+                    "HOLD"
+                    if resolved.action_family == "HOLD"
+                    else "RECOMMENDED"
+                ),
                 reason_codes=list(
                     dict.fromkeys(
                         common_reasons
@@ -471,13 +659,16 @@ class OnlineSlurryPolicy:
                 debug={
                     "policy_state_key": state.policy_state_key,
                     "policy_state_key_no_grid": state.policy_state_key_no_grid,
-                    "load_rate": state.load_rate,
-                    "inlet_so2_rate": state.inlet_so2_rate,
+                    "condition_axis_columns": list(axes),
+                    "condition_axis_1_rate": state.load_rate,
+                    "condition_axis_2_rate": state.inlet_so2_rate,
                     "outlet_so2_rate": state.outlet_so2_rate,
                     "demand_level": demand.demand_level,
                     "candidate_rank_key": selected.rank_key,
                     "rejected_candidates": rejected_debug,
-                    "automatic_control_allowed": _as_bool(execution.get("automatic_control_allowed"), False),
+                    "automatic_control_allowed": _as_bool(
+                        execution.get("automatic_control_allowed"), False
+                    ),
                     "model_reload_error": self._last_reload_error,
                 },
             ).to_dict()
@@ -499,8 +690,15 @@ class OnlineSlurryPolicy:
             return {
                 "model_version": self.loader.policy_version,
                 "condition_snapshot_version": self.loader.condition_version,
-                "snapshot_dir": str(self.loader.snapshot_dir) if self.loader.snapshot_dir else None,
+                "snapshot_dir": (
+                    str(self.loader.snapshot_dir)
+                    if self.loader.snapshot_dir
+                    else None
+                ),
                 "decision_state": dict(self.state_machine.state),
                 "last_reload_error": self._last_reload_error,
                 "external_version_management": self.external_version_management,
+                "condition_axis_columns": list(
+                    condition_axis_columns(self.training)
+                ),
             }
