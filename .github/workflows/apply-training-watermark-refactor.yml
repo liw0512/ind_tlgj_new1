@@ -3,7 +3,7 @@ name: Training watermark refactor
 on:
   push:
     paths:
-      - 'tools/apply_training_watermark_refactor.py'
+      - 'tools/fix_training_query_order.py'
       - '.github/workflows/apply-training-watermark-refactor.yml'
 
 permissions:
@@ -19,8 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply refactor
-        run: python tools/apply_training_watermark_refactor.py
+      - name: Fix initial/incremental query ordering
+        run: python tools/fix_training_query_order.py
       - name: Compile
         run: |
           python -m compileall -q \
@@ -29,11 +29,11 @@ jobs:
       - name: Static validation
         run: |
           git diff --check
-          grep -q "def _active_training_watermark" system/model/Process4MapControl.py
-          grep -q "kind=\"mergesort\"" system/model/Process4MapControl.py
-          grep -q "date > %s" system/model/Process4MapControl.py
-          grep -q "last_data_timestamp" system/model/Process4MapControl.py
-      - name: Commit refactor
+          grep -q 'ORDER BY date DESC' system/model/Process4MapControl.py
+          grep -q 'ORDER BY date ASC' system/model/Process4MapControl.py
+          grep -q 'kind="mergesort"' system/model/Process4MapControl.py
+          grep -q 'last_data_timestamp' system/model/Process4MapControl.py
+      - name: Commit fix
         run: |
           if git diff --quiet; then
             echo 'No changes to commit.'
@@ -41,6 +41,6 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add system/model/Process4MapControl.py system/model/config/process4map_config.py
-          git commit -m 'Use active training watermark for incremental data'
+          git add system/model/Process4MapControl.py
+          git commit -m 'Preserve recent initial data before chronological sort'
           git push origin HEAD:main
