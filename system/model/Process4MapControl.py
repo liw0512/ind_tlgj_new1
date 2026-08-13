@@ -1035,8 +1035,14 @@ class ProcessForMapConsole:
                     clauses.append("date <= %s")
                     params.append(until.to_pydatetime())
                     sql = f"SELECT * FROM {table_name} WHERE " + " AND ".join(clauses)
-                    # ORDER BY 只是数据库侧优化；P4PC 返回前仍会再次强制排序。
-                    sql += " ORDER BY date ASC"
+                    # 初次训练要先从数据库取“最新 N 条”，因此无 watermark 时 DESC；
+                    # 增量则从 watermark 向后读取。无论哪种情况，P4PC 返回/落 CSV 前
+                    # 都会再次统一按 date ASC 排序，数据库返回顺序不作为训练事实源。
+                    sql += (
+                        " ORDER BY date DESC"
+                        if since_time is None
+                        else " ORDER BY date ASC"
+                    )
                     if remaining is not None:
                         sql += f" LIMIT {int(remaining)}"
                     result = self.engine.execute(sql, tuple(params))
