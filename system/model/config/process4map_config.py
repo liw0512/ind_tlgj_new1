@@ -106,9 +106,9 @@ class TrainingConfig:
     incremental_trigger_interval_days: int = 3  # 距离上次训练达到多少天后触发；CSV 测试也遵守该周期。
     incremental_data_source: str = 'database'  # database=从数据库读取；csv=读取 incremental_source_csv。
     incremental_source_csv: str = ''  # 增量训练测试 CSV；仅 incremental_data_source='csv' 时使用。
-    incremental_training_days: int = 3  # 数据库模式下每次增量训练回看的天数。
+    incremental_training_days: int = 3  # 增量周期期望数据量对应天数；正式增量实际从 active watermark 之后读取全部新数据。
     incremental_minimum_records: int = 3*2880*0.9  # 增量训练最终允许启动的最少记录数。
-    incremental_database_record_limit: int = 0  # 数据库最多读取条数；0 表示按 incremental_training_days 自动计算。
+    incremental_database_record_limit: int = 0  # 无 watermark/兼容取数时的条数上限；正式增量有 watermark 时不会截断未学习的新数据。
     incremental_database_use_model_result_table: bool = False  # False=过滤数据表，True=模型结果表。
     incremental_work_csv: str = 'system/model/map_control/model_csv/Update_train.csv'  # 增量训练统一工作 CSV；database/csv 均先落盘到这里，再交给 condition_model。
 
