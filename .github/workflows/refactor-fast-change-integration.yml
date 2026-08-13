@@ -1,0 +1,44 @@
+name: FAST integration refactor
+
+on:
+  push:
+    paths:
+      - 'tools/refactor_fast_change_integration.py'
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply refactor
+        run: python tools/refactor_fast_change_integration.py
+      - name: Compile changed modules
+        run: |
+          python -m compileall -q \
+            system/model/map_control/fast_change_mode \
+            system/model/map_control/slurry_policy_model \
+            system/model/map_control/condition_model/online_condition_classifier.py \
+            system/model/config/database_schema.py
+      - name: Validate diff
+        run: |
+          git diff --check
+          ! grep -R "DisturbanceMonitor" system/model/map_control/slurry_policy_model/slurry_policy_online --include='*.py'
+      - name: Commit refactor
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Integrate standalone FAST context into slurry policy'
+          git push origin HEAD:main
