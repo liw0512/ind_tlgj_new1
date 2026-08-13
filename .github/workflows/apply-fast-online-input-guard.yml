@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install smoke dependency
+        run: python -m pip install --disable-pip-version-check pandas
       - name: Apply refactor
         run: python tools/apply_fast_online_input_guard.py
       - name: Compile
