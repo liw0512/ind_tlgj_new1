@@ -34,7 +34,8 @@ SLURRY_CORE_BRIDGE_CONFIG = {
     "slurry_policy_initial_script": str(POLICY_ROOT / "initial_slurry_policy_trainer.py"),
     "slurry_policy_incremental_script": str(POLICY_ROOT / "incremental_slurry_policy_trainer.py"),
     "slurry_policy_activate_script": str(POLICY_ROOT / "activate_policy_version.py"),
-    "slurry_policy_config": str(POLICY_ROOT / "p4pc_slurry_policy_config.py"),
+    # 第二模块唯一配置入口；P4PC、离线训练、激活和在线均使用同一文件。
+    "slurry_policy_config": str(POLICY_ROOT / "slurry_policy_config.py"),
     "slurry_policy_output_root": str(POLICY_OUTPUT_ROOT),
     "active_version_file": str(POLICY_OUTPUT_ROOT / "active_version.json"),
 }
