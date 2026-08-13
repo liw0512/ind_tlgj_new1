@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/apply_training_watermark_refactor.py'
+      - '.github/workflows/apply-training-watermark-refactor.yml'
 
 permissions:
   contents: write
