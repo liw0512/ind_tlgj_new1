@@ -114,7 +114,7 @@ class CandidateFilter:
         magnitude = str(action.get("magnitude", "UNKNOWN")).upper()
         reasons: List[str] = []
 
-        if candidate.source != "RULE_BASELINE":
+        if not candidate.synthetic:
             acceptance = self.online["profile_acceptance"]
             status_key = self.STATUS_KEY[candidate.source]
             if str(profile.get("profile_status", "NO_DATA")) not in set(acceptance[status_key]):

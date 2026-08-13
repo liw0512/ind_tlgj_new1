@@ -121,7 +121,6 @@ class DecisionStateMachine:
         if safety_level == "EMERGENCY":
             return []
         fast_context = dict(fast_context or {})
-        fast_cfg = self.regular_config.get("fast_policy", {})
         # fast_policy lives at ONLINE_POLICY_CONFIG top level; OnlineSlurryPolicy also
         # passes an explicit flag in fast_context for backward-safe lookup below.
         allow_escalation = bool(fast_context.get("_allow_waiting_effect_risk_escalation", False))

@@ -81,10 +81,6 @@ class PolicySnapshotLoader:
     def training_config(self) -> dict:
         return self.effective_config.get("training", {})
 
-    @property
-    def effective_disturbance(self) -> dict:
-        return self.effective_config.get("disturbance", {})
-
     def _latest_complete_snapshot(self) -> Path:
         snapshots = self.output_root / "snapshots"
         candidates = []

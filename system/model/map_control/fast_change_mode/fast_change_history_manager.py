@@ -21,7 +21,13 @@ from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG
 from system.model.config.standard_fields import TARGET_SO2_COLUMN, TIME_COLUMN
 
 from .fast_change_config import FAST_CHANGE_CONFIG
-from .fast_change_mode_detector import FAST_CHANGE, FAST_RECOVERY, REGULAR, FastChangeModeDetector
+from .fast_change_mode_detector import (
+    FAST_CHANGE,
+    FAST_RECOVERY,
+    REGULAR,
+    FastChangeConfigurationError,
+    FastChangeModeDetector,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -121,6 +127,7 @@ class FastChangeHistoryManager:
         self._sample_count = 0
         self._open_event: Optional[Dict[str, Any]] = None
         self._completed_events: list[Dict[str, Any]] = []
+        self._runtime_checkpoint_reset_reason: Optional[str] = None
         if self.persist_runtime:
             self._load_runtime_if_available()
 
@@ -162,13 +169,24 @@ class FastChangeHistoryManager:
             result.sort_values(TIME_COLUMN, inplace=True, kind="stable")
             result.reset_index(drop=True, inplace=True)
 
+        # load_checkpoint() 之后只允许继续处理更晚的数据。若增量 CSV 与上一批
+        # 时间重叠，直接失败而不是把 DEMA/状态机倒着重放。
+        boundary = self.last_processed_timestamp()
+        if self._sample_count > 0 and boundary is not None:
+            first_time = pd.Timestamp(result[TIME_COLUMN].iloc[0])
+            if first_time <= boundary:
+                raise ValueError(
+                    "FAST 增量数据必须严格晚于上一 checkpoint："
+                    f"first={first_time.isoformat()} checkpoint={boundary.isoformat()}"
+                )
+
         outputs: list[Dict[str, Any]] = []
         for row in result.to_dict(orient="records"):
             target = row.get(target_column)
             context = self.detector.evaluate(row, target=target)
             compact = {key: context.get(key) for key in FAST_CONTEXT_COLUMNS}
             outputs.append(compact)
-            self._observe(context)
+            self._observe(context, timestamp=row.get(TIME_COLUMN))
             self._sample_count += 1
         annotations = pd.DataFrame(outputs, index=result.index)
         for column in annotations.columns:
@@ -182,7 +200,7 @@ class FastChangeHistoryManager:
         target: Optional[Any] = None,
     ) -> Dict[str, Any]:
         context = self.detector.evaluate(row, target=target)
-        closed = self._observe(context)
+        closed = self._observe(context, timestamp=row.get(TIME_COLUMN))
         self._sample_count += 1
         if self.persist_runtime:
             every = max(
@@ -197,14 +215,18 @@ class FastChangeHistoryManager:
                 self._append_runtime_event(closed)
         return context
 
-    def _observe(self, context: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    def _observe(
+        self,
+        context: Mapping[str, Any],
+        *,
+        timestamp: Optional[Any] = None,
+    ) -> Optional[Dict[str, Any]]:
         mode = str(context.get("fast_change_mode", REGULAR))
         state = dict(context.get("fast_change_state") or {})
-        now = (
-            state.get("last_fast_seen_at")
-            or state.get("recovery_until")
-            or pd.Timestamp.now().isoformat()
-        )
+        try:
+            now = pd.Timestamp(timestamp).isoformat() if timestamp is not None else pd.Timestamp.now().isoformat()
+        except Exception:
+            now = pd.Timestamp.now().isoformat()
         if mode == FAST_CHANGE and self._open_event is None:
             start = state.get("fast_started_at") or now
             self._open_event = {
@@ -359,8 +381,36 @@ class FastChangeHistoryManager:
 
     def _load_runtime_if_available(self) -> None:
         path = self.runtime_root / "checkpoint.json"
-        if path.exists():
+        if not path.exists():
+            return
+        try:
             self.load_checkpoint(_read_json(path))
+        except (FastChangeConfigurationError, ValueError, TypeError, KeyError) as exc:
+            # 在线部署修改 FAST 配置后，旧短窗口状态不应阻断服务启动；离线增量仍
+            # 通过显式 load_checkpoint 严格拒绝语义变化。
+            self.reset_runtime_state()
+            self._runtime_checkpoint_reset_reason = "STALE_RUNTIME_CHECKPOINT_RESET:%s" % exc
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    def reset_runtime_state(self) -> None:
+        self.detector.reset()
+        self._sample_count = 0
+        self._open_event = None
+        self._completed_events = []
+
+    def last_processed_timestamp(self) -> Optional[pd.Timestamp]:
+        checkpoint = self.detector.export_checkpoint()
+        timestamps = []
+        for value in dict(checkpoint.get("series_state") or {}).values():
+            if value.get("timestamp"):
+                try:
+                    timestamps.append(pd.Timestamp(value["timestamp"]))
+                except Exception:
+                    continue
+        return max(timestamps) if timestamps else None
 
     def _append_runtime_event(self, event: Mapping[str, Any]) -> None:
         try:
@@ -372,6 +422,21 @@ class FastChangeHistoryManager:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(dict(event), ensure_ascii=False, default=_json_default) + "\n")
+        self._cleanup_runtime_event_archives()
+
+    def _cleanup_runtime_event_archives(self) -> None:
+        keep = int(self.config.get("lifecycle", {}).get("runtime_event_months_to_keep", 24))
+        if keep <= 0:
+            return
+        root = self.runtime_root / "events"
+        if not root.exists():
+            return
+        files = sorted(root.glob("fast_events_????_??.jsonl"))
+        for old in files[:-keep]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -380,4 +445,5 @@ class FastChangeHistoryManager:
             "detector_state": self.detector.get_state(),
             "output_root": str(self.output_root),
             "runtime_root": str(self.runtime_root),
+            "runtime_checkpoint_reset_reason": self._runtime_checkpoint_reset_reason,
         }

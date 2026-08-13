@@ -47,7 +47,10 @@ def build_fast_action_envelope(
     maximum = str(demand.maximum_action_magnitude).upper()
     preferred = acceptable[0] if acceptable else "NEUTRAL"
     allow_preemptive = False
-    risk_escalation = effect_risk in {"HIGH", "EMERGENCY"} or outlet_trend == "RISING_FAST"
+    risk_escalation = bool(
+        mode in {"FAST_CHANGE", "FAST_RECOVERY"}
+        and (effect_risk in {"HIGH", "EMERGENCY"} or outlet_trend == "RISING_FAST")
+    )
 
     if demand.safety_level in {"WARNING", "EMERGENCY"}:
         allowed_slurry = ["HOLD", "INCREASE"]

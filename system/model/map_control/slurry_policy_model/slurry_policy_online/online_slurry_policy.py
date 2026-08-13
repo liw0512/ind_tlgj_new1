@@ -474,31 +474,35 @@ class OnlineSlurryPolicy:
 
             if target_hold and demand.safety_level != "EMERGENCY":
                 self.target_manager.consume_hold_cycle()
-                return self._make_hold(
-                    timestamp,
-                    condition,
-                    process,
-                    "HOLD",
-                    "TARGET_TRANSITION",
-                    state.disturbance_mode,
-                    common_reasons + ["TARGET_TRANSITION_HOLD"],
-                    demand,
-                )
+                if state.control_mode != "FAST_CHANGE":
+                    return self._make_hold(
+                        timestamp,
+                        condition,
+                        process,
+                        "HOLD",
+                        "TARGET_TRANSITION",
+                        state.disturbance_mode,
+                        common_reasons + ["TARGET_TRANSITION_HOLD"],
+                        demand,
+                    )
+                common_reasons.append("TARGET_TRANSITION_HOLD_BYPASSED_BY_FAST")
             if (
                 self.state_machine.condition_hold_required()
                 and demand.safety_level != "EMERGENCY"
             ):
                 self.state_machine.consume_condition_hold()
-                return self._make_hold(
-                    timestamp,
-                    condition,
-                    process,
-                    "HOLD",
-                    "CONDITION_TRANSITION",
-                    state.disturbance_mode,
-                    common_reasons + ["CONDITION_JUST_SWITCHED"],
-                    demand,
-                )
+                if state.control_mode != "FAST_CHANGE":
+                    return self._make_hold(
+                        timestamp,
+                        condition,
+                        process,
+                        "HOLD",
+                        "CONDITION_TRANSITION",
+                        state.disturbance_mode,
+                        common_reasons + ["CONDITION_JUST_SWITCHED"],
+                        demand,
+                    )
+                common_reasons.append("CONDITION_TRANSITION_HOLD_BYPASSED_BY_FAST")
             blocking_fast_context = dict(fast_context)
             blocking_fast_context["_allow_waiting_effect_risk_escalation"] = bool(
                 self.online.get("fast_policy", {}).get(

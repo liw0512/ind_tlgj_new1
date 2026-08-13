@@ -93,5 +93,7 @@ FAST_CHANGE_CONFIG = {
         "runtime_checkpoint_every_samples": 20,
         # 在线是否持久化闭合 FAST 事件的月度 JSONL 摘要。
         "persist_compact_events": True,
+        # 在线 FAST 事件月度 JSONL 最多保留多少个月；<=0 表示不自动清理。
+        "runtime_event_months_to_keep": 24,
     },
 }
