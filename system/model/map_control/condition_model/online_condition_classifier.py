@@ -90,6 +90,17 @@ class OnlineConditionClassifier:
         self._last_stable_condition_label = None
         self._last_stable_grid_id = None
 
+    def blocked_result(
+        self,
+        realtime: Dict[str, Any],
+        reason: str,
+    ) -> OnlineConditionResult:
+        """Return a safe invalid result without advancing the majority window."""
+        return self._invalid_result(
+            build_state_key(realtime),
+            str(reason),
+        )
+
     def classify(self, realtime: Dict[str, Any]) -> OnlineConditionResult:
         state_key = build_state_key(realtime)
         try:
@@ -660,11 +671,28 @@ class OnlineConditionPolicyPipeline:
         with self.lock:
             self._maybe_reload_integrated_pair()
             original = dict(realtime)
-            # FAST must be evaluated before condition majority stabilization.  It is an
-            # upstream disturbance fact, not a second-module internal classifier.
-            fast_context = self.fast_change_manager.evaluate_online(original, target=target)
-            original = _preserving_update(original, fast_context)
-            condition_result = self.classifier.classify(original)
+            # FAST is owned by the first-module online pipeline and must run before
+            # condition majority stabilization.  Calibration/invalid guard frames are
+            # frozen here: neither FAST short-window state nor the condition majority
+            # window is allowed to advance.  P4PC does not own or call FAST directly.
+            guard_reason = self.fast_change_manager.input_guard_reason(original)
+            if guard_reason is not None:
+                fast_context = self.fast_change_manager.blocked_online_context(
+                    original,
+                    target=target,
+                    reason=guard_reason,
+                )
+                original = _preserving_update(original, fast_context)
+                condition_result = self.classifier.blocked_result(
+                    original,
+                    "UPSTREAM_INPUT_GUARD_BLOCKED:%s" % guard_reason,
+                )
+            else:
+                fast_context = self.fast_change_manager.evaluate_online(
+                    original, target=target
+                )
+                original = _preserving_update(original, fast_context)
+                condition_result = self.classifier.classify(original)
             if (
                 self.version_manager is not None
                 and condition_result.condition_stable

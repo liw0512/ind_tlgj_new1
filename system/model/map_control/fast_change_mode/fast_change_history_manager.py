@@ -62,6 +62,8 @@ FAST_CONTEXT_COLUMNS = (
     "fast_change_outlet_so2_rate",
     "fast_change_outlet_so2_trend",
     "fast_change_input_valid",
+    "fast_change_state_advanced",
+    "fast_change_input_guard_reason",
     "fast_change_reason_codes",
 )
 
@@ -146,6 +148,106 @@ class FastChangeHistoryManager:
         self._sample_count = int(data.get("sample_count", 0))
         self._open_event = dict(data["open_event"]) if data.get("open_event") else None
 
+    @staticmethod
+    def _guard_value_matches(value: Any, expected: Any) -> bool:
+        if value is None:
+            return expected is None
+        try:
+            left = float(value)
+            right = float(expected)
+            if pd.notna(left) and pd.notna(right):
+                return left == right
+        except (TypeError, ValueError):
+            pass
+        return str(value).strip() == str(expected).strip()
+
+    def input_guard_reason(self, row: Mapping[str, Any]) -> Optional[str]:
+        """返回阻断原因；None 表示该帧允许推进 FAST/condition 在线状态。"""
+        guard = dict(self.config.get("input_guard") or {})
+        if not bool(guard.get("enabled", True)):
+            return None
+        missing_is_valid = bool(guard.get("missing_field_is_valid", True))
+        for field, invalid_values in dict(guard.get("invalid_field_values") or {}).items():
+            if field not in row or row.get(field) in (None, ""):
+                if missing_is_valid:
+                    continue
+                return f"FAST_INPUT_GUARD_MISSING_FIELD:{field}"
+            value = row.get(field)
+            for invalid in list(invalid_values or []):
+                if self._guard_value_matches(value, invalid):
+                    return f"FAST_INPUT_GUARD_INVALID_VALUE:{field}={value}"
+        return None
+
+    def blocked_online_context(
+        self,
+        row: Mapping[str, Any],
+        *,
+        target: Optional[Any] = None,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """返回不推进 detector 的冻结上下文，用于校验/无效实时帧。"""
+        state = self.detector.get_state()
+        mode = str(state.get("mode", REGULAR))
+        direction = (
+            str(state.get("last_fast_direction", "NONE"))
+            if mode in {FAST_CHANGE, FAST_RECOVERY}
+            else "NONE"
+        )
+        exact = (
+            str(state.get("last_fast_exact_mode", "STEADY"))
+            if mode in {FAST_CHANGE, FAST_RECOVERY}
+            else "STEADY"
+        )
+        axes = [str(axis.get("column", "")) for axis in self.detector.axes]
+        try:
+            emission_limit = float(self.plant.get("outlet_so2_safe_range", [0.0, 35.0])[1])
+        except Exception:
+            emission_limit = 35.0
+        try:
+            target_value = float(target) if target not in (None, "") else None
+        except (TypeError, ValueError):
+            target_value = None
+        return {
+            "fast_change_mode": mode,
+            "fast_change_active": mode == FAST_CHANGE,
+            "fast_change_recovery_active": mode == FAST_RECOVERY,
+            "fast_change_raw_trigger": False,
+            "fast_change_direction": direction,
+            "fast_change_severity": "BLOCKED",
+            "fast_change_exact_trend_mode": exact,
+            "fast_change_raw_exact_trend_mode": "STEADY",
+            "fast_change_trend_risk_level": "UNKNOWN",
+            "fast_change_effect_risk_level": "UNKNOWN",
+            "fast_change_effect_state": "INPUT_BLOCKED",
+            "fast_change_effect_direction": "UNKNOWN",
+            "fast_change_overall_risk_level": "UNKNOWN",
+            "fast_change_axis_columns": axes,
+            "fast_change_axis_rates": {column: None for column in axes},
+            "fast_change_axis_levels": {column: "INPUT_BLOCKED" for column in axes},
+            "fast_change_axis_direction_ratios": {
+                column: {"rise": None, "drop": None} for column in axes
+            },
+            "fast_change_trigger_axes": [],
+            "fast_change_available_axis_count": 0,
+            "fast_change_trend_ready": False,
+            "fast_change_current_so2": None,
+            "fast_change_target_so2": target_value,
+            "fast_change_target_error": None,
+            "fast_change_emission_limit": emission_limit,
+            "fast_change_outlet_so2_rate": None,
+            "fast_change_outlet_so2_trend": "UNKNOWN",
+            "fast_change_input_valid": False,
+            "fast_change_state_advanced": False,
+            "fast_change_input_guard_reason": str(reason),
+            "fast_change_reason_codes": [
+                "FAST_INPUT_GUARD_BLOCKED",
+                str(reason),
+                "FAST_STATE_NOT_ADVANCED",
+            ],
+            "fast_change_state": state,
+            "fast_change_debug": {"input_guard_reason": str(reason)},
+        }
+
     def annotate_dataframe(
         self,
         frame: pd.DataFrame,
@@ -199,7 +301,14 @@ class FastChangeHistoryManager:
         *,
         target: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        guard_reason = self.input_guard_reason(row)
+        if guard_reason is not None:
+            return self.blocked_online_context(
+                row, target=target, reason=guard_reason
+            )
         context = self.detector.evaluate(row, target=target)
+        context["fast_change_state_advanced"] = True
+        context["fast_change_input_guard_reason"] = ""
         closed = self._observe(context, timestamp=row.get(TIME_COLUMN))
         self._sample_count += 1
         if self.persist_runtime:
