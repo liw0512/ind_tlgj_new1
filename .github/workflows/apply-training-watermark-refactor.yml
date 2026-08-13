@@ -1,0 +1,45 @@
+name: Training watermark refactor
+
+on:
+  push:
+    paths:
+      - 'tools/apply_training_watermark_refactor.py'
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply refactor
+        run: python tools/apply_training_watermark_refactor.py
+      - name: Compile
+        run: |
+          python -m compileall -q \
+            system/model/Process4MapControl.py \
+            system/model/config/process4map_config.py
+      - name: Static validation
+        run: |
+          git diff --check
+          grep -q "def _active_training_watermark" system/model/Process4MapControl.py
+          grep -q "kind=\"mergesort\"" system/model/Process4MapControl.py
+          grep -q "date > %s" system/model/Process4MapControl.py
+          grep -q "last_data_timestamp" system/model/Process4MapControl.py
+      - name: Commit refactor
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add system/model/Process4MapControl.py system/model/config/process4map_config.py
+          git commit -m 'Use active training watermark for incremental data'
+          git push origin HEAD:main
