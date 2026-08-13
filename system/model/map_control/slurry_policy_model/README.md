@@ -51,7 +51,7 @@ system/model/config/plant_config.py
 - 定频供浆泵电流字段、阈值和 pump→valve 拓扑；
 - 在线 SO2 目标字段。
 
-`slurry_policy_config.py` 只保留算法参数，例如响应窗口、动作强度、可靠性、在线控制和执行限幅。
+`slurry_policy_config.py` 是第二模块唯一算法配置入口，离线训练、P4PC 集成、版本激活和在线运行均使用这一份配置。它只保留算法参数，例如响应窗口、动作强度、可靠性、在线控制和执行限幅。
 
 ## 3. 离线输入
 
@@ -307,14 +307,13 @@ active_version.json
 ## 15. 核心文件
 
 ```text
-slurry_policy_config.py              第二模块算法配置
+slurry_policy_config.py              第二模块唯一算法配置
 initial_slurry_policy_trainer.py     初次训练入口
 incremental_slurry_policy_trainer.py 增量训练入口
 slurry_policy_core.py                离线核心流程
 _engine/                              episode、聚合、快照等公共引擎
 slurry_policy_online/                 在线候选、目标、安全、状态机和动作解析
 activate_policy_version.py           同版本校验和激活
-p4pc_slurry_policy_config.py         P4PC兼容配置入口
 ```
 
 模块内不再保留 `test_core_regression.py` 一类合成测试。需要验证完整在线行为时，使用上述历史 CSV 回放入口。
