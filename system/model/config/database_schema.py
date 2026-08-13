@@ -85,6 +85,23 @@ FILTER_FIELD_TYPES = _append_plant_dynamic_fields(_BASE_FIELDS)
 
 # 第一模块 + 同版本管理字段。condition_label 正式替代旧 cluster_label。
 _CONDITION_RESULT_FIELDS = OrderedDict([
+    # 独立 FAST_CHANGE 上游上下文；复杂轴速率/原因使用 jsonb。
+    ("fast_change_mode", "varchar(32)"),
+    ("fast_change_active", "boolean"),
+    ("fast_change_recovery_active", "boolean"),
+    ("fast_change_raw_trigger", "boolean"),
+    ("fast_change_direction", "varchar(32)"),
+    ("fast_change_severity", "varchar(32)"),
+    ("fast_change_exact_trend_mode", "varchar(96)"),
+    ("fast_change_trend_risk_level", "varchar(32)"),
+    ("fast_change_effect_risk_level", "varchar(32)"),
+    ("fast_change_effect_state", "varchar(48)"),
+    ("fast_change_overall_risk_level", "varchar(32)"),
+    ("fast_change_axis_rates", "jsonb"),
+    ("fast_change_trigger_axes", "jsonb"),
+    ("fast_change_outlet_so2_rate", "float8"),
+    ("fast_change_outlet_so2_trend", "varchar(32)"),
+    ("fast_change_reason_codes", "jsonb"),
     ("condition_snapshot_version", "varchar(32)"),
     ("raw_grid_id", "varchar(64)"),
     ("raw_base_condition_id", "varchar(64)"),

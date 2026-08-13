@@ -7,10 +7,12 @@ from .types import Candidate, ControlDemand, RealtimeState
 
 
 SOURCE_PRIORITY = {
-    "TRANSIENT": 4,
+    "TRANSIENT_EXACT": 5,
+    "TRANSIENT_DIRECTION_POOL": 4,
     "LOCAL_CONDITION": 4,
     "NEIGHBOR_STATE": 3,
     "PLANT_ACTION_PRIOR": 2,
+    "FAST_RULE_BASELINE": 2,
     "RULE_BASELINE": 1,
 }
 
@@ -71,7 +73,13 @@ class CandidateRetriever:
     def transient(self, state: RealtimeState) -> List[Candidate]:
         states = self.loader.load_transient(state.disturbance_mode)
         actions = self._actions_for_state(states, state.policy_state_key_no_grid)
-        return self._wrap("TRANSIENT", state.disturbance_mode, state.policy_state_key_no_grid, actions)
+        return self._wrap("TRANSIENT_EXACT", state.disturbance_mode, state.policy_state_key_no_grid, actions)
+
+    def transient_direction(self, state: RealtimeState) -> List[Candidate]:
+        direction = str(state.fast_context.get("fast_change_direction", "NONE"))
+        states = self.loader.load_transient_direction(direction)
+        actions = self._actions_for_state(states, state.policy_state_key_no_grid)
+        return self._wrap("TRANSIENT_DIRECTION_POOL", direction, state.policy_state_key_no_grid, actions)
 
     def local(self, state: RealtimeState) -> List[Candidate]:
         bundle = self.loader.load_condition_bundle(state.condition.condition_label)
@@ -95,6 +103,7 @@ class CandidateRetriever:
         demand: ControlDemand,
         state: RealtimeState,
         preferred_effect_direction: str = "",
+        source: str = "RULE_BASELINE",
     ) -> Candidate:
         effect_direction = str(preferred_effect_direction or "").upper()
         if not effect_direction:
@@ -132,12 +141,12 @@ class CandidateRetriever:
         }
         action_id = "%s|%s|%s" % (family, direction, magnitude)
         return Candidate(
-            source="RULE_BASELINE",
-            owner_id="RULE",
+            source=source,
+            owner_id="FAST_RULE" if source == "FAST_RULE_BASELINE" else "RULE",
             state_key=state.policy_state_key_no_grid,
             action_id=action_id,
             profile=profile,
-            source_priority=SOURCE_PRIORITY["RULE_BASELINE"],
+            source_priority=SOURCE_PRIORITY[source],
             synthetic=True,
         )
 

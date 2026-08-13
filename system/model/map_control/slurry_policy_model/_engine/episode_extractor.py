@@ -8,7 +8,6 @@ import pandas as pd
 
 from .action_detector import RawAction, detect_actions
 from .config_loader import all_valves, enabled_towers
-from .disturbance_classifier import classify_disturbance
 from .state_builder import build_policy_state
 from .time_index import IntervalOverlapIndex, TimeWindowIndexer
 from .spatial_policy import analyze_condition_attribution, detect_supply_pump_state_change
@@ -106,8 +105,7 @@ def _populate_windows(
     response: pd.DataFrame,
     full: pd.DataFrame,
     plant: dict[str, Any],
-    training: dict[str, Any],
-    effective_disturbance: dict[str, Any],
+    training: dict[str, Any]
 ) -> dict[str, Any]:
     ts_col = time_column(plant)
     axes = condition_axis_columns(training)
@@ -150,16 +148,6 @@ def _populate_windows(
         baseline[ts_col], baseline[outlet_col]
     )
 
-    record["disturbance_mode"] = classify_disturbance(
-        record["episode_condition_axis_1_rate"],
-        (
-            record["episode_condition_axis_2_rate"]
-            if second_axis_col is not None
-            else None
-        ),
-        effective_disturbance,
-    )
-
     outlet_values = pd.to_numeric(response[outlet_col], errors="coerce").dropna()
     record["post_outlet_so2_median"] = (
         float(outlet_values.median()) if not outlet_values.empty else np.nan
@@ -182,6 +170,12 @@ def _populate_windows(
         response[outlet_col],
         float(training["response"]["oscillation_diff_deadband"]),
     )
+    record["after_outlet_so2_rate"] = robust_slope_per_minute(
+        response[ts_col], response[outlet_col]
+    )
+    record["outlet_so2_rate_reduction"] = (
+        record["before_outlet_so2_rate"] - record["after_outlet_so2_rate"]
+    )
 
     safe_so2_lo, safe_so2_hi = map(float, plant["outlet_so2_safe_range"])
     record["outlet_so2_out_of_range"] = bool(
@@ -194,6 +188,24 @@ def _populate_windows(
     record["outlet_so2_over_hard_max"] = bool(
         not outlet_values.empty and (outlet_values > safe_so2_hi).any()
     )
+    record["post_outlet_so2_peak"] = (
+        float(outlet_values.max()) if not outlet_values.empty else np.nan
+    )
+    record["post_outlet_so2_safe_ratio"] = (
+        float(((outlet_values >= safe_so2_lo) & (outlet_values <= safe_so2_hi)).mean())
+        if not outlet_values.empty else 0.0
+    )
+    effect_states = (
+        response["fast_change_effect_state"].astype(str)
+        if "fast_change_effect_state" in response.columns
+        else pd.Series("UNKNOWN", index=response.index)
+    )
+    record["post_outlet_so2_warning_ratio"] = float(
+        effect_states.isin(["WARNING", "EMERGENCY"]).mean()
+    ) if len(effect_states) else 0.0
+    record["post_outlet_so2_emergency_ratio"] = float(
+        (effect_states == "EMERGENCY").mean()
+    ) if len(effect_states) else 0.0
 
     for tower in enabled_towers(plant):
         tower_id = tower["tower_id"]
@@ -241,6 +253,36 @@ def _populate_windows(
     ]
     if identity_window.empty:
         identity_window = full
+    if identity_window.empty:
+        raise ValueError("episode 无法找到 action_start 对应的 FAST 上下文")
+    fast_row = identity_window.iloc[0]
+    required_fast_fields = (
+        "fast_change_mode",
+        "fast_change_direction",
+        "fast_change_exact_trend_mode",
+        "fast_change_effect_risk_level",
+        "fast_change_overall_risk_level",
+        "fast_change_outlet_so2_rate",
+    )
+    missing_fast = [name for name in required_fast_fields if name not in identity_window.columns]
+    if missing_fast:
+        raise KeyError("第二模块训练输入缺少 FAST 标签: %s" % missing_fast)
+    record["fast_change_mode"] = str(fast_row.get("fast_change_mode", "REGULAR"))
+    record["fast_change_direction"] = str(fast_row.get("fast_change_direction", "NONE"))
+    record["fast_change_exact_trend_mode"] = str(
+        fast_row.get("fast_change_exact_trend_mode", "STEADY")
+    )
+    record["fast_change_severity"] = str(fast_row.get("fast_change_severity", "STEADY"))
+    record["fast_change_effect_risk_level"] = str(
+        fast_row.get("fast_change_effect_risk_level", "LOW")
+    )
+    record["fast_change_overall_risk_level"] = str(
+        fast_row.get("fast_change_overall_risk_level", "LOW")
+    )
+    record["fast_change_effect_state"] = str(
+        fast_row.get("fast_change_effect_state", "UNKNOWN")
+    )
+    record["disturbance_mode"] = record["fast_change_exact_trend_mode"]
     attribution = analyze_condition_attribution(
         identity_window,
         str(record["episode_type"]),
@@ -372,7 +414,6 @@ def _build_action_records(
     actions: list[RawAction],
     plant: dict[str, Any],
     training: dict[str, Any],
-    effective_disturbance: dict[str, Any],
     progress: Callable[[float, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     ts_col = time_column(plant)
@@ -429,7 +470,6 @@ def _build_action_records(
             full,
             plant,
             training,
-            effective_disturbance,
         )
         baseline_cov = _coverage(baseline, ts_col, baseline_minutes)
         response_cov = _coverage(response, ts_col, response_minutes)
@@ -458,7 +498,6 @@ def _build_hold_records(
     actions: list[RawAction],
     plant: dict[str, Any],
     training: dict[str, Any],
-    effective_disturbance: dict[str, Any],
     progress: Callable[[float, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     ts_col = time_column(plant)
@@ -556,8 +595,7 @@ def _build_hold_records(
                 full,
                 plant,
                 training,
-                effective_disturbance,
-            )
+                )
             baseline_cov = _coverage(baseline, ts_col, baseline_minutes)
             response_cov = _coverage(response, ts_col, response_minutes)
             record["baseline_coverage_ratio"] = baseline_cov
@@ -617,7 +655,6 @@ def extract_decision_episodes(
     df: pd.DataFrame,
     plant: dict[str, Any],
     training: dict[str, Any],
-    effective_disturbance: dict[str, Any],
     progress: Callable[[float, str], None] | None = None,
 ) -> tuple[pd.DataFrame, list[RawAction]]:
     def emit(start: float, end: float):
@@ -633,7 +670,6 @@ def extract_decision_episodes(
         actions,
         plant,
         training,
-        effective_disturbance,
         emit(0.55, 0.75),
     )
     records.extend(
@@ -642,7 +678,6 @@ def extract_decision_episodes(
             actions,
             plant,
             training,
-            effective_disturbance,
             emit(0.75, 0.96),
         )
     )

@@ -81,4 +81,17 @@ FAST_CHANGE_CONFIG = {
         # FAST_RECOVERY 最少持续时间，单位：分钟。
         "recovery_hold_minutes": 2.0,
     },
+
+    # ------------------------------------------------------------------
+    # 生命周期/存储。这里只保存小型 checkpoint、FAST 事件摘要和版本 manifest，
+    # 不永久复制整份原始 CSV，避免历史数据越积越大。
+    # ------------------------------------------------------------------
+    "lifecycle": {
+        # 离线 FAST 快照最多保留多少个版本；与第一/第二模块一样滚动清理旧版。
+        "max_versions_to_keep": 5,
+        # 在线每处理多少条数据覆盖写一次 runtime checkpoint；事件闭合时会立即落盘。
+        "runtime_checkpoint_every_samples": 20,
+        # 在线是否持久化闭合 FAST 事件的月度 JSONL 摘要。
+        "persist_compact_events": True,
+    },
 }

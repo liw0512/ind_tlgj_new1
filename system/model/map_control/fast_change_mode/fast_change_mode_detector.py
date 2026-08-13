@@ -175,6 +175,98 @@ class FastChangeModeDetector:
             "last_fast_exact_mode": self._last_fast_exact_mode,
         }
 
+    def export_checkpoint(self) -> Dict[str, Any]:
+        """导出足以继续因果计算的轻量 checkpoint，不包含完整历史 CSV。"""
+        detection_config = {
+            key: copy.deepcopy(self.config.get(key))
+            for key in ("enabled", "trend", "effect", "state_machine")
+        }
+        return {
+            "schema_version": "1.0",
+            "condition_axes": [
+                {
+                    "column": str(axis.get("column", "")),
+                    "step": float(axis.get("step", 0.0)),
+                }
+                for axis in self.axes
+            ],
+            "detection_config": detection_config,
+            "series_state": {
+                key: {
+                    "timestamp": self._iso(value.get("timestamp")),
+                    "ema1": float(value.get("ema1", 0.0)),
+                    "ema2": float(value.get("ema2", 0.0)),
+                    "dema": float(value.get("dema", 0.0)),
+                }
+                for key, value in self._series_state.items()
+            },
+            "series_history": {
+                key: [[self._iso(ts), float(value)] for ts, value in history]
+                for key, history in self._series_history.items()
+            },
+            "state_machine": self.get_state(),
+        }
+
+    def load_checkpoint(self, checkpoint: Mapping[str, Any]) -> None:
+        """恢复离线增量/在线重启所需状态；检测语义变化时拒绝混用。"""
+        data = dict(checkpoint or {})
+        expected_axes = [
+            {"column": str(axis.get("column", "")), "step": float(axis.get("step", 0.0))}
+            for axis in self.axes
+        ]
+        if list(data.get("condition_axes") or []) != expected_axes:
+            raise FastChangeConfigurationError(
+                "FAST checkpoint 的 condition_axes 与当前 plant_config 不一致，必须重新初次回放"
+            )
+        expected_config = {
+            key: copy.deepcopy(self.config.get(key))
+            for key in ("enabled", "trend", "effect", "state_machine")
+        }
+        if data.get("detection_config") != expected_config:
+            raise FastChangeConfigurationError(
+                "FAST 检测参数已变化，旧 checkpoint 不能继续增量使用，请重新初次回放"
+            )
+
+        self.reset()
+        for key, value in dict(data.get("series_state") or {}).items():
+            timestamp = value.get("timestamp")
+            if not timestamp:
+                continue
+            self._series_state[str(key)] = {
+                "timestamp": pd.Timestamp(timestamp),
+                "ema1": float(value.get("ema1", 0.0)),
+                "ema2": float(value.get("ema2", 0.0)),
+                "dema": float(value.get("dema", 0.0)),
+            }
+        for key, values in dict(data.get("series_history") or {}).items():
+            history: Deque[Tuple[pd.Timestamp, float]] = deque()
+            for item in values or []:
+                if not isinstance(item, (list, tuple)) or len(item) != 2 or not item[0]:
+                    continue
+                history.append((pd.Timestamp(item[0]), float(item[1])))
+            self._series_history[str(key)] = history
+
+        machine = dict(data.get("state_machine") or {})
+        self._mode = str(machine.get("mode", REGULAR))
+        self._fast_started_at = (
+            pd.Timestamp(machine["fast_started_at"])
+            if machine.get("fast_started_at")
+            else None
+        )
+        self._last_fast_seen_at = (
+            pd.Timestamp(machine["last_fast_seen_at"])
+            if machine.get("last_fast_seen_at")
+            else None
+        )
+        self._recovery_until = (
+            pd.Timestamp(machine["recovery_until"])
+            if machine.get("recovery_until")
+            else None
+        )
+        self._exit_stable_count = int(machine.get("exit_stable_count", 0))
+        self._last_fast_direction = str(machine.get("last_fast_direction", "NONE"))
+        self._last_fast_exact_mode = str(machine.get("last_fast_exact_mode", "STEADY"))
+
     # ------------------------------------------------------------------
     # trend factor: only this factor may trigger FAST_CHANGE
     # ------------------------------------------------------------------

@@ -16,7 +16,8 @@ class CandidateFilter:
     STATUS_KEY = {
         "LOCAL_CONDITION": "local_allowed_status",
         "NEIGHBOR_STATE": "neighbor_allowed_status",
-        "TRANSIENT": "transient_allowed_status",
+        "TRANSIENT_EXACT": "transient_allowed_status",
+        "TRANSIENT_DIRECTION_POOL": "transient_allowed_status",
         "PLANT_ACTION_PRIOR": "plant_prior_allowed_status",
     }
 
@@ -31,11 +32,12 @@ class CandidateFilter:
         demand: ControlDemand,
         execution_context: Dict[str, Any],
         stability_context: Dict[str, Any],
+        fast_envelope: Any | None = None,
     ) -> Tuple[List[Candidate], Dict[str, List[str]]]:
         accepted: List[Candidate] = []
         rejected: Dict[str, List[str]] = {}
         for candidate in candidates:
-            reasons = self._reasons(candidate, state, demand, execution_context, stability_context)
+            reasons = self._reasons(candidate, state, demand, execution_context, stability_context, fast_envelope)
             if reasons:
                 candidate.reject_reasons = reasons
                 rejected[candidate.action_id] = reasons
@@ -103,6 +105,7 @@ class CandidateFilter:
         demand: ControlDemand,
         execution: Dict[str, Any],
         stability: Dict[str, Any],
+        fast_envelope: Any | None = None,
     ) -> List[str]:
         profile = candidate.profile
         action = profile_action(profile)
@@ -117,9 +120,39 @@ class CandidateFilter:
             if str(profile.get("profile_status", "NO_DATA")) not in set(acceptance[status_key]):
                 reasons.append("PROFILE_STATUS_NOT_ALLOWED")
             so2_effect = profile.get("so2_effect", {})
-            if str(so2_effect.get("dominant_direction", "UNKNOWN")) not in demand.acceptable_effect_directions:
+            is_transient = candidate.source in {"TRANSIENT_EXACT", "TRANSIENT_DIRECTION_POOL"}
+            transient_effect = profile.get("transient_effect", {}) or {}
+            protective_ok = False
+            if is_transient and fast_envelope is not None:
+                safe_ratio = transient_effect.get("mean_safe_ratio")
+                rate_reduction = (transient_effect.get("outlet_so2_rate_reduction", {}) or {}).get("median")
+                try:
+                    safe_ratio = float(safe_ratio)
+                except (TypeError, ValueError):
+                    safe_ratio = 0.0
+                try:
+                    rate_reduction = float(rate_reduction)
+                except (TypeError, ValueError):
+                    rate_reduction = -999.0
+                fast_cfg = self.online.get("fast_policy", {})
+                protective_ok = bool(
+                    str(state.fast_context.get("fast_change_direction", "NONE")) == "RISE"
+                    and direction in set(fast_envelope.allowed_slurry_directions)
+                    and safe_ratio >= float(fast_cfg.get("minimum_transient_safe_ratio", 0.85))
+                    and rate_reduction >= float(fast_cfg.get("minimum_transient_rate_reduction", -0.10))
+                )
+                candidate.evaluation["transient_protective_ok"] = protective_ok
+            if (
+                str(so2_effect.get("dominant_direction", "UNKNOWN"))
+                not in demand.acceptable_effect_directions
+                and not protective_ok
+            ):
                 reasons.append("SO2_EFFECT_DIRECTION_MISMATCH")
-            if float(so2_effect.get("direction_consistency", 0.0)) < float(acceptance["minimum_direction_consistency"]):
+            if (
+                float(so2_effect.get("direction_consistency", 0.0))
+                < float(acceptance["minimum_direction_consistency"])
+                and not protective_ok
+            ):
                 reasons.append("DIRECTION_CONSISTENCY_TOO_LOW")
             reliability = profile.get("reliability", {})
             if float(reliability.get("safety_history_score", 0.0)) < float(acceptance["minimum_safety_history_score"]):
@@ -144,12 +177,8 @@ class CandidateFilter:
 
         if direction == "DECREASE" and demand.safety_level in {"WARNING", "EMERGENCY"}:
             reasons.append("SLURRY_DECREASE_BLOCKED_BY_EMISSION_GUARD")
-        if (
-            direction == "DECREASE"
-            and state.control_mode == "FAST_CHANGE"
-            and bool(self.online["fast_mode"].get("block_economic_slurry_decrease", True))
-        ):
-            reasons.append("SLURRY_DECREASE_BLOCKED_IN_FAST_MODE")
+        if fast_envelope is not None and direction not in set(fast_envelope.allowed_slurry_directions):
+            reasons.append("ACTION_DIRECTION_BLOCKED_BY_FAST_ENVELOPE")
 
         tower_ids, valve_ids = parse_action_family(family, self.plant)
         if direction != "HOLD" and len(tower_ids) > 1 and state.control_mode != "FAST_CHANGE":

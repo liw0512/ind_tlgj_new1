@@ -27,6 +27,7 @@ class RealtimeState:
     outlet_so2_rate: float
     disturbance_mode: str
     control_mode: str
+    fast_context: Dict[str, Any]
     policy_state_key: str
     policy_state_key_no_grid: str
 

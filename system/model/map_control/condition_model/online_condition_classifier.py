@@ -50,6 +50,7 @@ from system.model.map_control.condition_model.integrated_version_manager import 
     IntegratedVersionManager,
     IntegratedVersionPointer,
 )
+from system.model.map_control.fast_change_mode import FastChangeHistoryManager
 
 
 class OnlineConditionClassifier:
@@ -493,6 +494,9 @@ class OnlineConditionPolicyPipeline:
         self.config = config
         self.snapshot = snapshot
         self.classifier = OnlineConditionClassifier(config, snapshot)
+        # FAST detector is independent from condition/policy model hot reload and therefore
+        # keeps its short-window/runtime state across integrated model version switches.
+        self.fast_change_manager = FastChangeHistoryManager(persist_runtime=True)
         self.version_manager = version_manager
 
         bridge_config = dict(
@@ -656,6 +660,10 @@ class OnlineConditionPolicyPipeline:
         with self.lock:
             self._maybe_reload_integrated_pair()
             original = dict(realtime)
+            # FAST must be evaluated before condition majority stabilization.  It is an
+            # upstream disturbance fact, not a second-module internal classifier.
+            fast_context = self.fast_change_manager.evaluate_online(original, target=target)
+            original = _preserving_update(original, fast_context)
             condition_result = self.classifier.classify(original)
             if (
                 self.version_manager is not None
@@ -709,6 +717,7 @@ class OnlineConditionPolicyPipeline:
                 ),
                 "integrated_version": self._version_fields(),
                 "slurry_policy": self.policy_bridge.status(),
+                "fast_change": self.fast_change_manager.status(),
             }
 
 

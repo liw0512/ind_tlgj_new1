@@ -8,6 +8,10 @@ from .fast_change_mode_detector import (
     FastChangeConfigurationError,
     FastChangeModeDetector,
 )
+from .fast_change_history_manager import (
+    FAST_CONTEXT_COLUMNS,
+    FastChangeHistoryManager,
+)
 
 __all__ = [
     "FAST_CHANGE_CONFIG",
@@ -16,4 +20,6 @@ __all__ = [
     "REGULAR",
     "FAST_CHANGE",
     "FAST_RECOVERY",
+    "FAST_CONTEXT_COLUMNS",
+    "FastChangeHistoryManager",
 ]

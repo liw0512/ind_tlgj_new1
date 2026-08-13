@@ -21,6 +21,8 @@ from typing import Any, Sequence
 
 import pandas as pd
 
+from system.model.map_control.fast_change_mode import FastChangeHistoryManager
+
 from _engine.aggregator import aggregate_all_levels
 from _engine.config_loader import (
     deep_merge,
@@ -175,7 +177,6 @@ def _event_definition_signature(training: dict[str, Any]) -> dict[str, Any]:
     """旧 episode 无法自动重算的训练定义；发生变化时必须重新初次训练。"""
     return {
         "episode": copy.deepcopy(training.get("episode", {})),
-        "disturbance": copy.deepcopy(training.get("disturbance", {})),
         "condition_attribution": copy.deepcopy(
             training.get("condition_attribution", {})
         ),
@@ -387,6 +388,10 @@ def run_initial_training(
                 inputs, plant, training, progress=progress.child(5.0, 27.0)
             )
         recorder.add_counter("raw_row_count", len(raw_df))
+        fast_manager = FastChangeHistoryManager()
+        with recorder.measure("initial_fast_change_replay"):
+            raw_df = fast_manager.annotate_dataframe(raw_df)
+        fast_summary = fast_manager.run_summary(raw_df)
         with recorder.measure("initial_input_alignment"):
             input_alignment = validate_input_frame_alignment(
                 raw_df, condition_index, context="初次训练输入 CSV"
@@ -399,6 +404,10 @@ def run_initial_training(
                 aggregate_results=False,
                 progress=progress.child(27.0, 70.0),
             )
+        effective["fast_change"] = {
+            "checkpoint": fast_manager.export_checkpoint(),
+            "summary": fast_summary,
+        }
         alignment_cfg = training.get("version_alignment", {})
         with recorder.measure("initial_condition_remap"):
             valid, valid_report, _ = remap_episode_conditions(
@@ -453,6 +462,11 @@ def run_initial_training(
             remap_report=remap_report,
             performance_recorder=recorder,
             progress=progress.child(82.0, 99.0),
+        )
+        fast_manager.publish_snapshot(
+            version,
+            source_paths=_source_paths(inputs),
+            summary=fast_summary,
         )
         progress.update(100.0, f"初次离线训练完成：{snapshot}", force=True)
         return snapshot
@@ -533,6 +547,16 @@ def run_incremental_training(
             new_df, warnings = prepare_raw_data(
                 inputs, plant, training, progress=progress.child(20.0, 36.0)
             )
+        fast_manager = FastChangeHistoryManager()
+        previous_fast = (previous_effective.get("fast_change") or {}).get("checkpoint")
+        if not previous_fast:
+            raise ConfigurationError(
+                "上一版第二模块没有 FAST_CHANGE checkpoint。V4 首次升级必须重新执行初次训练。"
+            )
+        fast_manager.load_checkpoint(previous_fast)
+        with recorder.measure("incremental_fast_change_replay"):
+            new_df = fast_manager.annotate_dataframe(new_df)
+        fast_summary = fast_manager.run_summary(new_df)
         with recorder.measure("incremental_input_alignment"):
             input_alignment = validate_input_frame_alignment(
                 new_df, condition_index, context="增量训练输入 CSV"
@@ -549,6 +573,10 @@ def run_incremental_training(
                 aggregate_results=False,
                 progress=progress.child(36.0, 66.0),
             )
+        effective["fast_change"] = {
+            "checkpoint": fast_manager.export_checkpoint(),
+            "summary": fast_summary,
+        }
         with recorder.measure("incremental_remap_new"):
             new_valid, new_valid_report, _ = remap_episode_conditions(
                 new_valid,
@@ -654,6 +682,11 @@ def run_incremental_training(
             remap_report=remap_report,
             performance_recorder=recorder,
             progress=progress.child(84.0, 99.0),
+        )
+        fast_manager.publish_snapshot(
+            target_version,
+            source_paths=_source_paths(inputs),
+            summary=fast_summary,
         )
         progress.update(100.0, f"增量离线训练完成：{snapshot}", force=True)
         return snapshot

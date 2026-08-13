@@ -112,22 +112,41 @@ class DecisionStateMachine:
             "reverse_lock_active": reverse_active,
         }
 
-    def blocking_reasons(self, now: pd.Timestamp, safety_level: str) -> List[str]:
+    def blocking_reasons(
+        self,
+        now: pd.Timestamp,
+        safety_level: str,
+        fast_context: Dict[str, Any] | None = None,
+    ) -> List[str]:
         if safety_level == "EMERGENCY":
             return []
+        fast_context = dict(fast_context or {})
+        fast_cfg = self.regular_config.get("fast_policy", {})
+        # fast_policy lives at ONLINE_POLICY_CONFIG top level; OnlineSlurryPolicy also
+        # passes an explicit flag in fast_context for backward-safe lookup below.
+        allow_escalation = bool(fast_context.get("_allow_waiting_effect_risk_escalation", False))
+        risk_escalation = bool(fast_context.get("_risk_escalation", False))
+        escalation_active = allow_escalation and risk_escalation
         reasons: List[str] = []
         if self.state.get("pending_recommendation"):
             reasons.append("WAITING_EXECUTION_FEEDBACK")
         if (
             self.state.get("state") in {"WAITING_EFFECT", "EVALUATING_EFFECT"}
             and bool(self.config.get("block_normal_actions_while_waiting_effect", True))
+            and not escalation_active
         ):
             reasons.append("WAITING_PREVIOUS_ACTION_EFFECT")
 
         last = self.state.get("last_executed_action") or {}
         if last.get("timestamp"):
             elapsed = (now - _ts(last["timestamp"])).total_seconds() / 60.0
-            if elapsed < float(self.config["minimum_action_interval_minutes"]):
+            interval = float(self.config["minimum_action_interval_minutes"])
+            if escalation_active:
+                interval = min(
+                    interval,
+                    float(fast_context.get("_risk_escalation_minimum_action_interval_minutes", interval)),
+                )
+            if elapsed < interval:
                 reasons.append("MINIMUM_ACTION_INTERVAL_ACTIVE")
 
         cutoff = now - pd.Timedelta(hours=1)

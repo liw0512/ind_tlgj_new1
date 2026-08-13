@@ -958,6 +958,15 @@ def write_snapshot(
         write_pickle_only,
         transient_progress,
     )
+    _write_owner_collection(
+        snapshot_dir,
+        "transient_direction",
+        aggregated.get("transient_direction", {}),
+        snapshot_version,
+        condition_version,
+        write_pickle_only,
+        None,
+    )
 
     member_grid_count = sum(
         len(items) for items in aggregated.get("condition_grids", {}).values()

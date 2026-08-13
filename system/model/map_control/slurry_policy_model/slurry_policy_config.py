@@ -239,42 +239,6 @@ TRAINING_CONFIG = {
     },
 
     # ------------------------------------------------------------------------
-    # 工况快速变化 / 慢变化识别，用于区分 NORMAL 与 FAST_CHANGE 等场景。
-    # ------------------------------------------------------------------------
-    "disturbance": {
-        # auto：根据历史变化率分布自动学习慢变/快变阈值；fixed：使用下面固定阈值。
-        "mode": "auto",
-        # 计算各工况轴趋势变化率的回看窗口，单位：分钟。
-        "trend_window_minutes": 5.0,
-        # auto 模式下：历史绝对变化率的该分位数作为 SLOW 阈值候选。
-        "auto_slow_quantile": 0.75,
-        # auto 模式下：历史绝对变化率的该分位数作为 FAST 阈值候选。
-        "auto_fast_quantile": 0.92,
-        # 以下四个 fixed 阈值仅用于历史旧轴 jzfh / yyq_SO2；
-        # 新任意工况轴默认走 auto，不建议继续按字段名扩展这里。
-        # 负荷慢变阈值，旧语义通常为负荷变化率/分钟。
-        "load_slow_rate": 1.0,
-        # 负荷快变阈值。
-        "load_fast_rate": 3.0,
-        # 原烟气 SO2 慢变阈值，旧语义通常为 mg/Nm3 每分钟。
-        "inlet_so2_slow_rate": 20.0,
-        # 原烟气 SO2 快变阈值。
-        "inlet_so2_fast_rate": 60.0,
-        # auto 学习出的旧负荷慢变阈值不得低于此值，防止历史数据过稳导致阈值接近 0。
-        "minimum_load_slow_rate": 0.10,
-        # auto 学习出的旧负荷快变阈值最小值。
-        "minimum_load_fast_rate": 0.30,
-        # auto 学习出的旧原烟气 SO2 慢变阈值最小值。
-        "minimum_inlet_so2_slow_rate": 1.0,
-        # auto 学习出的旧原烟气 SO2 快变阈值最小值。
-        "minimum_inlet_so2_fast_rate": 3.0,
-        # 任意新工况轴：SLOW 最小阈值 = 该轴 grid step × 此比例。
-        "minimum_axis_slow_step_ratio": 0.01,
-        # 任意新工况轴：FAST 最小阈值 = 该轴 grid step × 此比例。
-        "minimum_axis_fast_step_ratio": 0.03,
-    },
-
-    # ------------------------------------------------------------------------
     # 离线状态离散化。用于把连续过程状态转成可统计的状态键。
     # ------------------------------------------------------------------------
     "state": {
@@ -587,19 +551,25 @@ ONLINE_POLICY_CONFIG = {
     },
 
     # ------------------------------------------------------------------------
-    # FAST_CHANGE 快变场景的进入保持与退出恢复策略。
+    # FAST_CHANGE 动作策略。FAST 的识别/状态机参数不在这里，统一由
+    # fast_change_mode/fast_change_config.py 管理；这里仅定义第二模块如何消费 FAST。
     # ------------------------------------------------------------------------
-    "fast_mode": {
-        # 一旦进入 FAST_CHANGE，至少保持该模式多少分钟，避免模式频繁闪切。
-        "minimum_hold_minutes": 4.0,
-        # 扰动恢复后连续多少个决策周期稳定，才允许退出 FAST_CHANGE。
-        "exit_stable_cycles": 4,
-        # 退出 FAST_CHANGE 后继续恢复保护多久，单位：分钟。
-        "recovery_hold_minutes": 2.0,
-        # True：FAST_CHANGE 阶段禁止为了经济性主动减浆，以安全/抗扰动优先。
-        "block_economic_slurry_decrease": True,
-        # False：缺少可靠 transient 快变经验时，不直接拿 NORMAL 策略硬套作 fallback。
+    "fast_policy": {
+        "transient_exact_enabled": True,
+        "transient_direction_pool_enabled": True,
         "allow_regular_policy_fallback": False,
+        "allow_preemptive_increase": True,
+        "target_band_preemptive_max_magnitude": "SMALL",
+        "combined_rise_max_magnitude": "MEDIUM",
+        "recovery_drop_max_decrease_magnitude": "SMALL",
+        # FAST_RISE 历史动作即使净烟气绝对值仍上涨，只要安全且上涨速度被明显压制，
+        # 仍可作为有效保护经验进入候选。
+        "minimum_transient_safe_ratio": 0.85,
+        "minimum_transient_rate_reduction": -0.10,
+        # FAST 风险继续升级时，允许突破普通 WAITING_EFFECT，但仍保留执行反馈、
+        # 反向锁和每小时动作次数等硬节流。
+        "allow_waiting_effect_risk_escalation": True,
+        "risk_escalation_minimum_action_interval_minutes": 1.0,
     },
 
     # ------------------------------------------------------------------------

@@ -7,11 +7,11 @@ import pandas as pd
 
 try:
     from _engine.config_loader import enabled_towers
-    from _engine.schema import OUTLET_SO2_COLUMN
+    from _engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from _engine.state_builder import build_policy_state
 except ImportError:  # pragma: no cover
     from .._engine.config_loader import enabled_towers
-    from .._engine.schema import OUTLET_SO2_COLUMN
+    from .._engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from .._engine.state_builder import build_policy_state
 
 from .types import ConditionContext, RealtimeState
@@ -42,43 +42,41 @@ class RealtimeStateBuilder:
         timestamp: pd.Timestamp,
         process: Dict[str, Any],
         condition: ConditionContext,
-        disturbance: Dict[str, Any],
+        fast_context: Dict[str, Any],
     ) -> RealtimeState:
-        # 工况轴本身由 DisturbanceMonitor 调用前按 effective training config
-        # 校验；这里不再硬编码 jzfh / yyq_SO2。
         outlet = _number(process, OUTLET_SO2_COLUMN)
+        axes = condition_axis_columns(self.training)
+        rates = dict(fast_context.get("fast_change_axis_rates") or {})
+        first_rate = float(rates.get(axes[0], 0.0) or 0.0)
+        second_rate = float(rates.get(axes[1], 0.0) or 0.0) if len(axes) > 1 else 0.0
+        outlet_rate = float(fast_context.get("fast_change_outlet_so2_rate", 0.0) or 0.0)
+        disturbance_mode = str(fast_context.get("fast_change_exact_trend_mode", "STEADY"))
+        control_mode = str(fast_context.get("fast_change_mode", "REGULAR"))
+
         row: Dict[str, Any] = {
             "anchor_grid_id": condition.raw_grid_id,
             "condition_state_key": condition.state_key,
             "before_outlet_so2": outlet,
-            "before_outlet_so2_rate": float(disturbance["outlet_so2_rate"]),
-            "disturbance_mode": str(disturbance["disturbance_mode"]),
+            "before_outlet_so2_rate": outlet_rate,
+            "disturbance_mode": disturbance_mode,
         }
         for tower in enabled_towers(self.plant):
             tower_id = str(tower["tower_id"])
-            row["before_ph__%s" % tower_id] = _number(
-                process, str(tower["ph_column"])
-            )
+            row["before_ph__%s" % tower_id] = _number(process, str(tower["ph_column"]))
             for valve in tower.get("valves", []):
                 valve_id = str(valve["valve_id"])
-                row["before_valve__%s" % valve_id] = _number(
-                    process, str(valve["column"])
-                )
-        policy_state, no_grid = build_policy_state(
-            row, self.plant, self.training
-        )
-        # RealtimeState keeps its historical attribute names for API/backward
-        # compatibility; values now mean first/second configured condition-axis
-        # rates. Generic aliases are also exposed in decision debug output.
+                row["before_valve__%s" % valve_id] = _number(process, str(valve["column"]))
+        policy_state, no_grid = build_policy_state(row, self.plant, self.training)
         return RealtimeState(
             timestamp=timestamp.isoformat(),
             condition=condition,
             process=dict(process),
-            load_rate=float(disturbance["condition_axis_1_rate"]),
-            inlet_so2_rate=float(disturbance["condition_axis_2_rate"]),
-            outlet_so2_rate=float(disturbance["outlet_so2_rate"]),
-            disturbance_mode=str(disturbance["disturbance_mode"]),
-            control_mode=str(disturbance["control_mode"]),
+            load_rate=first_rate,
+            inlet_so2_rate=second_rate,
+            outlet_so2_rate=outlet_rate,
+            disturbance_mode=disturbance_mode,
+            control_mode=control_mode,
+            fast_context=dict(fast_context),
             policy_state_key=policy_state,
             policy_state_key_no_grid=no_grid,
         )

@@ -116,9 +116,11 @@ def validate_online_config(plant: dict, training: dict, online: dict) -> None:
         if int(stability.get(key, 0)) < 0:
             raise OnlineConfigurationError("action_stability.%s 不能小于0" % key)
 
-    fast = online.get("fast_mode", {})
-    if int(fast.get("exit_stable_cycles", 0)) < 1:
-        raise OnlineConfigurationError("fast_mode.exit_stable_cycles 必须至少为1")
+    fast = online.get("fast_policy", {})
+    if float(fast.get("minimum_transient_safe_ratio", 0.0)) < 0 or float(
+        fast.get("minimum_transient_safe_ratio", 0.0)
+    ) > 1:
+        raise OnlineConfigurationError("fast_policy.minimum_transient_safe_ratio 必须位于 [0,1]")
 
     execution = online.get("execution_limits", {})
     caps = execution.get("maximum_single_valve_delta_by_magnitude", {})

@@ -67,8 +67,23 @@ class CandidateRanker:
             # 目标匹配是同一经验层级内的首要排序项：能安全、稳定地把当前偏差
             # 消除得更接近 0 的动作优先。历史安全、稳定、可靠性随后用于打破接近的
             # 目标匹配结果；最后才偏好更小动作。
+            transient = profile.get("transient_effect", {}) or {}
+            safe_ratio = transient.get("mean_safe_ratio")
+            rate_reduction = (transient.get("outlet_so2_rate_reduction", {}) or {}).get("median")
+            try:
+                safe_ratio_value = float(safe_ratio)
+            except (TypeError, ValueError):
+                safe_ratio_value = -1.0
+            try:
+                rate_reduction_value = float(rate_reduction)
+            except (TypeError, ValueError):
+                rate_reduction_value = -999.0
+            transient_priority = 1 if candidate.source in {"TRANSIENT_EXACT", "TRANSIENT_DIRECTION_POOL"} else 0
             candidate.rank_key = (
                 effect_priority.get(effect, 0),
+                transient_priority,
+                safe_ratio_value,
+                rate_reduction_value,
                 float(target_match_score),
                 -abs(float(residual_error)),
                 float(reliability.get("safety_history_score", 0.0)),

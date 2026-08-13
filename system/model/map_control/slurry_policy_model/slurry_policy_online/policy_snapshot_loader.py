@@ -70,6 +70,7 @@ class PolicySnapshotLoader:
         self._last_reload_check = 0.0
         self._condition_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._transient_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._transient_direction_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._plant_prior: Optional[Dict[str, Any]] = None
 
     @property
@@ -477,6 +478,7 @@ class PolicySnapshotLoader:
         self.training_summary = prepared["summary"]
         self._condition_cache.clear()
         self._transient_cache.clear()
+        self._transient_direction_cache.clear()
         self._plant_prior = None
         self._active_mtime = (
             self.active_file.stat().st_mtime
@@ -592,6 +594,19 @@ class PolicySnapshotLoader:
             else {}
         )
         self._put_lru(self._transient_cache, mode, states)
+        return states
+
+    def load_transient_direction(self, fast_direction: str) -> Dict[str, Any]:
+        direction = str(fast_direction)
+        if direction in self._transient_direction_cache:
+            value = self._transient_direction_cache[direction]
+            self._transient_direction_cache.move_to_end(direction)
+            return value
+        if self.snapshot_dir is None:
+            self.load_active()
+        path = self.snapshot_dir / "transient_direction" / safe_name(direction) / "policy.pkl"
+        states = self._read_pickle(path).get("state_action_profiles", {}) if path.exists() else {}
+        self._put_lru(self._transient_direction_cache, direction, states)
         return states
 
     def load_plant_prior(self) -> Dict[str, Any]:

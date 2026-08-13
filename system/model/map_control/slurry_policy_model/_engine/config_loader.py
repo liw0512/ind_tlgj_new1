@@ -7,7 +7,7 @@ from typing import Any
 from .exceptions import ConfigurationError
 
 
-POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V3_PUMP_GATED"
+POLICY_SEMANTICS_VERSION = "TOWER_LEVEL_V4_FAST_CONTEXT"
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

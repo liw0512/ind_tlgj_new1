@@ -25,7 +25,8 @@ from .candidate_retriever import CandidateRetriever
 from .config_loader import load_online_config
 from .decision_state_machine import DecisionStateMachine
 from .demand_analyzer import analyze_demand
-from .disturbance_monitor import DisturbanceMonitor
+from .fast_action_envelope import apply_fast_action_envelope, build_fast_action_envelope
+from .fast_context_adapter import FastContextError, extract_fast_context
 from .policy_snapshot_loader import PolicySnapshotError, PolicySnapshotLoader
 from .realtime_state_builder import RealtimeDataError, RealtimeStateBuilder
 from .runtime_store import RuntimeStore
@@ -99,9 +100,6 @@ class OnlineSlurryPolicy:
         self.plant = plant
         self.training = training
         self.state_builder = RealtimeStateBuilder(plant, training)
-        self.disturbance = DisturbanceMonitor(
-            self.loader.effective_disturbance, self.online, self.store.state
-        )
         self.target_manager = TargetManager(self.online, self.store.state)
         self.state_machine = DecisionStateMachine(
             self.online, training, self.store.state
@@ -301,30 +299,30 @@ class OnlineSlurryPolicy:
     def _candidate_sources(
         self, state: RealtimeState
     ) -> List[Tuple[str, Any]]:
+        fast_cfg = self.online.get("fast_policy", {})
         if state.control_mode == "FAST_CHANGE":
-            sources: List[Tuple[str, Any]] = [
-                ("TRANSIENT", lambda: self.retriever.transient(state))
-            ]
-            if bool(
-                self.online["fast_mode"].get(
-                    "allow_regular_policy_fallback", False
-                )
-            ):
-                sources.extend(
-                    [
-                        (
-                            "LOCAL_CONDITION",
-                            lambda: self.retriever.local(state),
-                        ),
-                        (
-                            "NEIGHBOR_STATE",
-                            lambda: self.retriever.neighbor(state),
-                        ),
-                        ("PLANT_ACTION_PRIOR", self.retriever.plant_prior),
-                    ]
-                )
-            sources.append(("RULE_BASELINE", None))
+            # condition 尚未稳定时仍允许 FAST 安全保护，但只使用规则基线，避免
+            # 在工况归属尚未稳定时读取局部/历史精细策略。
+            if not state.condition.condition_stable:
+                return [("FAST_RULE_BASELINE", None)]
+            sources: List[Tuple[str, Any]] = []
+            if bool(fast_cfg.get("transient_exact_enabled", True)):
+                sources.append(("TRANSIENT_EXACT", lambda: self.retriever.transient(state)))
+            if bool(fast_cfg.get("transient_direction_pool_enabled", True)):
+                sources.append(("TRANSIENT_DIRECTION_POOL", lambda: self.retriever.transient_direction(state)))
+            if bool(fast_cfg.get("allow_regular_policy_fallback", False)):
+                sources.extend([
+                    ("LOCAL_CONDITION", lambda: self.retriever.local(state)),
+                    ("NEIGHBOR_STATE", lambda: self.retriever.neighbor(state)),
+                    ("PLANT_ACTION_PRIOR", self.retriever.plant_prior),
+                ])
+            sources.append(("FAST_RULE_BASELINE", None))
             return sources
+        if state.control_mode == "FAST_RECOVERY":
+            return [
+                ("TRANSIENT_DIRECTION_POOL", lambda: self.retriever.transient_direction(state)),
+                ("FAST_RULE_BASELINE", None),
+            ]
         return [
             ("LOCAL_CONDITION", lambda: self.retriever.local(state)),
             ("NEIGHBOR_STATE", lambda: self.retriever.neighbor(state)),
@@ -362,16 +360,6 @@ class OnlineSlurryPolicy:
                     "UNKNOWN",
                     reload_reasons + ["CONDITION_INVALID"],
                 )
-            if not condition.condition_stable:
-                return self._make_hold(
-                    timestamp,
-                    condition,
-                    process,
-                    "INITIALIZING",
-                    "INITIALIZING",
-                    "UNKNOWN",
-                    reload_reasons + ["CONDITION_NOT_STABLE"],
-                )
             if condition.condition_snapshot_version != self.loader.condition_version:
                 return self._make_hold(
                     timestamp,
@@ -389,19 +377,10 @@ class OnlineSlurryPolicy:
 
             try:
                 axes = condition_axis_columns(self.training)
-                first_axis_value = float(process[axes[0]])
-                second_axis_value = (
-                    float(process[axes[1]]) if len(axes) > 1 else None
-                )
                 outlet = float(process[OUTLET_SO2_COLUMN])
-                disturbance = self.disturbance.update(
-                    timestamp,
-                    first_axis_value,
-                    second_axis_value,
-                    outlet,
-                )
+                fast_context = extract_fast_context(process)
                 state = self.state_builder.validate_and_build(
-                    timestamp, process, condition, disturbance
+                    timestamp, process, condition, fast_context
                 )
                 (
                     commanded,
@@ -417,11 +396,16 @@ class OnlineSlurryPolicy:
                     self.plant,
                     self.online,
                 )
+                fast_envelope = build_fast_action_envelope(
+                    fast_context, demand, self.online
+                )
+                demand = apply_fast_action_envelope(demand, fast_envelope)
             except (
                 KeyError,
                 TypeError,
                 ValueError,
                 RealtimeDataError,
+                FastContextError,
                 TargetError,
             ) as exc:
                 return self._make_hold(
@@ -443,11 +427,29 @@ class OnlineSlurryPolicy:
             )
             common_reasons = (
                 reload_reasons
-                + list(disturbance.get("reason_codes", []))
+                + list(fast_context.get("fast_change_reason_codes", []))
                 + demand.reason_codes
                 + progressive_reasons
                 + self._ph_reasons(state)
             )
+
+            if (
+                not condition.condition_stable
+                and state.control_mode != "FAST_CHANGE"
+                and demand.safety_level != "EMERGENCY"
+            ):
+                return self._make_hold(
+                    timestamp,
+                    condition,
+                    process,
+                    "INITIALIZING",
+                    state.control_mode,
+                    state.disturbance_mode,
+                    common_reasons + ["CONDITION_NOT_STABLE"],
+                    demand,
+                )
+            if not condition.condition_stable and state.control_mode == "FAST_CHANGE":
+                common_reasons.append("FAST_PROTECTION_DURING_CONDITION_WARMUP")
 
             if (
                 "MODEL_VERSION_RELOADED" in reload_reasons
@@ -497,23 +499,20 @@ class OnlineSlurryPolicy:
                     common_reasons + ["CONDITION_JUST_SWITCHED"],
                     demand,
                 )
-            if (
-                state.control_mode == "FAST_RECOVERY"
-                and demand.safety_level != "EMERGENCY"
-            ):
-                return self._make_hold(
-                    timestamp,
-                    condition,
-                    process,
-                    "HOLD",
-                    "FAST_RECOVERY",
-                    state.disturbance_mode,
-                    common_reasons + ["FAST_RECOVERY_HOLD"],
-                    demand,
+            blocking_fast_context = dict(fast_context)
+            blocking_fast_context["_allow_waiting_effect_risk_escalation"] = bool(
+                self.online.get("fast_policy", {}).get(
+                    "allow_waiting_effect_risk_escalation", True
                 )
-
+            )
+            blocking_fast_context["_risk_escalation"] = bool(fast_envelope.risk_escalation)
+            blocking_fast_context["_risk_escalation_minimum_action_interval_minutes"] = float(
+                self.online.get("fast_policy", {}).get(
+                    "risk_escalation_minimum_action_interval_minutes", 1.0
+                )
+            )
             blocking = self.state_machine.blocking_reasons(
-                timestamp, demand.safety_level
+                timestamp, demand.safety_level, blocking_fast_context
             )
             if blocking:
                 return self._make_hold(
@@ -549,7 +548,14 @@ class OnlineSlurryPolicy:
                     candidates = (
                         [
                             self.retriever.rule(
-                                effect_demand, state, effect_direction
+                                effect_demand,
+                                state,
+                                effect_direction,
+                                source=(
+                                    "FAST_RULE_BASELINE"
+                                    if source_name == "FAST_RULE_BASELINE"
+                                    else "RULE_BASELINE"
+                                ),
                             )
                         ]
                         if provider is None
@@ -561,6 +567,7 @@ class OnlineSlurryPolicy:
                         effect_demand,
                         execution,
                         stability_context,
+                        fast_envelope,
                     )
                     debug_key = "%s:%s" % (effect_direction, source_name)
                     rejected_debug[debug_key] = rejected
@@ -666,6 +673,7 @@ class OnlineSlurryPolicy:
                     "condition_axis_2_rate": state.inlet_so2_rate,
                     "outlet_so2_rate": state.outlet_so2_rate,
                     "demand_level": demand.demand_level,
+                    "fast_action_envelope": fast_envelope.to_dict(),
                     "candidate_rank_key": selected.rank_key,
                     "rejected_candidates": rejected_debug,
                     "automatic_control_allowed": _as_bool(

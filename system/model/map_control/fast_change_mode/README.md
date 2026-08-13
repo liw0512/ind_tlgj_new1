@@ -213,3 +213,35 @@ P4PC 在线主链
 ```
 
 这些等 FAST 模块本身稳定后再逐项衔接。
+
+
+## 9. 离线/在线生命周期与容量控制
+
+FAST 模块不会长期保存一份不断膨胀的完整标注 CSV。
+
+- 在线：每条数据只更新 detector 的短时间窗口，`runtime/checkpoint.json` 定期覆盖写；
+- FAST 事件只在闭合后写入月度 JSONL 摘要，不保存每个普通采样点；
+- 离线初次：历史数据按 `date` 排序后因果回放同一个 detector；
+- 离线增量：读取上一版 checkpoint，只回放新增数据；
+- 与第二模块一起发布时，FAST 使用同一个 `v###` 版本号，并滚动保留最近配置数量的快照；
+- 第二模块训练过程中需要的逐行 FAST 标签只存在于本次训练 DataFrame/context tail 中，不额外永久复制原始 CSV。
+
+因此“逐行调用同一个 FastChangeModeDetector”既用于真实在线，也用于离线历史回放；
+离线逐行的目的，是严格模拟在线因果状态机，而不是永久积累逐行文件。
+
+## 10. 与 slurry_policy_model 的关系
+
+第二模块从 V4 开始不再拥有独立的 `DisturbanceMonitor`。FAST 唯一事实源为本模块：
+
+```text
+fast_change_mode
+  -> FAST exact/direction/effect risk
+  -> slurry_policy_model
+     -> TRANSIENT_EXACT
+     -> TRANSIENT_DIRECTION_POOL
+     -> FAST_RULE_BASELINE
+```
+
+TRANSIENT 历史评价额外统计动作前后净烟气 SO2 变化率、变化率抑制量、响应期峰值、
+安全时间占比以及 WARNING/EMERGENCY 时间占比。因此 FAST_RISE 时即使 SO2 绝对值仍有
+上升，只要上涨速度被压制且过程保持安全，也不会简单按“SO2 没下降”判成无效动作。

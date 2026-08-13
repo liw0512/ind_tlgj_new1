@@ -404,6 +404,44 @@ def aggregate_action_profile(
     }
 
 
+def _weighted_numeric_mean(series: pd.Series, weights: pd.Series) -> float | None:
+    values = pd.to_numeric(series, errors="coerce")
+    mask = values.notna()
+    if not mask.any():
+        return None
+    selected = values[mask].astype(float)
+    selected_weights = weights.loc[selected.index].astype(float)
+    total = float(selected_weights.sum())
+    if total <= 0:
+        return float(selected.mean())
+    return float((selected * selected_weights).sum() / total)
+
+
+def aggregate_transient_action_profile(
+    group: pd.DataFrame, plant: dict[str, Any], training: dict[str, Any]
+) -> dict[str, Any]:
+    """FAST 专属历史效果：保留普通安全/可靠性，同时评价趋势抑制与峰值风险。"""
+    profile = aggregate_action_profile(group, plant, training)
+    weights = _weight_series(group)
+    profile["transient_effect"] = {
+        "fast_direction": _weighted_mode(
+            group.get("fast_change_direction", pd.Series("UNKNOWN", index=group.index)),
+            weights,
+        ),
+        "before_outlet_so2_rate": _distribution(group["before_outlet_so2_rate"], weights),
+        "after_outlet_so2_rate": _distribution(group["after_outlet_so2_rate"], weights),
+        "outlet_so2_rate_reduction": _distribution(group["outlet_so2_rate_reduction"], weights),
+        "post_outlet_so2_peak": _distribution(group["post_outlet_so2_peak"], weights),
+        "mean_safe_ratio": _weighted_numeric_mean(group["post_outlet_so2_safe_ratio"], weights),
+        "mean_warning_ratio": _weighted_numeric_mean(group["post_outlet_so2_warning_ratio"], weights),
+        "mean_emergency_ratio": _weighted_numeric_mean(group["post_outlet_so2_emergency_ratio"], weights),
+        "effect_state_counts": group.get(
+            "fast_change_effect_state", pd.Series("UNKNOWN", index=group.index)
+        ).astype("object").value_counts().to_dict(),
+    }
+    return profile
+
+
 def aggregate_plant_action_prior(
     group: pd.DataFrame, plant: dict[str, Any], training: dict[str, Any]
 ) -> dict[str, Any]:
@@ -494,6 +532,7 @@ def _categorize_groupby_keys(
         "policy_state_key_no_grid",
         "training_route",
         "disturbance_mode",
+        "fast_change_direction",
         "so2_effect_direction",
         "event_date",
         "episode_type",
@@ -921,6 +960,7 @@ def aggregate_all_levels(
         "neighbor_state": {},
         "plant_action_prior": {},
         "transients": {},
+        "transient_direction": {},
     }
     condition_members = {
         str(label): list(grid_ids)
@@ -1006,7 +1046,17 @@ def aggregate_all_levels(
         "policy_state_key_no_grid",
         plant,
         training,
-        emit(0.82, 1.00),
+        emit(0.82, 0.91),
+        profile_builder=aggregate_transient_action_profile,
+    )
+    transient_direction = build_nested_profiles(
+        transient,
+        "fast_change_direction",
+        "policy_state_key_no_grid",
+        plant,
+        training,
+        emit(0.91, 1.00),
+        profile_builder=aggregate_transient_action_profile,
     )
     if progress:
         progress(1.0, f"全部层级聚合完成：本地工况={len(conditions)}，临近策略={len(neighbor_state)}")
@@ -1016,4 +1066,5 @@ def aggregate_all_levels(
         "neighbor_state": neighbor_state,
         "plant_action_prior": plant_action_prior,
         "transients": transients,
+        "transient_direction": transient_direction,
     }
