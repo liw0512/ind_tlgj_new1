@@ -1,0 +1,76 @@
+name: FAST online input guard refactor
+
+on:
+  push:
+    paths:
+      - 'tools/apply_fast_online_input_guard.py'
+      - '.github/workflows/apply-fast-online-input-guard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply refactor
+        run: python tools/apply_fast_online_input_guard.py
+      - name: Compile
+        run: |
+          python -m compileall -q \
+            system/model/map_control/fast_change_mode \
+            system/model/map_control/condition_model/online_condition_classifier.py \
+            system/model/map_control/slurry_policy_model/slurry_policy_online/fast_context_adapter.py
+      - name: Runtime smoke
+        run: |
+          python - <<'PY'
+          from system.model.map_control.fast_change_mode import FastChangeHistoryManager
+          from system.model.map_control.slurry_policy_model.slurry_policy_online.fast_context_adapter import FastContextError, extract_fast_context
+
+          manager = FastChangeHistoryManager(persist_runtime=False)
+          reason = manager.input_guard_reason({'jym': 100})
+          assert reason and 'jym' in reason
+          before = manager.export_checkpoint()
+          ctx = manager.blocked_online_context({'date': '2026-08-13 10:00:00', 'jym': 100}, target=20, reason=reason)
+          after = manager.export_checkpoint()
+          assert before == after, 'blocked frame advanced FAST checkpoint'
+          assert ctx['fast_change_input_valid'] is False
+          assert ctx['fast_change_state_advanced'] is False
+          try:
+              extract_fast_context(ctx)
+          except FastContextError:
+              pass
+          else:
+              raise AssertionError('invalid FAST context was accepted by second module')
+          print('FAST input guard smoke passed')
+          PY
+      - name: Static validation
+        run: |
+          git diff --check
+          grep -q 'def input_guard_reason' system/model/map_control/fast_change_mode/fast_change_history_manager.py
+          grep -q 'def blocked_online_context' system/model/map_control/fast_change_mode/fast_change_history_manager.py
+          grep -q 'def blocked_result' system/model/map_control/condition_model/online_condition_classifier.py
+          grep -q 'FAST_STATE_NOT_ADVANCED' system/model/map_control/fast_change_mode/fast_change_history_manager.py
+          grep -q 'fast_change_manager.input_guard_reason' system/model/map_control/condition_model/online_condition_classifier.py
+          ! grep -q 'FastChangeHistoryManager' system/model/Process4MapControl.py
+      - name: Commit refactor
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            system/model/map_control/fast_change_mode/fast_change_config.py \
+            system/model/map_control/fast_change_mode/fast_change_history_manager.py \
+            system/model/map_control/condition_model/online_condition_classifier.py \
+            system/model/map_control/slurry_policy_model/slurry_policy_online/fast_context_adapter.py
+          git commit -m 'Guard FAST online state from invalid calibration frames'
+          git push origin HEAD:main
