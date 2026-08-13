@@ -10,19 +10,23 @@ os.environ.setdefault("QT_FONT_DPI", "96")
 import threading
 import traceback
 import time
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QFontDatabase
-from PyQt5.QtWidgets import QApplication
 from collections import deque
 from system.data_opts.DataClientMain import DataClientMain
 from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.ModbusRTUSlaveClient import ModbusRTUSlaveClient
 from system.data_opts.client_helper.ModbusTCPSlaveClient import ModbusTCPSlaveClient
 from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
-# from system.gui.ExtDoubleWindow import ExtDoubleWindow
-from system.gui.ExtSingleWindow import ExtSingleWindow
-from system.gui.ExtSettingsWindow import ExtSettings
 from system.data_opts.client_helper.ModbusTCPClient import ModbusTCPClient
+
+ENABLE_FRONTEND = False    #前端是否开启
+
+if ENABLE_FRONTEND:
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtGui import QFont, QFontDatabase
+    from PyQt5.QtWidgets import QApplication
+    # from system.gui.ExtDoubleWindow import ExtDoubleWindow
+    from system.gui.ExtSingleWindow import ExtSingleWindow
+    from system.gui.ExtSettingsWindow import ExtSettings
 
 ##sys.path.append(r"E:\fengzhuang\ind_optim_serv\system\model\map_control\cluster")
 if __name__ == "__main__":
