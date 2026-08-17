@@ -189,7 +189,6 @@ class DashboardWindow(QMainWindow):
         ("运行总览", "overview"),
         ("实时监控", "realtime"),
         ("供浆控制", "slurry"),
-        ("工况模型", "condition"),
         ("历史趋势", "history"),
         ("报警信息", "alarm"),
         ("系统配置", "settings"),
@@ -221,7 +220,6 @@ class DashboardWindow(QMainWindow):
         self.stack.addWidget(self._scroll_wrap(self.overview))
         self.stack.addWidget(self._scroll_wrap(PlaceholderPage("实时监控", "下一步接入 GLOBAL_DATA 后展示现场实时测点、泵阀状态和刷新质量。")))
         self.stack.addWidget(self._scroll_wrap(PlaceholderPage("供浆控制", "用于展示 slurry_policy_model 的候选来源、动作、强度、阀位投影和 reason_codes。")))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("工况模型", "用于展示 condition_label、基础网格、稳定状态、版本和工况切换过程。")))
         self.stack.addWidget(self._scroll_wrap(PlaceholderPage("历史趋势", "后续可接历史数据库或运行缓存，展示 SO₂、pH、阀位、供浆流量和动作事件。")))
         self.stack.addWidget(self._scroll_wrap(PlaceholderPage("报警信息", "集中显示数据异常、模型 BLOCKED、pH 安全边界、SO₂ 预警以及设备不可用原因。")))
         self.stack.addWidget(self._scroll_wrap(PlaceholderPage("系统配置", "最终只放允许操作员/工程师调整的配置，不直接暴露算法内部所有参数。")))
