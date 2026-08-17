@@ -147,7 +147,7 @@ class OverviewPage(QWidget):
         middle.addWidget(self.action, 1)
         root.addLayout(middle)
 
-        self.trend = TrendWidget("SO₂ 实时趋势")
+        self.trend = TrendWidget("SO₂ 24小时趋势")
         root.addWidget(self.trend, 1)
 
     @staticmethod
@@ -204,7 +204,12 @@ class OverviewPage(QWidget):
         jyq = self._to_float(data.get("jyq_SO2"))
         target = self._to_float(data.get("target"))
         if yyq is not None and jyq is not None:
-            self.trend.append(yyq, jyq, jyq if target is None else target)
+            self.trend.append(
+                yyq,
+                jyq,
+                target,
+                timestamp=data.get("date"),
+            )
 
 
 class DashboardWindow(QMainWindow):
