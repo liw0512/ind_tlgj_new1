@@ -4,6 +4,9 @@ import threading
 import traceback
 from typing import Any, Dict, List
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QLabel
+
 from system.data_opts.DataClientMain import DataClientMain
 from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
@@ -38,6 +41,27 @@ def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
     return [data_client, handler, field_client, *threads]
 
 
+def install_overview_title(window: DashboardWindow) -> None:
+    """在运行总览内容顶部增加厂/机组级标题，并整体下移正文区域。"""
+
+    overview_layout = window.overview.layout()
+    if overview_layout is None:
+        return
+
+    title = QLabel("西热钢厂1号机组供浆控制系统", window.overview)
+    title.setAlignment(Qt.AlignCenter)
+    title.setMinimumHeight(54)
+    title.setStyleSheet(
+        "font-size: 24px; font-weight: 700; padding-top: 8px; padding-bottom: 6px;"
+    )
+
+    overview_layout.insertWidget(0, title)
+    overview_layout.insertSpacing(1, 8)
+
+    # 保存引用，避免后续页面扩展时标题对象被误认为临时控件。
+    window.overview.system_title = title
+
+
 def main() -> int:
     try:
         global_data: Dict[str, Any] = {"data": []}
@@ -45,6 +69,7 @@ def main() -> int:
 
         app = build_application()
         window = DashboardWindow(global_data, data_mode="live")
+        install_overview_title(window)
         # 防止未来重构时误释放后端对象。
         window._backend_refs = backend_refs
         window.show()
