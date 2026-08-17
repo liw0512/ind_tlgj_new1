@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections import deque
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 from PyQt5.QtCore import QPointF, Qt
@@ -182,78 +184,310 @@ class ActionCard(CardFrame):
 
 
 class TrendWidget(CardFrame):
-    """轻量趋势图，不依赖 matplotlib。"""
+    """首页轻量 24 小时 SO₂ 双纵轴趋势图，不依赖 matplotlib。
 
-    def __init__(self, title: str = "SO₂ 实时趋势", parent=None):
+    - 横轴：滚动最近 24 小时；
+    - 左轴：原烟气 SO₂，默认 0~5000 mg/Nm³，超限按 1000 自动扩展；
+    - 右轴：净烟气 SO₂，默认 0~100 mg/Nm³，超限按 20 自动扩展；
+    - 趋势缓存每 30 秒最多保存一个点，24 小时最多 2880 点/曲线；
+    - 页面本身仍可高频刷新，不让图表缓存跟随 500ms/1s 频率无限增长。
+    """
+
+    WINDOW_HOURS = 24
+    SAMPLE_SECONDS = 30
+    MAX_POINTS = WINDOW_HOURS * 60 * 60 // SAMPLE_SECONDS
+    YYQ_BASE_MAX = 5000.0
+    YYQ_EXPAND_STEP = 1000.0
+    JYQ_BASE_MAX = 100.0
+    JYQ_EXPAND_STEP = 20.0
+
+    def __init__(self, title: str = "SO₂ 24小时趋势", parent=None):
         super().__init__(parent)
         self.title = title
-        self.yyq = deque(maxlen=90)
-        self.jyq = deque(maxlen=90)
-        self.target = 20.0
-        self.setMinimumHeight(270)
+        self.samples = deque(maxlen=self.MAX_POINTS)
+        self._last_sample_time: Optional[datetime] = None
+        self._latest_target: Optional[float] = None
+        self.setMinimumHeight(310)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def append(self, yyq: float, jyq: float, target: float) -> None:
-        self.yyq.append(float(yyq))
-        self.jyq.append(float(jyq))
-        self.target = float(target)
-        self.update()
+    @staticmethod
+    def _coerce_time(value) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        if value not in (None, ""):
+            text = str(value).strip()
+            try:
+                return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                pass
+        return datetime.now()
 
     @staticmethod
-    def _points(values: Iterable[float], rect, lo: float, hi: float) -> list[QPointF]:
-        values = list(values)
-        if len(values) < 2:
-            return []
-        span = max(hi - lo, 1e-6)
-        step = rect.width() / max(len(values) - 1, 1)
+    def _finite_float(value) -> Optional[float]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def append(
+        self,
+        yyq: float,
+        jyq: float,
+        target: Optional[float],
+        timestamp=None,
+    ) -> None:
+        sample_time = self._coerce_time(timestamp)
+        yyq_value = self._finite_float(yyq)
+        jyq_value = self._finite_float(jyq)
+        target_value = self._finite_float(target)
+        if yyq_value is None or jyq_value is None:
+            return
+
+        self._latest_target = target_value
+
+        # 页面可 500ms/1s 更新，但趋势缓存固定 30 秒采一个点。
+        if self._last_sample_time is not None:
+            elapsed = (sample_time - self._last_sample_time).total_seconds()
+            if 0 <= elapsed < self.SAMPLE_SECONDS:
+                self.update()
+                return
+
+        self.samples.append((sample_time, yyq_value, jyq_value, target_value))
+        self._last_sample_time = sample_time
+        self._prune(sample_time)
+        self.update()
+
+    def _prune(self, end_time: datetime) -> None:
+        cutoff = end_time - timedelta(hours=self.WINDOW_HOURS)
+        while self.samples and self.samples[0][0] < cutoff:
+            self.samples.popleft()
+
+    @staticmethod
+    def _expanded_max(values: Iterable[float], base_max: float, step: float) -> float:
+        finite_values = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+        observed = max(finite_values, default=0.0)
+        if observed <= base_max:
+            return base_max
+        return max(base_max, math.ceil(observed / step) * step)
+
+    @staticmethod
+    def _value_y(value: float, rect, axis_max: float) -> float:
+        clamped = max(0.0, min(float(value), axis_max))
+        return rect.bottom() - (clamped / max(axis_max, 1e-9)) * rect.height()
+
+    @staticmethod
+    def _time_x(value: datetime, rect, start_time: datetime, end_time: datetime) -> float:
+        total = max((end_time - start_time).total_seconds(), 1.0)
+        elapsed = (value - start_time).total_seconds()
+        fraction = max(0.0, min(1.0, elapsed / total))
+        return rect.left() + fraction * rect.width()
+
+    def _series_points(
+        self,
+        samples,
+        value_index: int,
+        rect,
+        axis_max: float,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[QPointF]:
         points = []
-        for index, value in enumerate(values):
-            x = rect.left() + index * step
-            y = rect.bottom() - (float(value) - lo) / span * rect.height()
+        for sample in samples:
+            value = sample[value_index]
+            if value is None:
+                continue
+            x = self._time_x(sample[0], rect, start_time, end_time)
+            y = self._value_y(value, rect, axis_max)
             points.append(QPointF(x, y))
         return points
+
+    @staticmethod
+    def _draw_path(painter: QPainter, points: list[QPointF], pen: QPen) -> None:
+        if len(points) < 2:
+            return
+        path = QPainterPath(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+        painter.setPen(pen)
+        painter.drawPath(path)
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        # 标题。
         painter.setPen(QColor(TOKENS["text"]))
-        font = painter.font()
-        font.setPointSize(11)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.drawText(18, 28, self.title)
+        title_font = painter.font()
+        title_font.setPointSize(11)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.drawText(18, 27, self.title)
 
-        plot = self.rect().adjusted(18, 48, -18, -22)
-        painter.setPen(QPen(QColor(TOKENS["border"]), 1))
-        for i in range(5):
-            y = plot.top() + i * plot.height() / 4
-            painter.drawLine(plot.left(), int(y), plot.right(), int(y))
+        samples = list(self.samples)
+        if samples:
+            end_time = max(datetime.now(), samples[-1][0])
+        else:
+            end_time = datetime.now()
+        start_time = end_time - timedelta(hours=self.WINDOW_HOURS)
 
-        if len(self.jyq) < 2:
-            painter.setPen(QColor(TOKENS["muted"]))
-            painter.drawText(plot, Qt.AlignCenter, "等待数据...")
+        # 给左右 Y 轴、标题、横轴时间标签留空间。
+        plot = self.rect().adjusted(68, 54, -68, -50)
+        if plot.width() <= 20 or plot.height() <= 20:
             return
 
-        # 两条曲线量级差异较大，因此分别归一化到同一绘图区；正式历史页再显示真实坐标轴。
-        series = [list(self.yyq), list(self.jyq)]
-        colors = [TOKENS["accent"], TOKENS["success"]]
-        widths = [2, 3]
-        for values, color, width in zip(series, colors, widths):
-            lo = min(values)
-            hi = max(values)
-            if abs(hi - lo) < 1e-9:
-                hi = lo + 1.0
-            points = self._points(values, plot, lo, hi)
-            if len(points) < 2:
-                continue
-            path = QPainterPath(points[0])
-            for point in points[1:]:
-                path.lineTo(point)
-            painter.setPen(QPen(QColor(color), width))
-            painter.drawPath(path)
+        yyq_values = [sample[1] for sample in samples]
+        jyq_values = [sample[2] for sample in samples]
+        target_values = [sample[3] for sample in samples if sample[3] is not None]
+        if self._latest_target is not None:
+            target_values.append(self._latest_target)
+        yyq_max = self._expanded_max(yyq_values, self.YYQ_BASE_MAX, self.YYQ_EXPAND_STEP)
+        jyq_max = self._expanded_max(
+            list(jyq_values) + list(target_values),
+            self.JYQ_BASE_MAX,
+            self.JYQ_EXPAND_STEP,
+        )
 
-        painter.setPen(QColor(TOKENS["muted"]))
-        painter.drawText(plot.left(), plot.bottom() + 17, "蓝：原烟气 SO₂")
-        painter.drawText(plot.left() + 140, plot.bottom() + 17, "绿：净烟气 SO₂")
+        muted = QColor(TOKENS["muted"])
+        border = QColor(TOKENS["border"])
+        yyq_color = QColor(TOKENS["accent"])
+        jyq_color = QColor(TOKENS["success"])
+        target_color = QColor(TOKENS["warning"])
+
+        axis_font = painter.font()
+        axis_font.setPointSize(8)
+        axis_font.setBold(False)
+        painter.setFont(axis_font)
+
+        # 水平网格 + 双 Y 轴刻度。两侧都是 0~100% 的同一网格比例，但各自显示真实量程。
+        grid_count = 5
+        for index in range(grid_count + 1):
+            fraction = index / grid_count
+            y = plot.bottom() - fraction * plot.height()
+            painter.setPen(QPen(border, 1))
+            painter.drawLine(plot.left(), int(y), plot.right(), int(y))
+
+            left_value = yyq_max * fraction
+            right_value = jyq_max * fraction
+            painter.setPen(yyq_color)
+            painter.drawText(
+                6,
+                int(y - 8),
+                54,
+                16,
+                Qt.AlignRight | Qt.AlignVCenter,
+                f"{left_value:.0f}",
+            )
+            painter.setPen(jyq_color)
+            painter.drawText(
+                plot.right() + 8,
+                int(y - 8),
+                52,
+                16,
+                Qt.AlignLeft | Qt.AlignVCenter,
+                f"{right_value:.0f}",
+            )
+
+        # 左右坐标轴边界。
+        painter.setPen(QPen(border, 1))
+        painter.drawLine(plot.left(), plot.top(), plot.left(), plot.bottom())
+        painter.drawLine(plot.right(), plot.top(), plot.right(), plot.bottom())
+        painter.drawLine(plot.left(), plot.bottom(), plot.right(), plot.bottom())
+
+        # 纵轴标题和单位。
+        painter.setPen(yyq_color)
+        painter.drawText(plot.left(), 43, "原烟气 SO₂  mg/Nm³")
+        right_title = "净烟气 SO₂  mg/Nm³"
+        right_width = painter.fontMetrics().horizontalAdvance(right_title)
+        painter.setPen(jyq_color)
+        painter.drawText(plot.right() - right_width, 43, right_title)
+
+        # 横轴固定最近24小时，4小时一个主刻度，共7个标签。
+        tick_count = 6
+        for index in range(tick_count + 1):
+            fraction = index / tick_count
+            tick_time = start_time + timedelta(hours=self.WINDOW_HOURS * fraction)
+            x = plot.left() + fraction * plot.width()
+            painter.setPen(QPen(border, 1))
+            painter.drawLine(int(x), plot.top(), int(x), plot.bottom())
+            label = tick_time.strftime("%H:%M")
+            label_width = 48
+            if index == 0:
+                label_x = int(x)
+                align = Qt.AlignLeft | Qt.AlignVCenter
+            elif index == tick_count:
+                label_x = int(x) - label_width
+                align = Qt.AlignRight | Qt.AlignVCenter
+            else:
+                label_x = int(x) - label_width // 2
+                align = Qt.AlignCenter
+            painter.setPen(muted)
+            painter.drawText(label_x, plot.bottom() + 8, label_width, 18, align, label)
+
+        painter.setPen(muted)
+        painter.drawText(
+            int(plot.center().x()) - 40,
+            plot.bottom() + 29,
+            80,
+            16,
+            Qt.AlignCenter,
+            "最近24小时",
+        )
+
+        # 目标 SO₂ 参考线：跟随右侧净烟气坐标轴。
+        if self._latest_target is not None:
+            target_y = self._value_y(self._latest_target, plot, jyq_max)
+            target_pen = QPen(target_color, 1)
+            target_pen.setStyle(Qt.DashLine)
+            painter.setPen(target_pen)
+            painter.drawLine(plot.left(), int(target_y), plot.right(), int(target_y))
+            painter.setPen(target_color)
+            painter.drawText(
+                plot.right() - 88,
+                int(target_y) - 18,
+                84,
+                16,
+                Qt.AlignRight | Qt.AlignVCenter,
+                f"目标 {self._latest_target:.1f}",
+            )
+
+        if not samples:
+            painter.setPen(muted)
+            painter.drawText(plot, Qt.AlignCenter, "等待 SO₂ 趋势数据...")
+        elif len(samples) == 1:
+            painter.setPen(muted)
+            painter.drawText(plot, Qt.AlignCenter, "已收到首个点，30秒后形成趋势...")
+        else:
+            yyq_points = self._series_points(
+                samples,
+                1,
+                plot,
+                yyq_max,
+                start_time,
+                end_time,
+            )
+            jyq_points = self._series_points(
+                samples,
+                2,
+                plot,
+                jyq_max,
+                start_time,
+                end_time,
+            )
+            self._draw_path(painter, yyq_points, QPen(yyq_color, 2))
+            self._draw_path(painter, jyq_points, QPen(jyq_color, 3))
+
+        # 图例与当前轴量程，便于现场直接判断图表尺度是否发生了自动扩展。
+        legend_y = 28
+        painter.setFont(axis_font)
+        painter.setPen(yyq_color)
+        painter.drawText(plot.left() + 210, legend_y, "● 原烟气")
+        painter.setPen(jyq_color)
+        painter.drawText(plot.left() + 285, legend_y, "● 净烟气")
+        painter.setPen(target_color)
+        painter.drawText(plot.left() + 360, legend_y, "-- 目标")
+        painter.setPen(muted)
+        range_text = f"量程：原烟气 0~{yyq_max:.0f} / 净烟气 0~{jyq_max:.0f}"
+        range_width = painter.fontMetrics().horizontalAdvance(range_text)
+        painter.drawText(plot.right() - range_width, legend_y, range_text)
