@@ -184,18 +184,19 @@ class ActionCard(CardFrame):
 
 
 class TrendWidget(CardFrame):
-    """首页轻量 24 小时 SO₂ 双纵轴趋势图，不依赖 matplotlib。
+    """首页轻量 SO₂ 双纵轴日趋势图，不依赖 matplotlib。
 
-    - 横轴：滚动最近 24 小时；
+    - 横轴固定为当天 00:00~24:00，每 3 小时一个主刻度；
     - 左轴：原烟气 SO₂，默认 0~5000 mg/Nm³，超限按 1000 自动扩展；
     - 右轴：净烟气 SO₂，默认 0~100 mg/Nm³，超限按 20 自动扩展；
-    - 趋势缓存每 30 秒最多保存一个点，24 小时最多 2880 点/曲线；
-    - 页面本身仍可高频刷新，不让图表缓存跟随 500ms/1s 频率无限增长。
+    - 趋势缓存每 30 秒最多保存一个点，当天最多 2880 点/曲线；
+    - 跨到新的一天后自动清空前一天内存趋势，从 00:00 重新开始。
     """
 
-    WINDOW_HOURS = 24
+    DAY_HOURS = 24
+    TICK_HOURS = 3
     SAMPLE_SECONDS = 30
-    MAX_POINTS = WINDOW_HOURS * 60 * 60 // SAMPLE_SECONDS
+    MAX_POINTS = DAY_HOURS * 60 * 60 // SAMPLE_SECONDS
     YYQ_BASE_MAX = 5000.0
     YYQ_EXPAND_STEP = 1000.0
     JYQ_BASE_MAX = 100.0
@@ -205,6 +206,7 @@ class TrendWidget(CardFrame):
         super().__init__(parent)
         self.title = title
         self.samples = deque(maxlen=self.MAX_POINTS)
+        self._display_date = None
         self._last_sample_time: Optional[datetime] = None
         self._latest_target: Optional[float] = None
         self.setMinimumHeight(310)
@@ -230,6 +232,11 @@ class TrendWidget(CardFrame):
             return None
         return number if math.isfinite(number) else None
 
+    @staticmethod
+    def _day_bounds(value: datetime):
+        start = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, start + timedelta(days=1)
+
     def append(
         self,
         yyq: float,
@@ -244,6 +251,12 @@ class TrendWidget(CardFrame):
         if yyq_value is None or jyq_value is None:
             return
 
+        sample_date = sample_time.date()
+        if self._display_date != sample_date:
+            self.samples.clear()
+            self._last_sample_time = None
+            self._display_date = sample_date
+
         self._latest_target = target_value
 
         # 页面可 500ms/1s 更新，但趋势缓存固定 30 秒采一个点。
@@ -255,17 +268,25 @@ class TrendWidget(CardFrame):
 
         self.samples.append((sample_time, yyq_value, jyq_value, target_value))
         self._last_sample_time = sample_time
-        self._prune(sample_time)
+        self._prune_to_day(sample_time)
         self.update()
 
-    def _prune(self, end_time: datetime) -> None:
-        cutoff = end_time - timedelta(hours=self.WINDOW_HOURS)
-        while self.samples and self.samples[0][0] < cutoff:
-            self.samples.popleft()
+    def _prune_to_day(self, reference_time: datetime) -> None:
+        day_start, day_end = self._day_bounds(reference_time)
+        valid = [
+            sample for sample in self.samples
+            if day_start <= sample[0] < day_end
+        ]
+        if len(valid) != len(self.samples):
+            self.samples = deque(valid, maxlen=self.MAX_POINTS)
 
     @staticmethod
     def _expanded_max(values: Iterable[float], base_max: float, step: float) -> float:
-        finite_values = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+        finite_values = [
+            float(value)
+            for value in values
+            if value is not None and math.isfinite(float(value))
+        ]
         observed = max(finite_values, default=0.0)
         if observed <= base_max:
             return base_max
@@ -317,7 +338,6 @@ class TrendWidget(CardFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 标题。
         painter.setPen(QColor(TOKENS["text"]))
         title_font = painter.font()
         title_font.setPointSize(11)
@@ -325,12 +345,14 @@ class TrendWidget(CardFrame):
         painter.setFont(title_font)
         painter.drawText(18, 27, self.title)
 
-        samples = list(self.samples)
-        if samples:
-            end_time = max(datetime.now(), samples[-1][0])
-        else:
-            end_time = datetime.now()
-        start_time = end_time - timedelta(hours=self.WINDOW_HOURS)
+        reference = datetime.now()
+        if self._display_date is not None:
+            reference = datetime.combine(self._display_date, datetime.min.time())
+        start_time, end_time = self._day_bounds(reference)
+        samples = [
+            sample for sample in self.samples
+            if start_time <= sample[0] < end_time
+        ]
 
         # 给左右 Y 轴、标题、横轴时间标签留空间。
         plot = self.rect().adjusted(68, 54, -68, -50)
@@ -342,7 +364,11 @@ class TrendWidget(CardFrame):
         target_values = [sample[3] for sample in samples if sample[3] is not None]
         if self._latest_target is not None:
             target_values.append(self._latest_target)
-        yyq_max = self._expanded_max(yyq_values, self.YYQ_BASE_MAX, self.YYQ_EXPAND_STEP)
+        yyq_max = self._expanded_max(
+            yyq_values,
+            self.YYQ_BASE_MAX,
+            self.YYQ_EXPAND_STEP,
+        )
         jyq_max = self._expanded_max(
             list(jyq_values) + list(target_values),
             self.JYQ_BASE_MAX,
@@ -360,7 +386,7 @@ class TrendWidget(CardFrame):
         axis_font.setBold(False)
         painter.setFont(axis_font)
 
-        # 水平网格 + 双 Y 轴刻度。两侧都是 0~100% 的同一网格比例，但各自显示真实量程。
+        # 水平网格 + 双 Y 轴刻度。
         grid_count = 5
         for index in range(grid_count + 1):
             fraction = index / grid_count
@@ -389,13 +415,11 @@ class TrendWidget(CardFrame):
                 f"{right_value:.0f}",
             )
 
-        # 左右坐标轴边界。
         painter.setPen(QPen(border, 1))
         painter.drawLine(plot.left(), plot.top(), plot.left(), plot.bottom())
         painter.drawLine(plot.right(), plot.top(), plot.right(), plot.bottom())
         painter.drawLine(plot.left(), plot.bottom(), plot.right(), plot.bottom())
 
-        # 纵轴标题和单位。
         painter.setPen(yyq_color)
         painter.drawText(plot.left(), 43, "原烟气 SO₂  mg/Nm³")
         right_title = "净烟气 SO₂  mg/Nm³"
@@ -403,39 +427,47 @@ class TrendWidget(CardFrame):
         painter.setPen(jyq_color)
         painter.drawText(plot.right() - right_width, 43, right_title)
 
-        # 横轴固定最近24小时，4小时一个主刻度，共7个标签。
-        tick_count = 6
-        for index in range(tick_count + 1):
-            fraction = index / tick_count
-            tick_time = start_time + timedelta(hours=self.WINDOW_HOURS * fraction)
+        # 横轴固定每天 00:00~24:00，每 3 小时一个区间。
+        tick_hours = list(range(0, self.DAY_HOURS + 1, self.TICK_HOURS))
+        for hour in tick_hours:
+            fraction = hour / self.DAY_HOURS
             x = plot.left() + fraction * plot.width()
             painter.setPen(QPen(border, 1))
             painter.drawLine(int(x), plot.top(), int(x), plot.bottom())
-            label = tick_time.strftime("%H:%M")
+
+            label = "24:00" if hour == self.DAY_HOURS else f"{hour:02d}:00"
             label_width = 48
-            if index == 0:
+            if hour == 0:
                 label_x = int(x)
                 align = Qt.AlignLeft | Qt.AlignVCenter
-            elif index == tick_count:
+            elif hour == self.DAY_HOURS:
                 label_x = int(x) - label_width
                 align = Qt.AlignRight | Qt.AlignVCenter
             else:
                 label_x = int(x) - label_width // 2
                 align = Qt.AlignCenter
             painter.setPen(muted)
-            painter.drawText(label_x, plot.bottom() + 8, label_width, 18, align, label)
+            painter.drawText(
+                label_x,
+                plot.bottom() + 8,
+                label_width,
+                18,
+                align,
+                label,
+            )
 
+        day_label = f"{start_time:%Y-%m-%d}  00:00–24:00"
         painter.setPen(muted)
         painter.drawText(
-            int(plot.center().x()) - 40,
+            int(plot.center().x()) - 85,
             plot.bottom() + 29,
-            80,
+            170,
             16,
             Qt.AlignCenter,
-            "最近24小时",
+            day_label,
         )
 
-        # 目标 SO₂ 参考线：跟随右侧净烟气坐标轴。
+        # 目标 SO₂ 参考线跟随右侧净烟气坐标轴。
         if self._latest_target is not None:
             target_y = self._value_y(self._latest_target, plot, jyq_max)
             target_pen = QPen(target_color, 1)
@@ -478,7 +510,6 @@ class TrendWidget(CardFrame):
             self._draw_path(painter, yyq_points, QPen(yyq_color, 2))
             self._draw_path(painter, jyq_points, QPen(jyq_color, 3))
 
-        # 图例与当前轴量程，便于现场直接判断图表尺度是否发生了自动扩展。
         legend_y = 28
         painter.setFont(axis_font)
         painter.setPen(yyq_color)
