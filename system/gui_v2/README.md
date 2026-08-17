@@ -1,73 +1,111 @@
 # GUI V2 独立测试版
 
-本目录是一个**完全独立于现有 `system/gui` 正式前端**的 PyQt5 Widgets 原型。
+本目录是一个**独立于现有 `system/gui` 正式前端**的 PyQt5 Widgets 新前端。
 
-目的只有一个：先验证新的前端架构、布局方式和视觉层级，再决定是否逐步替换旧前端。
+目标是先完成新前端架构、真实数据适配和页面设计，再决定何时替换旧 `ExtSingleWindow`。
 
 ## 当前不会影响的内容
 
 - 不修改 `Application.py`；
 - 不修改 `system/gui/ExtSingleWindow.py`；
 - 不修改旧 `.ui` / `SingleMainRootWindow.py`；
-- 不调用 DCS；
-- 不调用 `condition_model` 或 `slurry_policy_model`；
-- 当前首页数据来自 `MockDataSource`，只用于演示刷新。
+- 不改变 `condition_model`、`slurry_policy_model` 的算法逻辑；
+- `GlobalDataAdapter` 只读取 `GLOBAL_DATA`，不会修改后端控制状态；
+- 前端不再单独设置“工况模型”页面，必要工况信息按需显示在运行总览/供浆控制中。
 
-## 运行
+## 数据模式
 
-### Windows 当前开发环境（py3921）
+GUI V2 现在支持两种模式：
 
-在仓库根目录执行：
+### 1. MOCK 模式
+
+只测试界面，不启动现有数据库、模型和现场数据链路。
 
 ```bat
 D:\anaconda\envs\py3921\python.exe -m system.gui_v2.demo_dashboard
 ```
 
-该方式直接使用现有 `D:\anaconda\envs\py3921` 环境，不需要先执行 `conda activate py3921`。
+### 2. LIVE 模式
 
-如果已经激活 `py3921` 环境，也可以执行：
+启动当前仓库已有的后台链路，并由 `GlobalDataAdapter` 读取：
 
-```bash
-python -m system.gui_v2.demo_dashboard
+```text
+GLOBAL_DATA["data"][-1]
+        +
+GLOBAL_DATA["map_control"]
+        ↓
+GlobalDataAdapter
+        ↓ Qt signal
+OverviewPage.update_data()
 ```
 
-当前依赖沿用仓库已有 PyQt5 环境，不需要安装 PySide6。
+Windows 当前开发环境运行：
 
-## 这个版本重点测试什么
+```bat
+D:\anaconda\envs\py3921\python.exe -m system.gui_v2.live_dashboard
+```
 
-1. **Layout 响应式布局**：不再用大量 `setGeometry()` 固定坐标；
-2. **左侧导航 + QStackedWidget**：页面可以独立拆分；
-3. **组件化**：MetricCard、TowerCard、ActionCard、StatusPill、TrendWidget 可以复用；
-4. **UI 与数据源分离**：页面只接收字典并显示，不在按钮事件里运行模型；
-5. **设计 Token**：颜色、边框、文本层级集中在 `theme.py`；
-6. **后续可平滑接入现有 `GLOBAL_DATA`**。
+如果已经激活环境，也可以执行：
+
+```bash
+python -m system.gui_v2.live_dashboard
+```
+
+> `live_dashboard.py` 目前与正式 `Application.py` 保持一致，使用当前仓库配置的 `DataClientMain + DataHandler + MokeSlaveClient`。它会连接现有数据库、模型目录和后台处理链，因此这些依赖未准备好时 LIVE 模式可能启动失败。后续现场切换真实 Modbus 客户端时，应与正式入口统一修改。
+
+## 首页已经接入的真实字段
+
+`GlobalDataAdapter` 优先读取 `GLOBAL_DATA["map_control"]`，缺失时再从最新原始帧兜底。
+
+### 实时过程量
+
+- 原烟气 SO₂：`yyq_SO2`
+- 净烟气 SO₂：`jyq_SO2`
+- 吸收塔 pH：`xstjy_PH`
+- 供浆阀位：优先 `xst_FMKD`，兼容旧字段 `xst_FMKD1`
+- 供浆流量：`xstshsjy_LL`
+- 供浆泵频率：`xstshsjy_APL`、`xstshsjy_BPL`
+- 旧现场供浆泵电流兼容：`xstgjb_ADL`、`xstgjb_BDL`
+
+### 第一模块 / 集成版本
+
+- 当前工况：优先 `stable_condition_label`，否则 `condition_label`
+- 工况稳定：`condition_stable`
+- 工况切换状态：`condition_switch_state`
+- 集成模型版本：`integrated_active_version`
+
+### 第二模块在线结果
+
+- 当前有效目标：`slurry_policy_effective_target`
+- 经验来源：`slurry_policy_experience_source`
+- 动作族：`slurry_policy_action_family`
+- 动作方向：`slurry_policy_action_direction`
+- 动作强度：`slurry_policy_action_magnitude`
+- 推荐阀门增量：`slurry_policy_recommended_valve_deltas`
+- 推荐后阀位：`slurry_policy_projected_valve_openings`
+- 控制模式：`slurry_policy_control_mode`
+- 决策状态：`slurry_policy_decision_status`
+- 决策原因：`slurry_policy_reason_codes`
+- 历史可靠性：`slurry_policy_historical_reliability`
+- 历史安全得分：`slurry_policy_historical_safety_score`
+- 历史方向一致率：`slurry_policy_historical_direction_consistency`
+- 第二模块桥接有效性：`slurry_policy_integration_valid`
+
+首页目前展示其中最关键的一部分；可靠性、安全得分、完整 reason_codes 等字段已经由适配器保留下来，下一步用于“供浆控制”详细页。
 
 ## 当前页面
 
-- 运行总览：已经做成可刷新的原型；
+- 运行总览：已支持 MOCK / LIVE；
 - 实时监控：占位页；
 - 供浆控制：占位页；
 - 历史趋势：占位页；
 - 报警信息：占位页；
 - 系统配置：占位页。
 
-> 前端不再单独设置“工况模型”页面。`condition_model` 仍作为后端算法模块保留，其必要状态只在运行总览、供浆控制或诊断信息中按需展示。
+## 架构约束
 
-## 下一步接真实数据时的建议
-
-保留页面接口：
-
-```python
-page.update_data(data)
-```
-
-新增一个 `GlobalDataAdapter(QObject)`，负责从现有 `GLOBAL_DATA` 安全读取最新：
-
-```text
-原始实时测点
-+ map_control
-+ condition_model 输出
-+ slurry_policy_model 输出
-```
-
-再通过 Qt signal 发给 UI。这样旧后端线程和新 UI 不需要互相耦合。
+1. 页面只负责显示，不直接查询数据库或调用模型；
+2. 后端数据统一由 Adapter 转成 UI 字段；
+3. 所有页面继续使用 Qt Layout，不回到大量 `setGeometry()`；
+4. 颜色、字体和边框继续集中在 `theme.py`；
+5. Windows 开发和银河麒麟部署共用同一套 UI 代码，避免 Windows 专属 API 和字体依赖。
