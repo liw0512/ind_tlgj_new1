@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Iterable
+from typing import Iterable, Optional
 
 from PyQt5.QtCore import QPointF, Qt
 from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen
@@ -30,7 +30,7 @@ class StatusPill(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.set_state(state, text)
 
-    def set_state(self, state: str, text: str | None = None) -> None:
+    def set_state(self, state: str, text: Optional[str] = None) -> None:
         self.setProperty("state", str(state).lower())
         if text is not None:
             self.setText(str(text))
@@ -60,7 +60,7 @@ class MetricCard(CardFrame):
         self.setMinimumHeight(118)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def set_value(self, value, unit: str | None = None) -> None:
+    def set_value(self, value, unit: Optional[str] = None) -> None:
         self.value_label.setText(str(value))
         if unit is not None:
             self.unit_label.setText(unit)
@@ -114,7 +114,10 @@ class TowerCard(CardFrame):
         self.valve.set_value(valve)
         self.flow.set_value(flow)
         self.pump.set_value(pump)
-        self.status.set_state("normal" if running else "offline", "运行" if running else "停运")
+        self.status.set_state(
+            "normal" if running else "offline",
+            "运行" if running else "等待数据",
+        )
 
 
 class ActionCard(CardFrame):
@@ -127,18 +130,18 @@ class ActionCard(CardFrame):
         header = QHBoxLayout()
         title = QLabel("智能供浆建议")
         title.setProperty("role", "sectionTitle")
-        self.mode = StatusPill("NORMAL", "normal")
+        self.mode = StatusPill("WAITING", "warning")
         header.addWidget(title)
         header.addStretch(1)
         header.addWidget(self.mode)
         layout.addLayout(header)
 
-        self.source = KeyValueRow("经验来源", "LOCAL_CONDITION")
-        self.action = KeyValueRow("推荐动作", "一级塔增加供浆")
-        self.magnitude = KeyValueRow("动作强度", "SMALL")
-        self.delta = KeyValueRow("建议阀位", "+1.2 %")
-        self.state = KeyValueRow("控制状态", "READY")
-        self.reason = QLabel("当前 SO₂ 高于目标，LOCAL 历史经验方向一致且 pH 安全。")
+        self.source = KeyValueRow("经验来源", "NONE")
+        self.action = KeyValueRow("推荐动作", "HOLD")
+        self.magnitude = KeyValueRow("动作强度", "HOLD")
+        self.delta = KeyValueRow("建议阀位", "0.0 %")
+        self.state = KeyValueRow("控制状态", "WAITING")
+        self.reason = QLabel("等待模型在线结果。")
         self.reason.setWordWrap(True)
         self.reason.setProperty("role", "muted")
 
@@ -166,13 +169,20 @@ class ActionCard(CardFrame):
         self.delta.set_value(delta)
         self.state.set_value(state)
         self.reason.setText(reason)
+
         mode_upper = str(mode).upper()
-        pill_state = "warning" if "FAST" in mode_upper else "normal"
+        state_upper = str(state).upper()
+        if "BLOCKED" in mode_upper or "BLOCKED" in state_upper:
+            pill_state = "danger"
+        elif "FAST" in mode_upper or mode_upper in {"WAITING", "INITIALIZING"}:
+            pill_state = "warning"
+        else:
+            pill_state = "normal"
         self.mode.set_state(pill_state, mode_upper)
 
 
 class TrendWidget(CardFrame):
-    """轻量趋势图，仅用于 UI 原型，不依赖 matplotlib。"""
+    """轻量趋势图，不依赖 matplotlib。"""
 
     def __init__(self, title: str = "SO₂ 实时趋势", parent=None):
         super().__init__(parent)
@@ -223,10 +233,10 @@ class TrendWidget(CardFrame):
 
         if len(self.jyq) < 2:
             painter.setPen(QColor(TOKENS["muted"]))
-            painter.drawText(plot, Qt.AlignCenter, "等待模拟数据...")
+            painter.drawText(plot, Qt.AlignCenter, "等待数据...")
             return
 
-        # 两条曲线量级差异较大，因此分别归一化到同一绘图区，原型阶段只验证视觉层级。
+        # 两条曲线量级差异较大，因此分别归一化到同一绘图区；正式历史页再显示真实坐标轴。
         series = [list(self.yyq), list(self.jyq)]
         colors = [TOKENS["accent"], TOKENS["success"]]
         widths = [2, 3]
