@@ -223,7 +223,7 @@ class TowerProcessCard(SignalGroupCard):
 
 
 class TowerEquipmentCard(CardFrame):
-    """一个塔的全部可变设备：阀门/流量/供浆泵/循环泵。"""
+    """一个塔的可变供浆设备：阀门、流量和供浆泵。"""
 
     def __init__(self, tower: Mapping[str, Any], parent=None):
         super().__init__(parent)
@@ -231,21 +231,19 @@ class TowerEquipmentCard(CardFrame):
         self.valve_bindings: Dict[str, ValveTile] = {}
         self.flow_bindings: Dict[str, SignalTile] = {}
         self.supply_pump_bindings: Dict[str, DeviceTile] = {}
-        self.circulation_bindings: Dict[str, DeviceTile] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(12)
 
         tower_name = str(tower.get("display_name") or tower.get("tower_id") or "吸收塔")
-        title = QLabel(f"{tower_name} · 供浆与循环设备")
+        title = QLabel(f"{tower_name} · 供浆设备")
         title.setProperty("role", "sectionTitle")
         root.addWidget(title)
 
         self._build_valves(root)
         self._build_flows(root)
         self._build_supply_pumps(root)
-        self._build_circulation_pumps(root)
 
     @staticmethod
     def _group_title(text: str) -> QLabel:
@@ -341,12 +339,44 @@ class TowerEquipmentCard(CardFrame):
             self.supply_pump_bindings[column] = tile
         self._add_grid(root, widgets)
 
-    def _build_circulation_pumps(self, root: QVBoxLayout) -> None:
-        pumps = list(self.tower.get("circulation_pumps", []) or [])
-        if not pumps:
-            return
-        root.addWidget(self._group_title("浆液循环泵"))
-        widgets = []
+    def update_values(self, values: Mapping[str, Any]) -> None:
+        for bindings in (
+            self.valve_bindings,
+            self.flow_bindings,
+            self.supply_pump_bindings,
+        ):
+            for column, widget in bindings.items():
+                widget.set_value(values.get(column))
+
+
+class TowerCirculationCard(CardFrame):
+    """一个塔独占一行的浆液循环泵区域。
+
+    单塔只生成一行；双塔分别生成一级塔、二级塔两行。不同塔的循环泵
+    永远不会进入同一个网格。
+    """
+
+    def __init__(self, tower: Mapping[str, Any], parent=None):
+        super().__init__(parent)
+        self.tower = dict(tower)
+        self.bindings: Dict[str, DeviceTile] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 16)
+        root.setSpacing(12)
+
+        tower_name = str(tower.get("display_name") or tower.get("tower_id") or "吸收塔")
+        title = QLabel(f"{tower_name} · 浆液循环泵")
+        title.setProperty("role", "sectionTitle")
+        root.addWidget(title)
+
+        pumps = list(tower.get("circulation_pumps", []) or [])
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+
+        # 一个塔的全部循环泵固定放在同一行；泵数量由 config 决定。
+        display_index = 0
         for pump in pumps:
             column = str(pump.get("value_column", "")).strip()
             if not column:
@@ -357,19 +387,16 @@ class TowerEquipmentCard(CardFrame):
                 digits=int(pump.get("digits", 1)),
                 run_threshold=pump.get("run_threshold"),
             )
-            widgets.append(tile)
-            self.circulation_bindings[column] = tile
-        self._add_grid(root, widgets)
+            grid.addWidget(tile, 0, display_index)
+            grid.setColumnStretch(display_index, 1)
+            self.bindings[column] = tile
+            display_index += 1
+
+        root.addLayout(grid)
 
     def update_values(self, values: Mapping[str, Any]) -> None:
-        for bindings in (
-            self.valve_bindings,
-            self.flow_bindings,
-            self.supply_pump_bindings,
-            self.circulation_bindings,
-        ):
-            for column, widget in bindings.items():
-                widget.set_value(values.get(column))
+        for column, tile in self.bindings.items():
+            tile.set_value(values.get(column))
 
 
 class DataHealthCard(CardFrame):
@@ -432,6 +459,7 @@ class RealtimePage(QWidget):
         self.signal_groups = []
         self.tower_process_cards = []
         self.tower_equipment_cards = []
+        self.tower_circulation_cards = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -447,14 +475,18 @@ class RealtimePage(QWidget):
         outlet = SignalGroupCard("净烟气出口", monitor.get("outlet_signals", []) or [])
         self.signal_groups.extend([inlet, outlet])
 
+        enabled_towers = [
+            tower
+            for tower in self.plant.get("towers", []) or []
+            if tower.get("enabled", True)
+        ]
+
         process_grid = QGridLayout()
         process_grid.setHorizontalSpacing(12)
         process_grid.setVerticalSpacing(12)
 
         process_cards: list[QWidget] = [inlet]
-        for tower in self.plant.get("towers", []) or []:
-            if not tower.get("enabled", True):
-                continue
+        for tower in enabled_towers:
             card = TowerProcessCard(tower)
             process_cards.append(card)
             self.tower_process_cards.append(card)
@@ -468,12 +500,19 @@ class RealtimePage(QWidget):
             process_grid.setColumnStretch(column, 1)
         root.addLayout(process_grid)
 
-        for tower in self.plant.get("towers", []) or []:
-            if not tower.get("enabled", True):
-                continue
+        # 供浆设备仍然按塔分块。
+        for tower in enabled_towers:
             equipment = TowerEquipmentCard(tower)
             self.tower_equipment_cards.append(equipment)
             root.addWidget(equipment)
+
+        # 循环泵单独按塔分行：一级塔一行、二级塔一行；单塔只出现一行。
+        for tower in enabled_towers:
+            if not list(tower.get("circulation_pumps", []) or []):
+                continue
+            circulation = TowerCirculationCard(tower)
+            self.tower_circulation_cards.append(circulation)
+            root.addWidget(circulation)
 
         bottom = QHBoxLayout()
         bottom.setSpacing(12)
@@ -498,5 +537,7 @@ class RealtimePage(QWidget):
         for card in self.tower_process_cards:
             card.update_values(values)
         for card in self.tower_equipment_cards:
+            card.update_values(values)
+        for card in self.tower_circulation_cards:
             card.update_values(values)
         self.health.update_data(data)
