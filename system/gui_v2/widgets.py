@@ -390,8 +390,8 @@ class TrendWidget(CardFrame):
             if start_time <= sample[0] < end_time
         ]
 
-        # 给左右 Y 轴和两行横轴文字留足空间；顶部只保留图例和单位。
-        plot = self.rect().adjusted(68, 54, -68, -72)
+        # 恢复原来的底部高度，只修正日期标签左右裁切。
+        plot = self.rect().adjusted(68, 54, -68, -50)
         if plot.width() <= 20 or plot.height() <= 20:
             return
 
@@ -487,12 +487,13 @@ class TrendWidget(CardFrame):
             )
 
         day_label = f"{start_time:%Y-%m-%d}  00:00–24:00"
+        day_label_width = painter.fontMetrics().horizontalAdvance(day_label) + 16
         painter.setPen(muted)
         painter.drawText(
-            int(plot.center().x()) - 85,
-            plot.bottom() + 31,
-            170,
-            18,
+            int(plot.center().x()) - day_label_width // 2,
+            plot.bottom() + 29,
+            day_label_width,
+            16,
             Qt.AlignCenter,
             day_label,
         )
