@@ -390,8 +390,8 @@ class TrendWidget(CardFrame):
             if start_time <= sample[0] < end_time
         ]
 
-        # 给左右 Y 轴和横轴时间标签留空间；顶部只保留图例和单位。
-        plot = self.rect().adjusted(68, 54, -68, -50)
+        # 给左右 Y 轴和两行横轴文字留足空间；顶部只保留图例和单位。
+        plot = self.rect().adjusted(68, 54, -68, -72)
         if plot.width() <= 20 or plot.height() <= 20:
             return
 
@@ -490,9 +490,9 @@ class TrendWidget(CardFrame):
         painter.setPen(muted)
         painter.drawText(
             int(plot.center().x()) - 85,
-            plot.bottom() + 29,
+            plot.bottom() + 31,
             170,
-            16,
+            18,
             Qt.AlignCenter,
             day_label,
         )
