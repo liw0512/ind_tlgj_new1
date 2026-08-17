@@ -7,6 +7,8 @@ from typing import Any, Dict, Mapping, Optional
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
+from system.model.config.plant_config import PLANT_CONFIG
+
 
 class GlobalDataAdapter(QObject):
     """把现有 GLOBAL_DATA 转换成 GUI V2 使用的稳定字段。
@@ -16,6 +18,10 @@ class GlobalDataAdapter(QObject):
     2. GLOBAL_DATA["data"][-1]：现场最新原始帧，作为实时测点兜底。
 
     适配器只读 GLOBAL_DATA，不修改后端状态，也不参与控制计算。
+
+    除首页固定摘要字段外，``realtime_values`` 会根据 ``PLANT_CONFIG`` 动态收集
+    当前厂配置的烟气侧、塔体、阀门、供浆流量、供浆泵和浆液循环泵测点，
+    因此实时监控页不需要把设备数量写死。
     """
 
     data_ready = pyqtSignal(dict)
@@ -31,6 +37,7 @@ class GlobalDataAdapter(QObject):
         super().__init__(parent)
         self.global_data = global_data
         self._last_fingerprint = None
+        self._monitor_columns = self._configured_monitor_columns()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.poll)
         self._timer.start(max(100, int(interval_ms)))
@@ -91,6 +98,64 @@ class GlobalDataAdapter(QObject):
             return [item.strip() for item in text.split(",") if item.strip()]
         return [value]
 
+    @staticmethod
+    def _configured_monitor_columns() -> tuple[str, ...]:
+        """按厂级配置收集实时监控页需要的全部现场字段。"""
+        columns = []
+
+        monitor = PLANT_CONFIG.get("realtime_monitor", {}) or {}
+        for group_name in (
+            "inlet_signals",
+            "outlet_signals",
+            "auxiliary_signals",
+        ):
+            for item in monitor.get(group_name, []) or []:
+                column = str(item.get("column", "")).strip()
+                if column:
+                    columns.append(column)
+
+        for tower in PLANT_CONFIG.get("towers", []) or []:
+            if not tower.get("enabled", True):
+                continue
+
+            ph_column = str(tower.get("ph_column", "")).strip()
+            if ph_column:
+                columns.append(ph_column)
+
+            for item in tower.get("monitor_fields", []) or []:
+                column = str(item.get("column", "")).strip()
+                if column:
+                    columns.append(column)
+
+            for valve in tower.get("valves", []) or []:
+                column = str(valve.get("column", "")).strip()
+                if column:
+                    columns.append(column)
+
+            for flow in tower.get("supply_flows", []) or []:
+                column = str(flow.get("column", "")).strip()
+                if column:
+                    columns.append(column)
+
+            for pump in tower.get("monitor_supply_pumps", []) or []:
+                column = str(pump.get("value_column", "")).strip()
+                if column:
+                    columns.append(column)
+
+            for pump in tower.get("circulation_pumps", []) or []:
+                column = str(pump.get("value_column", "")).strip()
+                if column:
+                    columns.append(column)
+
+            # 固定频供浆泵若没有单独 monitor 配置，也把控制约束所需电流留给前端。
+            for pump in tower.get("supply_pumps", []) or []:
+                column = str(pump.get("current_column", "")).strip()
+                if column:
+                    columns.append(column)
+
+        # 保持配置顺序并去重。
+        return tuple(dict.fromkeys(columns))
+
     def _latest_raw(self) -> Dict[str, Any]:
         store = self.global_data.get("data")
         try:
@@ -112,6 +177,10 @@ class GlobalDataAdapter(QObject):
         merged = dict(raw)
         # 模型使用的过滤/特征结果和在线决策优先于原始帧。
         merged.update(map_control)
+
+        # connection_status 通常位于 GLOBAL_DATA 顶层，不强迫后端复制进每一帧。
+        if "connection_status" not in merged:
+            merged["connection_status"] = self.global_data.get("connection_status")
         return merged
 
     @classmethod
@@ -177,7 +246,6 @@ class GlobalDataAdapter(QObject):
             except (TypeError, ValueError):
                 formatted.append(f"{valve_id} {delta}")
         if len(formatted) == 1:
-            # 单阀现场首页不必重复显示内部 valve_id。
             only_value = next(iter(mapping.values()))
             try:
                 return f"{float(only_value):+.1f} %"
@@ -190,7 +258,6 @@ class GlobalDataAdapter(QObject):
         reasons = [str(item) for item in cls._as_list(value) if str(item).strip()]
         if not reasons:
             return "暂无算法 reason_codes。"
-        # 首页只承担概览；完整 reason_codes 后续放到“供浆控制”页面。
         return " · ".join(reasons[:4])
 
     @classmethod
@@ -216,6 +283,27 @@ class GlobalDataAdapter(QObject):
             return "warning", "工况切换"
         return "normal", "正常"
 
+    @staticmethod
+    def _data_age_seconds(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            if isinstance(value, datetime):
+                timestamp = value
+            else:
+                timestamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+                if timestamp.tzinfo is not None:
+                    timestamp = timestamp.replace(tzinfo=None)
+            return max(0.0, (datetime.now() - timestamp).total_seconds())
+        except Exception:
+            return None
+
+    def _monitor_values(self, data: Mapping[str, Any]) -> Dict[str, Any]:
+        return {
+            column: self._pick(data, column)
+            for column in self._monitor_columns
+        }
+
     def _build_ui_data(self, data: Mapping[str, Any]) -> Dict[str, Any]:
         family = self._pick(data, "slurry_policy_action_family", default="HOLD")
         direction = self._pick(data, "slurry_policy_action_direction", default="HOLD")
@@ -228,13 +316,16 @@ class GlobalDataAdapter(QObject):
             not self._is_missing(value) for value in (ph, valve, flow)
         )
 
+        date_value = self._pick(
+            data,
+            "date",
+            "slurry_policy_timestamp",
+            default=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        monitor_values = self._monitor_values(data)
+
         result = {
-            "date": self._pick(
-                data,
-                "date",
-                "slurry_policy_timestamp",
-                default=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
+            "date": date_value,
             "yyq_SO2": self._pick(data, "yyq_SO2"),
             "jyq_SO2": self._pick(data, "jyq_SO2"),
             "target": self._pick(
@@ -315,6 +406,11 @@ class GlobalDataAdapter(QObject):
             ),
             "safety_state": safety_state,
             "safety_text": safety_text,
+            "connection_status": self._pick(data, "connection_status", default=None),
+            "data_expired": bool(self._pick(data, "data_expired", default=False)),
+            "data_age_seconds": self._data_age_seconds(date_value),
+            "jym": self._pick(data, "jym"),
+            "realtime_values": monitor_values,
             "ui_data_source": "GLOBAL_DATA",
         }
         return result
@@ -325,6 +421,10 @@ class GlobalDataAdapter(QObject):
             if not merged:
                 return
             ui_data = self._build_ui_data(merged)
+            monitor_fingerprint = tuple(
+                (key, str(value))
+                for key, value in sorted(ui_data.get("realtime_values", {}).items())
+            )
             fingerprint = (
                 str(ui_data.get("date")),
                 str(merged.get("realtime_seq", "")),
@@ -335,6 +435,7 @@ class GlobalDataAdapter(QObject):
                 ui_data.get("xstjy_PH"),
                 ui_data.get("xst_FMKD"),
                 ui_data.get("xstshsjy_LL"),
+                monitor_fingerprint,
             )
             if fingerprint == self._last_fingerprint:
                 return

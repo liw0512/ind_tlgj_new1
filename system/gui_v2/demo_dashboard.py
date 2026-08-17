@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 )
 
 from .adapters.global_data_adapter import GlobalDataAdapter
+from .realtime_page import RealtimePage
 from .theme import build_stylesheet
 from .widgets import ActionCard, CardFrame, MetricCard, StatusPill, TowerCard, TrendWidget
 
@@ -76,9 +77,36 @@ class MockDataSource(QObject):
             safety = "warning"
             safety_text = "预警"
 
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        realtime_values = {
+            "yyq_SO2": self._yyq,
+            "yyq_LL": 1250000.0 + random.uniform(-5000.0, 5000.0),
+            "yyq_O2": 5.8 + random.uniform(-0.08, 0.08),
+            "tlrkyq_YL": -0.82 + random.uniform(-0.03, 0.03),
+            "jyq_SO2": self._jyq,
+            "jyq_LL": 1180000.0 + random.uniform(-5000.0, 5000.0),
+            "tlckyq_YL": -0.35 + random.uniform(-0.02, 0.02),
+            "yhfjmg_YL": 68.0 + random.uniform(-1.0, 1.0),
+            "xstjy_PH": self._ph,
+            "xstshsjy_MD": 1125.0 + random.uniform(-2.0, 2.0),
+            "xst_YW": 7.42 + random.uniform(-0.03, 0.03),
+            "xst_FMKD1": self._valve,
+            "xst_FMKD2": max(0.0, min(100.0, self._valve + 1.3)),
+            "xstshsjy_LL": self._flow,
+            "xstshsjy_APL": 45.2,
+            "xstshsjy_BPL": 0.0,
+            "xstjyxhb_ADL": 36.5,
+            "xstjyxhb_BDL": 35.8,
+            "xstjyxhb_CDL": 34.7,
+            "xstjyxhb_DDL": 33.9,
+            "xstjyxhb_EDL": 0.2,
+            "aptjy_PH": 6.05 + random.uniform(-0.02, 0.02),
+            "apt_FMKD": 28.5 + random.uniform(-0.2, 0.2),
+        }
+
         self.data_ready.emit(
             {
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "date": now_text,
                 "yyq_SO2": self._yyq,
                 "jyq_SO2": self._jyq,
                 "target": self._target,
@@ -88,7 +116,7 @@ class MockDataSource(QObject):
                 "xstjy_PH": self._ph,
                 "xst_FMKD": self._valve,
                 "xstshsjy_LL": self._flow,
-                "pump": "2A 45.0 Hz / 2B 0.0 Hz",
+                "pump": "2A 45.2 Hz / 2B 0.0 Hz",
                 "tower_running": True,
                 "experience_source": "LOCAL_CONDITION",
                 "action": action,
@@ -99,6 +127,11 @@ class MockDataSource(QObject):
                 "reason": reason,
                 "safety_state": safety,
                 "safety_text": safety_text,
+                "connection_status": True,
+                "data_expired": False,
+                "data_age_seconds": 0.0,
+                "jym": 0,
+                "realtime_values": realtime_values,
                 "ui_data_source": "MOCK",
             }
         )
@@ -258,15 +291,9 @@ class DashboardWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.overview = OverviewPage()
+        self.realtime = RealtimePage()
         self.stack.addWidget(self._scroll_wrap(self.overview))
-        self.stack.addWidget(
-            self._scroll_wrap(
-                PlaceholderPage(
-                    "实时监控",
-                    "下一步展示现场实时测点、泵阀状态、烟气侧数据和刷新质量。",
-                )
-            )
-        )
+        self.stack.addWidget(self._scroll_wrap(self.realtime))
         self.stack.addWidget(
             self._scroll_wrap(
                 PlaceholderPage(
@@ -409,6 +436,7 @@ class DashboardWindow(QMainWindow):
 
     def _on_data(self, data: dict):
         self.overview.update_data(data)
+        self.realtime.update_data(data)
         self.safety.set_state(
             str(data.get("safety_state", "warning")),
             str(data.get("safety_text", "等待数据")),

@@ -187,8 +187,8 @@ class TrendWidget(CardFrame):
     """首页轻量 SO₂ 双纵轴日趋势图，不依赖 matplotlib。
 
     - 横轴固定为当天 00:00~24:00，每 3 小时一个主刻度；
-    - 左轴：原烟气 SO₂，默认 0~5000 mg/Nm³，超限按 1000 自动扩展；
-    - 右轴：净烟气 SO₂，默认 0~100 mg/Nm³，超限按 20 自动扩展；
+    - 左轴原烟气 SO₂、右轴净烟气 SO₂ 均根据当天实际数据动态量程；
+    - 动态量程保留最小跨度和边缘余量，避免单点/小波动时图形失真；
     - 趋势缓存每 30 秒最多保存一个点，当天最多 2880 点/曲线；
     - 跨到新的一天后自动清空前一天内存趋势，从 00:00 重新开始。
     """
@@ -197,10 +197,12 @@ class TrendWidget(CardFrame):
     TICK_HOURS = 3
     SAMPLE_SECONDS = 30
     MAX_POINTS = DAY_HOURS * 60 * 60 // SAMPLE_SECONDS
-    YYQ_BASE_MAX = 5000.0
-    YYQ_EXPAND_STEP = 1000.0
-    JYQ_BASE_MAX = 100.0
-    JYQ_EXPAND_STEP = 20.0
+
+    YYQ_MIN_SPAN = 500.0
+    YYQ_ROUND_STEP = 100.0
+    JYQ_MIN_SPAN = 20.0
+    JYQ_ROUND_STEP = 5.0
+    AXIS_PADDING_RATIO = 0.10
 
     def __init__(self, title: str = "SO₂ 24小时趋势", parent=None):
         super().__init__(parent)
@@ -280,22 +282,55 @@ class TrendWidget(CardFrame):
         if len(valid) != len(self.samples):
             self.samples = deque(valid, maxlen=self.MAX_POINTS)
 
-    @staticmethod
-    def _expanded_max(values: Iterable[float], base_max: float, step: float) -> float:
-        finite_values = [
-            float(value)
-            for value in values
-            if value is not None and math.isfinite(float(value))
-        ]
-        observed = max(finite_values, default=0.0)
-        if observed <= base_max:
-            return base_max
-        return max(base_max, math.ceil(observed / step) * step)
+    @classmethod
+    def _dynamic_range(
+        cls,
+        values: Iterable[float],
+        min_span: float,
+        round_step: float,
+    ) -> tuple[float, float]:
+        finite_values = []
+        for value in values:
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(number):
+                finite_values.append(number)
+
+        if not finite_values:
+            return 0.0, float(min_span)
+
+        observed_min = min(finite_values)
+        observed_max = max(finite_values)
+        observed_span = observed_max - observed_min
+
+        if observed_span < min_span:
+            center = (observed_min + observed_max) / 2.0
+            lo = center - min_span / 2.0
+            hi = center + min_span / 2.0
+            span_for_padding = min_span
+        else:
+            lo = observed_min
+            hi = observed_max
+            span_for_padding = observed_span
+
+        padding = max(span_for_padding * cls.AXIS_PADDING_RATIO, round_step)
+        lo -= padding
+        hi += padding
+
+        # SO₂ 浓度不显示负量程；上下限做整刻度处理，读数更稳定。
+        lo = max(0.0, math.floor(lo / round_step) * round_step)
+        hi = math.ceil(hi / round_step) * round_step
+        if hi <= lo:
+            hi = lo + max(min_span, round_step)
+        return lo, hi
 
     @staticmethod
-    def _value_y(value: float, rect, axis_max: float) -> float:
-        clamped = max(0.0, min(float(value), axis_max))
-        return rect.bottom() - (clamped / max(axis_max, 1e-9)) * rect.height()
+    def _value_y(value: float, rect, axis_min: float, axis_max: float) -> float:
+        span = max(axis_max - axis_min, 1e-9)
+        clamped = max(axis_min, min(float(value), axis_max))
+        return rect.bottom() - ((clamped - axis_min) / span) * rect.height()
 
     @staticmethod
     def _time_x(value: datetime, rect, start_time: datetime, end_time: datetime) -> float:
@@ -309,6 +344,7 @@ class TrendWidget(CardFrame):
         samples,
         value_index: int,
         rect,
+        axis_min: float,
         axis_max: float,
         start_time: datetime,
         end_time: datetime,
@@ -319,7 +355,7 @@ class TrendWidget(CardFrame):
             if value is None:
                 continue
             x = self._time_x(sample[0], rect, start_time, end_time)
-            y = self._value_y(value, rect, axis_max)
+            y = self._value_y(value, rect, axis_min, axis_max)
             points.append(QPointF(x, y))
         return points
 
@@ -354,7 +390,7 @@ class TrendWidget(CardFrame):
             if start_time <= sample[0] < end_time
         ]
 
-        # 给左右 Y 轴、标题、横轴时间标签留空间。
+        # 给左右 Y 轴和横轴时间标签留空间；顶部只保留图例和单位。
         plot = self.rect().adjusted(68, 54, -68, -50)
         if plot.width() <= 20 or plot.height() <= 20:
             return
@@ -364,15 +400,16 @@ class TrendWidget(CardFrame):
         target_values = [sample[3] for sample in samples if sample[3] is not None]
         if self._latest_target is not None:
             target_values.append(self._latest_target)
-        yyq_max = self._expanded_max(
+
+        yyq_min, yyq_max = self._dynamic_range(
             yyq_values,
-            self.YYQ_BASE_MAX,
-            self.YYQ_EXPAND_STEP,
+            self.YYQ_MIN_SPAN,
+            self.YYQ_ROUND_STEP,
         )
-        jyq_max = self._expanded_max(
+        jyq_min, jyq_max = self._dynamic_range(
             list(jyq_values) + list(target_values),
-            self.JYQ_BASE_MAX,
-            self.JYQ_EXPAND_STEP,
+            self.JYQ_MIN_SPAN,
+            self.JYQ_ROUND_STEP,
         )
 
         muted = QColor(TOKENS["muted"])
@@ -386,7 +423,7 @@ class TrendWidget(CardFrame):
         axis_font.setBold(False)
         painter.setFont(axis_font)
 
-        # 水平网格 + 双 Y 轴刻度。
+        # 水平网格 + 动态双 Y 轴刻度。
         grid_count = 5
         for index in range(grid_count + 1):
             fraction = index / grid_count
@@ -394,8 +431,8 @@ class TrendWidget(CardFrame):
             painter.setPen(QPen(border, 1))
             painter.drawLine(plot.left(), int(y), plot.right(), int(y))
 
-            left_value = yyq_max * fraction
-            right_value = jyq_max * fraction
+            left_value = yyq_min + (yyq_max - yyq_min) * fraction
+            right_value = jyq_min + (jyq_max - jyq_min) * fraction
             painter.setPen(yyq_color)
             painter.drawText(
                 6,
@@ -419,13 +456,6 @@ class TrendWidget(CardFrame):
         painter.drawLine(plot.left(), plot.top(), plot.left(), plot.bottom())
         painter.drawLine(plot.right(), plot.top(), plot.right(), plot.bottom())
         painter.drawLine(plot.left(), plot.bottom(), plot.right(), plot.bottom())
-
-        painter.setPen(yyq_color)
-        painter.drawText(plot.left(), 43, "原烟气 SO₂  mg/Nm³")
-        right_title = "净烟气 SO₂  mg/Nm³"
-        right_width = painter.fontMetrics().horizontalAdvance(right_title)
-        painter.setPen(jyq_color)
-        painter.drawText(plot.right() - right_width, 43, right_title)
 
         # 横轴固定每天 00:00~24:00，每 3 小时一个区间。
         tick_hours = list(range(0, self.DAY_HOURS + 1, self.TICK_HOURS))
@@ -467,21 +497,26 @@ class TrendWidget(CardFrame):
             day_label,
         )
 
-        # 目标 SO₂ 参考线跟随右侧净烟气坐标轴。
+        # 目标 SO₂ 参考线跟随右侧净烟气动态坐标轴。
         if self._latest_target is not None:
-            target_y = self._value_y(self._latest_target, plot, jyq_max)
+            target_y = self._value_y(
+                self._latest_target,
+                plot,
+                jyq_min,
+                jyq_max,
+            )
             target_pen = QPen(target_color, 1)
             target_pen.setStyle(Qt.DashLine)
             painter.setPen(target_pen)
             painter.drawLine(plot.left(), int(target_y), plot.right(), int(target_y))
             painter.setPen(target_color)
             painter.drawText(
-                plot.right() - 88,
+                plot.right() - 112,
                 int(target_y) - 18,
-                84,
+                108,
                 16,
                 Qt.AlignRight | Qt.AlignVCenter,
-                f"目标 {self._latest_target:.1f}",
+                f"目标SO₂ {self._latest_target:.1f}",
             )
 
         if not samples:
@@ -495,6 +530,7 @@ class TrendWidget(CardFrame):
                 samples,
                 1,
                 plot,
+                yyq_min,
                 yyq_max,
                 start_time,
                 end_time,
@@ -503,6 +539,7 @@ class TrendWidget(CardFrame):
                 samples,
                 2,
                 plot,
+                jyq_min,
                 jyq_max,
                 start_time,
                 end_time,
@@ -510,15 +547,14 @@ class TrendWidget(CardFrame):
             self._draw_path(painter, yyq_points, QPen(yyq_color, 2))
             self._draw_path(painter, jyq_points, QPen(jyq_color, 3))
 
+        # 顶部只保留简洁图例和统一单位，不再重复写两套纵轴单位/量程。
         legend_y = 28
         painter.setFont(axis_font)
         painter.setPen(yyq_color)
-        painter.drawText(plot.left() + 210, legend_y, "● 原烟气")
+        painter.drawText(plot.left() + 170, legend_y, "● 原烟气SO₂")
         painter.setPen(jyq_color)
-        painter.drawText(plot.left() + 285, legend_y, "● 净烟气")
+        painter.drawText(plot.left() + 265, legend_y, "● 净烟气SO₂")
         painter.setPen(target_color)
-        painter.drawText(plot.left() + 360, legend_y, "-- 目标")
+        painter.drawText(plot.left() + 360, legend_y, "-- 目标SO₂")
         painter.setPen(muted)
-        range_text = f"量程：原烟气 0~{yyq_max:.0f} / 净烟气 0~{jyq_max:.0f}"
-        range_width = painter.fontMetrics().horizontalAdvance(range_text)
-        painter.drawText(plot.right() - range_width, legend_y, range_text)
+        painter.drawText(plot.left() + 455, legend_y, "单位：mg/m³")
