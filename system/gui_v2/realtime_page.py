@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from PyQt5.QtCore import Qt
@@ -164,9 +163,9 @@ class SectionCard(CardFrame):
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(12)
 
-        title_label = QLabel(str(title))
-        title_label.setProperty("role", "sectionTitle")
-        root.addWidget(title_label)
+        self.title_label = QLabel(str(title))
+        self.title_label.setProperty("role", "sectionTitle")
+        root.addWidget(self.title_label)
 
         self.grid = QGridLayout()
         self.grid.setHorizontalSpacing(10)
@@ -204,9 +203,19 @@ class SignalGroupCard(SectionCard):
 
 
 class TowerProcessCard(SignalGroupCard):
-    def __init__(self, tower: Mapping[str, Any], parent=None):
+    def __init__(
+        self,
+        tower: Mapping[str, Any],
+        display_name: Optional[str] = None,
+        parent=None,
+    ):
         self.tower = dict(tower)
-        title = str(tower.get("display_name") or tower.get("tower_id") or "吸收塔")
+        title = str(
+            display_name
+            or tower.get("display_name")
+            or tower.get("tower_id")
+            or "吸收塔"
+        )
         specs = list(tower.get("monitor_fields", []) or [])
         if not specs:
             ph_column = str(tower.get("ph_column", "")).strip()
@@ -225,7 +234,12 @@ class TowerProcessCard(SignalGroupCard):
 class TowerEquipmentCard(CardFrame):
     """一个塔的可变供浆设备：阀门、流量和供浆泵。"""
 
-    def __init__(self, tower: Mapping[str, Any], parent=None):
+    def __init__(
+        self,
+        tower: Mapping[str, Any],
+        display_name: Optional[str] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.tower = dict(tower)
         self.valve_bindings: Dict[str, ValveTile] = {}
@@ -236,7 +250,12 @@ class TowerEquipmentCard(CardFrame):
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(12)
 
-        tower_name = str(tower.get("display_name") or tower.get("tower_id") or "吸收塔")
+        tower_name = str(
+            display_name
+            or tower.get("display_name")
+            or tower.get("tower_id")
+            or "吸收塔"
+        )
         title = QLabel(f"{tower_name} · 供浆设备")
         title.setProperty("role", "sectionTitle")
         root.addWidget(title)
@@ -350,13 +369,14 @@ class TowerEquipmentCard(CardFrame):
 
 
 class TowerCirculationCard(CardFrame):
-    """一个塔独占一行的浆液循环泵区域。
+    """一个塔独占一行的浆液循环泵区域。"""
 
-    单塔只生成一行；双塔分别生成一级塔、二级塔两行。不同塔的循环泵
-    永远不会进入同一个网格。
-    """
-
-    def __init__(self, tower: Mapping[str, Any], parent=None):
+    def __init__(
+        self,
+        tower: Mapping[str, Any],
+        display_name: Optional[str] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.tower = dict(tower)
         self.bindings: Dict[str, DeviceTile] = {}
@@ -365,7 +385,12 @@ class TowerCirculationCard(CardFrame):
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(12)
 
-        tower_name = str(tower.get("display_name") or tower.get("tower_id") or "吸收塔")
+        tower_name = str(
+            display_name
+            or tower.get("display_name")
+            or tower.get("tower_id")
+            or "吸收塔"
+        )
         title = QLabel(f"{tower_name} · 浆液循环泵")
         title.setProperty("role", "sectionTitle")
         root.addWidget(title)
@@ -480,14 +505,15 @@ class RealtimePage(QWidget):
             for tower in self.plant.get("towers", []) or []
             if tower.get("enabled", True)
         ]
+        tower_display_names = self._tower_display_names(enabled_towers)
 
         process_grid = QGridLayout()
         process_grid.setHorizontalSpacing(12)
         process_grid.setVerticalSpacing(12)
 
         process_cards: list[QWidget] = [inlet]
-        for tower in enabled_towers:
-            card = TowerProcessCard(tower)
+        for tower, display_name in zip(enabled_towers, tower_display_names):
+            card = TowerProcessCard(tower, display_name=display_name)
             process_cards.append(card)
             self.tower_process_cards.append(card)
         process_cards.append(outlet)
@@ -500,17 +526,17 @@ class RealtimePage(QWidget):
             process_grid.setColumnStretch(column, 1)
         root.addLayout(process_grid)
 
-        # 供浆设备仍然按塔分块。
-        for tower in enabled_towers:
-            equipment = TowerEquipmentCard(tower)
+        # 供浆设备按塔分块；单塔统一显示“吸收塔”，双塔保留一级塔/二级塔。
+        for tower, display_name in zip(enabled_towers, tower_display_names):
+            equipment = TowerEquipmentCard(tower, display_name=display_name)
             self.tower_equipment_cards.append(equipment)
             root.addWidget(equipment)
 
-        # 循环泵单独按塔分行：一级塔一行、二级塔一行；单塔只出现一行。
-        for tower in enabled_towers:
+        # 循环泵按塔独占一行；单塔叫“吸收塔浆液循环泵”，双塔分一级/二级。
+        for tower, display_name in zip(enabled_towers, tower_display_names):
             if not list(tower.get("circulation_pumps", []) or []):
                 continue
-            circulation = TowerCirculationCard(tower)
+            circulation = TowerCirculationCard(tower, display_name=display_name)
             self.tower_circulation_cards.append(circulation)
             root.addWidget(circulation)
 
@@ -526,6 +552,21 @@ class RealtimePage(QWidget):
         bottom.addWidget(self.health, 1)
         root.addLayout(bottom)
         root.addStretch(1)
+
+    @staticmethod
+    def _tower_display_names(enabled_towers: list[Mapping[str, Any]]) -> list[str]:
+        """按启用塔数量生成 GUI 名称，不改变算法内部 tower_id/display_name。"""
+        if len(enabled_towers) == 1:
+            return ["吸收塔"]
+
+        names = []
+        for index, tower in enumerate(enabled_towers):
+            configured = str(tower.get("display_name") or "").strip()
+            if configured:
+                names.append(configured)
+            else:
+                names.append(f"{index + 1}级塔")
+        return names
 
     def update_data(self, data: Mapping[str, Any]) -> None:
         values = data.get("realtime_values")
