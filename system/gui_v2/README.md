@@ -15,7 +15,17 @@
 
 ## 运行
 
+### Windows 当前开发环境（py3921）
+
 在仓库根目录执行：
+
+```bat
+D:\anaconda\envs\py3921\python.exe -m system.gui_v2.demo_dashboard
+```
+
+该方式直接使用现有 `D:\anaconda\envs\py3921` 环境，不需要先执行 `conda activate py3921`。
+
+如果已经激活 `py3921` 环境，也可以执行：
 
 ```bash
 python -m system.gui_v2.demo_dashboard
