@@ -1,12 +1,7 @@
 import csv
 import time
-import struct
 import traceback
 from datetime import datetime
-from pymodbus.server import StartSerialServer  # 改为使用串行服务器
-from pymodbus.datastore import ModbusSequentialDataBlock
-from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
-import threading
 
 
 class MokeSlaveClient:
@@ -32,13 +27,30 @@ class MokeSlaveClient:
         self._last_values[key] = result
         return result
 
+    def _build_std_data(self, row):
+        """按测试 CSV 的实际表头构建一帧模拟通讯数据。"""
+        std_data = {
+            # 模拟通讯按实时帧处理，时间使用当前时间；其余字段来自 CSV。
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for key, value in row.items():
+            if key is None or key == "date":
+                continue
+            std_data[key] = round(self._to_float(key, value), 2)
+
+        # 测试数据集没有通讯状态字段，由模拟客户端统一补齐。
+        std_data["jym"] = 50
+        std_data["connection_status"] = True
+        return std_data
+
     def run(self):
 
         try:
             self.global_data["connection_status"] = True
 
             with open(
-                r"F:\xiregangchang\ind_optim_serv_xire\files\selected_30s_processed.csv",
+                r"F:\tlgj_new\files\new_data.csv",
+                encoding="utf-8-sig",
                 newline="",
             ) as csvfile:
 
@@ -58,36 +70,7 @@ class MokeSlaveClient:
                 for row in reader:
 
                     try:
-                        # 将浮点数编码为 Modbus 寄存器格式
-                        floats = []
-                        for key in row:
-                            # print(f"key={key}, row={row}")
-                            if key is not None and key != "date":
-                                floats.append(self._to_float(key, row[key]))
-                        if len(floats) < 14:
-                            floats.extend([0.0] * (14 - len(floats)))
-                        # print(f"Sent data: {floats}")
-
-                        # 构建标准数据格式
-                        std_data = {
-                            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "yyq_SO2": round(floats[0], 2),
-                            "jyq_SO2": round(floats[1], 2),
-                            "yyq_LL": round(floats[2], 2),
-                            "jyq_LL": round(floats[3], 2),
-                            "yyq_O2": round(floats[4], 2),
-                            "xstjy_PH": round(floats[5], 2),
-                            "xstjyxhb_ADL": round(floats[6], 2),
-                            "xstjyxhb_BDL": round(floats[7], 2),
-                            "xstjyxhb_CDL": round(floats[8], 2),
-                            "xstjyxhb_DDL": round(floats[9], 2),
-                            "xstjyxhb_EDL": round(floats[10], 2),
-                            "xstshsjy_MD": round(floats[11], 2),
-                            "xst_YW": round(floats[12], 2),
-                            "xstyhfj_ADL": round(floats[13], 2),
-                            "jym": 50,
-                            "connection_status": True,
-                        }
+                        std_data = self._build_std_data(row)
                         # print(f"std_data={std_data}")
 
                         self.global_data["connection_status"] = True
