@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import json
+import math
+from datetime import datetime
+from typing import Any, Dict, Mapping, Optional
+
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
+
+
+class GlobalDataAdapter(QObject):
+    """把现有 GLOBAL_DATA 转换成 GUI V2 使用的稳定字段。
+
+    读取优先级：
+    1. GLOBAL_DATA["map_control"]：过滤/特征/第一模块/第二模块统一在线输出；
+    2. GLOBAL_DATA["data"][-1]：现场最新原始帧，作为实时测点兜底。
+
+    适配器只读 GLOBAL_DATA，不修改后端状态，也不参与控制计算。
+    """
+
+    data_ready = pyqtSignal(dict)
+    adapter_error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        global_data: Dict[str, Any],
+        parent: Optional[QObject] = None,
+        *,
+        interval_ms: int = 500,
+    ) -> None:
+        super().__init__(parent)
+        self.global_data = global_data
+        self._last_fingerprint = None
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.poll)
+        self._timer.start(max(100, int(interval_ms)))
+        QTimer.singleShot(0, self.poll)
+
+    @staticmethod
+    def _is_missing(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, float):
+            return not math.isfinite(value)
+        return False
+
+    @classmethod
+    def _pick(cls, data: Mapping[str, Any], *keys: str, default=None):
+        for key in keys:
+            if key not in data:
+                continue
+            value = data.get(key)
+            if not cls._is_missing(value):
+                return value
+        return default
+
+    @staticmethod
+    def _as_mapping(value: Any) -> Dict[str, Any]:
+        if isinstance(value, Mapping):
+            return dict(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                decoded = json.loads(text)
+            except Exception:
+                return {}
+            if isinstance(decoded, Mapping):
+                return dict(decoded)
+        return {}
+
+    @staticmethod
+    def _as_list(value: Any) -> list:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            try:
+                decoded = json.loads(text)
+            except Exception:
+                decoded = None
+            if isinstance(decoded, list):
+                return decoded
+            return [item.strip() for item in text.split(",") if item.strip()]
+        return [value]
+
+    def _latest_raw(self) -> Dict[str, Any]:
+        store = self.global_data.get("data")
+        try:
+            if isinstance(store, Mapping):
+                return dict(store)
+            if store is not None and len(store):
+                row = store[-1]
+                return dict(row) if isinstance(row, Mapping) else {}
+        except Exception:
+            return {}
+        return {}
+
+    def _snapshot(self) -> Dict[str, Any]:
+        raw = self._latest_raw()
+        try:
+            map_control = dict(self.global_data.get("map_control") or {})
+        except Exception:
+            map_control = {}
+        merged = dict(raw)
+        # 模型使用的过滤/特征结果和在线决策优先于原始帧。
+        merged.update(map_control)
+        return merged
+
+    @classmethod
+    def _pump_text(cls, data: Mapping[str, Any]) -> str:
+        # 新现场：供浆泵 2A/2B 频率反馈。
+        a_freq = cls._pick(data, "xstshsjy_APL")
+        b_freq = cls._pick(data, "xstshsjy_BPL")
+        parts = []
+        if not cls._is_missing(a_freq):
+            try:
+                parts.append(f"2A {float(a_freq):.1f} Hz")
+            except (TypeError, ValueError):
+                parts.append(f"2A {a_freq}")
+        if not cls._is_missing(b_freq):
+            try:
+                parts.append(f"2B {float(b_freq):.1f} Hz")
+            except (TypeError, ValueError):
+                parts.append(f"2B {b_freq}")
+        if parts:
+            return " / ".join(parts)
+
+        # 兼容旧现场固定频泵电流字段，只展示测量值，不在 UI 层自行定义启停阈值。
+        a_current = cls._pick(data, "xstgjb_ADL")
+        b_current = cls._pick(data, "xstgjb_BDL")
+        if not cls._is_missing(a_current):
+            try:
+                parts.append(f"A {float(a_current):.1f} A")
+            except (TypeError, ValueError):
+                parts.append(f"A {a_current}")
+        if not cls._is_missing(b_current):
+            try:
+                parts.append(f"B {float(b_current):.1f} A")
+            except (TypeError, ValueError):
+                parts.append(f"B {b_current}")
+        return " / ".join(parts) if parts else "--"
+
+    @staticmethod
+    def _action_text(family: Any, direction: Any) -> str:
+        family_text = str(family or "").upper()
+        direction_text = str(direction or "").upper()
+        if family_text == "HOLD" or direction_text == "HOLD":
+            return "保持当前供浆"
+        if direction_text == "INCREASE":
+            return "增加供浆"
+        if direction_text == "DECREASE":
+            return "减少供浆"
+        if direction_text == "MIXED":
+            return "供浆重分配"
+        if family:
+            return str(family)
+        return "HOLD"
+
+    @classmethod
+    def _delta_text(cls, value: Any) -> str:
+        mapping = cls._as_mapping(value)
+        if not mapping:
+            return "0.0 %"
+        formatted = []
+        for valve_id, delta in mapping.items():
+            try:
+                number = float(delta)
+                formatted.append(f"{valve_id} {number:+.1f} %")
+            except (TypeError, ValueError):
+                formatted.append(f"{valve_id} {delta}")
+        if len(formatted) == 1:
+            # 单阀现场首页不必重复显示内部 valve_id。
+            only_value = next(iter(mapping.values()))
+            try:
+                return f"{float(only_value):+.1f} %"
+            except (TypeError, ValueError):
+                return str(only_value)
+        return " / ".join(formatted)
+
+    @classmethod
+    def _reason_text(cls, value: Any) -> str:
+        reasons = [str(item) for item in cls._as_list(value) if str(item).strip()]
+        if not reasons:
+            return "暂无算法 reason_codes。"
+        # 首页只承担概览；完整 reason_codes 后续放到“供浆控制”页面。
+        return " · ".join(reasons[:4])
+
+    @classmethod
+    def _status(cls, data: Mapping[str, Any]) -> tuple[str, str]:
+        decision_status = str(
+            cls._pick(data, "slurry_policy_decision_status", default="")
+        ).upper()
+        control_mode = str(
+            cls._pick(data, "slurry_policy_control_mode", default="")
+        ).upper()
+        integration_valid = cls._pick(
+            data, "slurry_policy_integration_valid", default=None
+        )
+        condition_stable = bool(cls._pick(data, "condition_stable", default=False))
+
+        if integration_valid is False or decision_status == "BLOCKED" or control_mode == "BLOCKED":
+            return "danger", "控制阻断"
+        if "FAST" in control_mode:
+            return "warning", "快速扰动"
+        if not cls._pick(data, "condition_label", default=None):
+            return "warning", "等待模型"
+        if not condition_stable:
+            return "warning", "工况切换"
+        return "normal", "正常"
+
+    def _build_ui_data(self, data: Mapping[str, Any]) -> Dict[str, Any]:
+        family = self._pick(data, "slurry_policy_action_family", default="HOLD")
+        direction = self._pick(data, "slurry_policy_action_direction", default="HOLD")
+        safety_state, safety_text = self._status(data)
+
+        ph = self._pick(data, "xstjy_PH")
+        valve = self._pick(data, "xst_FMKD", "xst_FMKD1")
+        flow = self._pick(data, "xstshsjy_LL")
+        tower_running = any(
+            not self._is_missing(value) for value in (ph, valve, flow)
+        )
+
+        result = {
+            "date": self._pick(
+                data,
+                "date",
+                "slurry_policy_timestamp",
+                default=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+            "yyq_SO2": self._pick(data, "yyq_SO2"),
+            "jyq_SO2": self._pick(data, "jyq_SO2"),
+            "target": self._pick(
+                data,
+                "slurry_policy_effective_target",
+                "slurry_policy_commanded_target",
+                "outlet_so2_target",
+                "target_so2",
+            ),
+            "condition_label": self._pick(
+                data, "stable_condition_label", "condition_label", default="--"
+            ),
+            "condition_stable": bool(
+                self._pick(data, "condition_stable", default=False)
+            ),
+            "condition_switch_state": self._pick(
+                data, "condition_switch_state", default="UNKNOWN"
+            ),
+            "integrated_version": self._pick(
+                data,
+                "integrated_active_version",
+                "slurry_policy_model_version",
+                "condition_snapshot_version",
+                default="--",
+            ),
+            "xstjy_PH": ph,
+            "xst_FMKD": valve,
+            "xstshsjy_LL": flow,
+            "pump": self._pump_text(data),
+            "tower_running": tower_running,
+            "experience_source": self._pick(
+                data, "slurry_policy_experience_source", default="NONE"
+            ),
+            "action": self._action_text(family, direction),
+            "action_family": family,
+            "action_direction": direction,
+            "magnitude": self._pick(
+                data, "slurry_policy_action_magnitude", default="HOLD"
+            ),
+            "delta": self._delta_text(
+                self._pick(
+                    data, "slurry_policy_recommended_valve_deltas", default={}
+                )
+            ),
+            "recommended_valve_deltas": self._as_mapping(
+                self._pick(
+                    data, "slurry_policy_recommended_valve_deltas", default={}
+                )
+            ),
+            "projected_valve_openings": self._as_mapping(
+                self._pick(
+                    data, "slurry_policy_projected_valve_openings", default={}
+                )
+            ),
+            "decision_state": self._pick(
+                data, "slurry_policy_decision_status", default="WAITING"
+            ),
+            "control_mode": self._pick(
+                data, "slurry_policy_control_mode", default="WAITING"
+            ),
+            "reason_codes": self._as_list(
+                self._pick(data, "slurry_policy_reason_codes", default=[])
+            ),
+            "reason": self._reason_text(
+                self._pick(data, "slurry_policy_reason_codes", default=[])
+            ),
+            "historical_reliability": self._pick(
+                data, "slurry_policy_historical_reliability"
+            ),
+            "historical_safety_score": self._pick(
+                data, "slurry_policy_historical_safety_score"
+            ),
+            "historical_direction_consistency": self._pick(
+                data, "slurry_policy_historical_direction_consistency"
+            ),
+            "integration_valid": self._pick(
+                data, "slurry_policy_integration_valid", default=None
+            ),
+            "safety_state": safety_state,
+            "safety_text": safety_text,
+            "ui_data_source": "GLOBAL_DATA",
+        }
+        return result
+
+    def poll(self) -> None:
+        try:
+            merged = self._snapshot()
+            if not merged:
+                return
+            ui_data = self._build_ui_data(merged)
+            fingerprint = (
+                str(ui_data.get("date")),
+                str(merged.get("realtime_seq", "")),
+                str(merged.get("model_seq", "")),
+                str(merged.get("slurry_policy_decision_id", "")),
+                ui_data.get("yyq_SO2"),
+                ui_data.get("jyq_SO2"),
+                ui_data.get("xstjy_PH"),
+                ui_data.get("xst_FMKD"),
+                ui_data.get("xstshsjy_LL"),
+            )
+            if fingerprint == self._last_fingerprint:
+                return
+            self._last_fingerprint = fingerprint
+            self.data_ready.emit(ui_data)
+        except Exception as exc:
+            self.adapter_error.emit(str(exc))
