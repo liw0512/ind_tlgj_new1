@@ -3,8 +3,9 @@ from __future__ import annotations
 import random
 import sys
 from datetime import datetime
+from typing import Any, Dict, Optional
 
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject
+from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtWidgets import (
     QApplication,
@@ -15,12 +16,12 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .adapters.global_data_adapter import GlobalDataAdapter
 from .theme import build_stylesheet
 from .widgets import ActionCard, CardFrame, MetricCard, StatusPill, TowerCard, TrendWidget
 
@@ -39,6 +40,7 @@ class MockDataSource(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
+        QTimer.singleShot(0, self._tick)
 
     def _tick(self):
         # 仅用于验证前端刷新，不代表真实控制算法。
@@ -55,12 +57,12 @@ class MockDataSource(QObject):
             delta = "0.0 %"
             reason = "净烟气 SO₂ 已进入目标死区，优先保持，等待过程自然响应。"
         elif error > 0:
-            action = "一级塔增加供浆"
+            action = "增加供浆"
             magnitude = "SMALL" if error <= 3.0 else "MEDIUM"
             delta = "+1.2 %" if magnitude == "SMALL" else "+2.5 %"
             reason = "净烟气 SO₂ 高于目标，示例 LOCAL 经验建议增加供浆，当前 pH 仍在安全区间。"
         else:
-            action = "一级塔减少供浆"
+            action = "减少供浆"
             magnitude = "MICRO"
             delta = "-0.6 %"
             reason = "净烟气 SO₂ 低于目标且具备余量，示例策略进行保守减浆。"
@@ -86,16 +88,18 @@ class MockDataSource(QObject):
                 "xstjy_PH": self._ph,
                 "xst_FMKD": self._valve,
                 "xstshsjy_LL": self._flow,
-                "pump": "2A 运行",
+                "pump": "2A 45.0 Hz / 2B 0.0 Hz",
+                "tower_running": True,
                 "experience_source": "LOCAL_CONDITION",
                 "action": action,
                 "magnitude": magnitude,
                 "delta": delta,
-                "decision_state": "READY",
+                "decision_state": "RECOMMENDED" if magnitude != "HOLD" else "HOLD",
                 "control_mode": "NORMAL",
                 "reason": reason,
                 "safety_state": safety,
                 "safety_text": safety_text,
+                "ui_data_source": "MOCK",
             }
         )
 
@@ -128,8 +132,8 @@ class OverviewPage(QWidget):
         metric_grid.setVerticalSpacing(14)
         self.yyq = MetricCard("原烟气 SO₂", "--", "mg/Nm³")
         self.jyq = MetricCard("净烟气 SO₂", "--", "mg/Nm³")
-        self.target = MetricCard("目标 SO₂", "20.0", "mg/Nm³")
-        self.condition = MetricCard("当前工况", "--", "稳定工况")
+        self.target = MetricCard("目标 SO₂", "--", "mg/Nm³")
+        self.condition = MetricCard("当前工况", "--", "等待模型")
         for index, card in enumerate((self.yyq, self.jyq, self.target, self.condition)):
             metric_grid.addWidget(card, 0, index)
             metric_grid.setColumnStretch(index, 1)
@@ -143,45 +147,64 @@ class OverviewPage(QWidget):
         middle.addWidget(self.action, 1)
         root.addLayout(middle)
 
-        self.trend = TrendWidget("SO₂ 实时趋势（原型）")
+        self.trend = TrendWidget("SO₂ 实时趋势")
         root.addWidget(self.trend, 1)
 
     @staticmethod
-    def _fmt(value, digits=1):
+    def _to_float(value) -> Optional[float]:
         try:
-            return f"{float(value):.{digits}f}"
+            return float(value)
         except (TypeError, ValueError):
-            return "--"
+            return None
+
+    @classmethod
+    def _fmt(cls, value, digits=1):
+        number = cls._to_float(value)
+        return "--" if number is None else f"{number:.{digits}f}"
 
     def update_data(self, data: dict):
         self.yyq.set_value(self._fmt(data.get("yyq_SO2"), 0))
         self.jyq.set_value(self._fmt(data.get("jyq_SO2"), 1))
         self.target.set_value(self._fmt(data.get("target"), 1))
-        condition = str(data.get("condition_label", "--"))
-        condition_suffix = "稳定" if data.get("condition_stable") else "切换中"
+
+        condition_value = data.get("condition_label")
+        condition = "--" if condition_value in (None, "") else str(condition_value)
+        if condition == "--":
+            condition_suffix = "等待模型"
+        else:
+            condition_suffix = "稳定" if data.get("condition_stable") else "切换中"
         self.condition.set_value(condition, condition_suffix)
 
         self.tower.update_values(
             ph=self._fmt(data.get("xstjy_PH"), 2),
-            valve=f"{self._fmt(data.get('xst_FMKD'), 1)} %",
-            flow=f"{self._fmt(data.get('xstshsjy_LL'), 1)} m³/h",
+            valve=(
+                "--"
+                if self._to_float(data.get("xst_FMKD")) is None
+                else f"{self._fmt(data.get('xst_FMKD'), 1)} %"
+            ),
+            flow=(
+                "--"
+                if self._to_float(data.get("xstshsjy_LL")) is None
+                else f"{self._fmt(data.get('xstshsjy_LL'), 1)} m³/h"
+            ),
             pump=str(data.get("pump", "--")),
-            running=True,
+            running=bool(data.get("tower_running", False)),
         )
         self.action.update_values(
             source=str(data.get("experience_source", "NONE")),
             action=str(data.get("action", "HOLD")),
             magnitude=str(data.get("magnitude", "HOLD")),
             delta=str(data.get("delta", "0.0 %")),
-            state=str(data.get("decision_state", "HOLD")),
-            mode=str(data.get("control_mode", "NORMAL")),
+            state=str(data.get("decision_state", "WAITING")),
+            mode=str(data.get("control_mode", "WAITING")),
             reason=str(data.get("reason", "")),
         )
-        self.trend.append(
-            float(data.get("yyq_SO2", 0.0)),
-            float(data.get("jyq_SO2", 0.0)),
-            float(data.get("target", 20.0)),
-        )
+
+        yyq = self._to_float(data.get("yyq_SO2"))
+        jyq = self._to_float(data.get("jyq_SO2"))
+        target = self._to_float(data.get("target"))
+        if yyq is not None and jyq is not None:
+            self.trend.append(yyq, jyq, jyq if target is None else target)
 
 
 class DashboardWindow(QMainWindow):
@@ -194,9 +217,22 @@ class DashboardWindow(QMainWindow):
         ("系统配置", "settings"),
     ]
 
-    def __init__(self):
+    def __init__(
+        self,
+        global_data: Optional[Dict[str, Any]] = None,
+        *,
+        data_mode: str = "mock",
+    ):
         super().__init__()
-        self.setWindowTitle("湿法脱硫智能控制系统 - UI V2 Demo")
+        self.data_mode = str(data_mode).strip().lower()
+        if self.data_mode not in {"mock", "live"}:
+            raise ValueError("data_mode 只能是 mock 或 live")
+        if self.data_mode == "live" and global_data is None:
+            raise ValueError("live 模式必须传入现有后端 GLOBAL_DATA")
+        self.global_data = global_data
+
+        mode_title = "LIVE" if self.data_mode == "live" else "Demo"
+        self.setWindowTitle(f"湿法脱硫智能控制系统 - UI V2 {mode_title}")
         self.resize(1540, 920)
         self.setMinimumSize(1180, 720)
 
@@ -218,19 +254,59 @@ class DashboardWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.overview = OverviewPage()
         self.stack.addWidget(self._scroll_wrap(self.overview))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("实时监控", "下一步接入 GLOBAL_DATA 后展示现场实时测点、泵阀状态和刷新质量。")))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("供浆控制", "用于展示 slurry_policy_model 的候选来源、动作、强度、阀位投影和 reason_codes。")))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("历史趋势", "后续可接历史数据库或运行缓存，展示 SO₂、pH、阀位、供浆流量和动作事件。")))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("报警信息", "集中显示数据异常、模型 BLOCKED、pH 安全边界、SO₂ 预警以及设备不可用原因。")))
-        self.stack.addWidget(self._scroll_wrap(PlaceholderPage("系统配置", "最终只放允许操作员/工程师调整的配置，不直接暴露算法内部所有参数。")))
+        self.stack.addWidget(
+            self._scroll_wrap(
+                PlaceholderPage(
+                    "实时监控",
+                    "下一步展示现场实时测点、泵阀状态、烟气侧数据和刷新质量。",
+                )
+            )
+        )
+        self.stack.addWidget(
+            self._scroll_wrap(
+                PlaceholderPage(
+                    "供浆控制",
+                    "用于展示 slurry_policy_model 的候选来源、动作、强度、阀位投影、可靠性和 reason_codes。",
+                )
+            )
+        )
+        self.stack.addWidget(
+            self._scroll_wrap(
+                PlaceholderPage(
+                    "历史趋势",
+                    "后续接历史数据库，展示 SO₂、pH、阀位、供浆流量并标记动作事件。",
+                )
+            )
+        )
+        self.stack.addWidget(
+            self._scroll_wrap(
+                PlaceholderPage(
+                    "报警信息",
+                    "集中显示数据异常、模型 BLOCKED、pH 安全边界、SO₂ 预警以及设备不可用原因。",
+                )
+            )
+        )
+        self.stack.addWidget(
+            self._scroll_wrap(
+                PlaceholderPage(
+                    "系统配置",
+                    "最终只放允许操作员/工程师调整的配置，不直接暴露算法内部所有参数。",
+                )
+            )
+        )
         content_layout.addWidget(self.stack, 1)
         root.addWidget(content, 1)
 
         self._buttons[0].setChecked(True)
         self._switch_page(0)
 
-        self.source = MockDataSource(self)
+        if self.data_mode == "live":
+            self.source = GlobalDataAdapter(self.global_data, self, interval_ms=500)
+            self.source.adapter_error.connect(self._on_adapter_error)
+        else:
+            self.source = MockDataSource(self)
         self.source.data_ready.connect(self._on_data)
+
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._update_clock)
         self._clock_timer.start(1000)
@@ -258,12 +334,15 @@ class DashboardWindow(QMainWindow):
             button.setProperty("role", "nav")
             button.setCheckable(True)
             button.setAutoExclusive(True)
-            button.clicked.connect(lambda _checked=False, i=index: self._switch_page(i))
+            button.clicked.connect(
+                lambda _checked=False, i=index: self._switch_page(i)
+            )
             layout.addWidget(button)
             self._buttons.append(button)
 
         layout.addStretch(1)
-        version = QLabel("UI V2 Demo\n独立测试分支")
+        source_name = "GLOBAL_DATA / LIVE" if self.data_mode == "live" else "MOCK"
+        version = QLabel(f"UI V2\n数据源：{source_name}")
         version.setProperty("role", "muted")
         layout.addWidget(version)
         return sidebar
@@ -285,8 +364,8 @@ class DashboardWindow(QMainWindow):
         layout.addLayout(left)
         layout.addStretch(1)
 
-        self.safety = StatusPill("正常", "normal")
-        self.version = QLabel("模型 v006")
+        self.safety = StatusPill("等待数据", "warning")
+        self.version = QLabel("模型 --")
         self.version.setProperty("role", "muted")
         self.clock = QLabel("--")
         self.clock.setMinimumWidth(145)
@@ -325,28 +404,43 @@ class DashboardWindow(QMainWindow):
 
     def _on_data(self, data: dict):
         self.overview.update_data(data)
-        self.safety.set_state(str(data.get("safety_state", "normal")), str(data.get("safety_text", "正常")))
+        self.safety.set_state(
+            str(data.get("safety_state", "warning")),
+            str(data.get("safety_text", "等待数据")),
+        )
         self.version.setText("模型 %s" % data.get("integrated_version", "--"))
+
+    def _on_adapter_error(self, message: str):
+        self.safety.set_state("danger", "前端数据异常")
+        self.statusBar().showMessage(f"GlobalDataAdapter: {message}", 5000)
 
 
 def _apply_application_font(app: QApplication) -> None:
     available = set(QFontDatabase().families())
     for family in (
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "WenQuanYi Micro Hei",
         "Microsoft YaHei UI",
         "Microsoft YaHei",
-        "Noto Sans CJK SC",
         "SimHei",
+        "Sans Serif",
     ):
         if family in available:
             app.setFont(QFont(family, 10))
             return
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
+def build_application() -> QApplication:
+    app = QApplication.instance() or QApplication(sys.argv)
     _apply_application_font(app)
     app.setStyleSheet(build_stylesheet())
-    window = DashboardWindow()
+    return app
+
+
+def main() -> int:
+    app = build_application()
+    window = DashboardWindow(data_mode="mock")
     window.show()
     return app.exec_()
 
