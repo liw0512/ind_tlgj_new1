@@ -32,6 +32,8 @@ system/model/map_control/condition_model/condition_merge_statistics.json
 system/model/map_control/condition_model/snapshots/
 system/model/map_control/q_learning/results/
 system/model/map_control/slurry_policy_model/slurry_policy_model_output/
+system/model/map_control/fast_change_mode/fast_change_output/
+system/model/map_control/fast_change_mode/fast_change_runtime/
 system/model/map_control/PH_predict/models/
 system/model/map_control/PH_predict/tmp/
 system/model/map_control/model_csv/*.csv
