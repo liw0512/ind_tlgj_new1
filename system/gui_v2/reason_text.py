@@ -240,8 +240,32 @@ def translate_reason_code(value: Any) -> str:
 
 
 def translate_reason_codes(values: Iterable[Any]) -> List[str]:
+    raw_values = list(values or [])
+    codes = {_upper(value) for value in raw_values if _upper(value)}
     translated: List[str] = []
-    for value in values or []:
+
+    for value in raw_values:
+        code = _upper(value)
+
+        # FAST 效果层和第二模块需求层会同时描述“高/低于目标”。详情页只保留
+        # 更具体的一条，避免把同一个事实翻译成两行近义中文。
+        if code == "SO2_BELOW_TARGET" and (
+            "OUTLET_SO2_BELOW_TARGET" in codes
+            or "OUTLET_SO2_FAR_BELOW_TARGET" in codes
+        ):
+            continue
+        if code == "OUTLET_SO2_BELOW_TARGET" and "OUTLET_SO2_FAR_BELOW_TARGET" in codes:
+            continue
+        if code == "SO2_ABOVE_TARGET" and (
+            "OUTLET_SO2_ABOVE_TARGET" in codes
+            or "OUTLET_SO2_FAR_ABOVE_TARGET" in codes
+        ):
+            continue
+        if code == "OUTLET_SO2_ABOVE_TARGET" and "OUTLET_SO2_FAR_ABOVE_TARGET" in codes:
+            continue
+        if code == "SO2_INSIDE_TARGET_DEADBAND" and "OUTLET_SO2_INSIDE_TARGET_BAND" in codes:
+            continue
+
         text = translate_reason_code(value)
         if text and text not in translated:
             translated.append(text)
