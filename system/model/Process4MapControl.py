@@ -12,6 +12,14 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue, Full, Empty
 import subprocess
+
+# 新版 Windows 可能不再提供 loky/joblib 用来探测物理核心数的 wmic。
+# 在导入 pandas/scikit-learn 前给出明确上限，避免探测告警并控制并行规模。
+os.environ.setdefault(
+    'LOKY_MAX_CPU_COUNT',
+    str(min(16, os.cpu_count() or 1)),
+)
+
 import pandas as pd
 import psycopg2.extras
 from sqlalchemy import create_engine
