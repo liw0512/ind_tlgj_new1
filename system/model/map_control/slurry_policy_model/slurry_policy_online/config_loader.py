@@ -7,6 +7,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple
 
+from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
+
 
 class OnlineConfigurationError(ValueError):
     pass
@@ -47,6 +49,32 @@ def _load_module(spec: Optional[str]) -> ModuleType:
     return importlib.import_module(spec)
 
 
+def _apply_project_wiring_paths(plant: dict) -> dict:
+    """把第二模块运行路径统一到 P4PC bridge 的唯一项目接线路径。
+
+    厂级塔/阀/泵等仍来自 slurry_policy_config/plant_config；模型输出目录、
+    condition snapshot 根目录和 active_version.json 属于项目固定接线，不能再由
+    第二模块局部配置保留一套旧 files 路径，否则会出现“训练写新目录、激活读旧目录”。
+    """
+
+    result = copy.deepcopy(plant)
+    paths = dict(result.get("paths") or {})
+    output_root = Path(str(SLURRY_CORE_BRIDGE_CONFIG["slurry_policy_output_root"]))
+
+    paths["output_root"] = str(output_root)
+    paths["condition_snapshots_dir"] = str(
+        SLURRY_CORE_BRIDGE_CONFIG["condition_snapshots_dir"]
+    )
+    paths["active_policy_version_file"] = str(
+        SLURRY_CORE_BRIDGE_CONFIG["active_version_file"]
+    )
+    # 在线日志/WAITING_EFFECT 等运行状态也跟随第二模块输出根目录，
+    # 不再写入 PROJECT_ROOT/files。
+    paths["online_runtime_dir"] = str(output_root / "online_runtime")
+    result["paths"] = paths
+    return result
+
+
 def load_online_config(config_spec: Optional[str] = None) -> Tuple[dict, dict, dict]:
     default = _default_config_module()
     override = _load_module(config_spec)
@@ -57,6 +85,8 @@ def load_online_config(config_spec: Optional[str] = None) -> Tuple[dict, dict, d
             raise OnlineConfigurationError("在线配置缺少 %s" % name)
 
     plant = _deep_merge(default.PLANT_CONFIG, override.PLANT_CONFIG)
+    # 项目固定路径以 slurry_core_bridge_config.py 为唯一事实源。
+    plant = _apply_project_wiring_paths(plant)
     training = _deep_merge(default.TRAINING_CONFIG, override.TRAINING_CONFIG)
     online = _deep_merge(default.ONLINE_POLICY_CONFIG, override.ONLINE_POLICY_CONFIG)
     validate_online_config(plant, training, online)
