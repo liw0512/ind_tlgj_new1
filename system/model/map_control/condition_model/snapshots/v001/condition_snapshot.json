@@ -1,0 +1,4750 @@
+{
+  "snapshot_version": "v001",
+  "build_time": "2026-08-18T03:51:50.912625+00:00",
+  "previous_snapshot_version": null,
+  "grid_config": {
+    "condition_axes": [
+      {
+        "column": "yyq_SO2",
+        "min": 500.0,
+        "max": 5000.0,
+        "step": 100.0
+      }
+    ],
+    "tower_ph_columns": [
+      "xstjy_PH"
+    ],
+    "emission_limit": 35.0,
+    "out_of_range_policy": "clip",
+    "merge": {
+      "enabled": true,
+      "mode": "evidence_only",
+      "min_observed_samples": 10,
+      "min_mature_samples": 30,
+      "min_auto_merge_samples": 100,
+      "min_auto_confirm_samples": 300,
+      "min_common_state_samples": 10,
+      "min_risk_samples": 30,
+      "min_metric_coverage_ratio": 0.8,
+      "min_consecutive_pass_snapshots": 3,
+      "min_new_samples_per_member_for_confirmation": 10,
+      "max_auto_region_cells": 8,
+      "max_liquid_gas_relative_difference": 0.15,
+      "max_pump_distribution_distance": 0.25,
+      "max_risk_rate_difference": 0.1
+    },
+    "online": {
+      "stability_mode": "MAJORITY",
+      "stability_window_size": 6,
+      "majority_tie_policy": "KEEP_LAST_STABLE",
+      "allow_provisional_region_fallback": true
+    },
+    "artifact_dir": "artifacts/condition"
+  },
+  "grid_catalog": {
+    "P1-S1": {
+      "grid_id": "P1-S1",
+      "axis_1_level": 1,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        500.0,
+        600.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0001",
+      "sample_count": 32,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 29
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 29,
+        "XP4-AP0": 3
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 14.165051851088554,
+        "mean_jyq_SO2": 7.2296875,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.886875000000003
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 32,
+            "sum": 453.28165923483374,
+            "sum_square": 9862.133414983626,
+            "minimum": 8.432768526859617,
+            "maximum": 45.82681315373573
+          },
+          "xstjy_PH": {
+            "count": 32,
+            "sum": 220.3800000000001,
+            "sum_square": 1523.2763999999995,
+            "minimum": 6.17,
+            "maximum": 7.36
+          },
+          "jyq_SO2": {
+            "count": 32,
+            "sum": 231.35,
+            "sum_square": 2447.4559000000004,
+            "minimum": 4.11,
+            "maximum": 28.89
+          }
+        },
+        "risk": {
+          "valid_count": 32,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P2-S1": {
+      "grid_id": "P2-S1",
+      "axis_1_level": 2,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        600.0,
+        700.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0002",
+      "sample_count": 43,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 40
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 40,
+        "XP4-AP0": 3
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.178934494260352,
+        "mean_jyq_SO2": 9.059534883720932,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.656279069767442
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 43,
+            "sum": 523.6941832531951,
+            "sum_square": 6603.880461948031,
+            "minimum": 8.519529158029343,
+            "maximum": 16.92420381156084
+          },
+          "xstjy_PH": {
+            "count": 43,
+            "sum": 286.22,
+            "sum_square": 1911.7768000000003,
+            "minimum": 6.03,
+            "maximum": 7.34
+          },
+          "jyq_SO2": {
+            "count": 43,
+            "sum": 389.56000000000006,
+            "sum_square": 5500.030199999999,
+            "minimum": 4.79,
+            "maximum": 34.4
+          }
+        },
+        "risk": {
+          "valid_count": 43,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P3-S1": {
+      "grid_id": "P3-S1",
+      "axis_1_level": 3,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        700.0,
+        800.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0003",
+      "sample_count": 28,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 24
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 4
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 24,
+        "XP4-AP0": 4
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 216.20027950050195,
+        "mean_jyq_SO2": 10.995714285714284,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.532142857142858
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 28,
+            "sum": 6053.607826014055,
+            "sum_square": 33006659.892670058,
+            "minimum": 8.52444764012505,
+            "maximum": 5744.818056195301
+          },
+          "xstjy_PH": {
+            "count": 28,
+            "sum": 182.90000000000003,
+            "sum_square": 1199.9126,
+            "minimum": 6.05,
+            "maximum": 7.34
+          },
+          "jyq_SO2": {
+            "count": 28,
+            "sum": 307.87999999999994,
+            "sum_square": 4750.723,
+            "minimum": 4.67,
+            "maximum": 34.4
+          }
+        },
+        "risk": {
+          "valid_count": 28,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P4-S1": {
+      "grid_id": "P4-S1",
+      "axis_1_level": 4,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        800.0,
+        900.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0004",
+      "sample_count": 27,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 25
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 25,
+        "XP4-AP0": 2
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 10.600738887355615,
+        "mean_jyq_SO2": 10.412222222222224,
+        "risk_rate": 0.037037037037037035,
+        "mean_xstjy_PH": 6.51111111111111
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 27,
+            "sum": 286.2199499586016,
+            "sum_square": 3169.8117065328306,
+            "minimum": 8.52228273087503,
+            "maximum": 15.7543008154897
+          },
+          "xstjy_PH": {
+            "count": 27,
+            "sum": 175.79999999999998,
+            "sum_square": 1149.0880000000002,
+            "minimum": 6.01,
+            "maximum": 7.31
+          },
+          "jyq_SO2": {
+            "count": 27,
+            "sum": 281.13000000000005,
+            "sum_square": 4186.6681,
+            "minimum": 5.27,
+            "maximum": 35.77
+          }
+        },
+        "risk": {
+          "valid_count": 27,
+          "risk_count": 1
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P5-S1": {
+      "grid_id": "P5-S1",
+      "axis_1_level": 5,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        900.0,
+        1000.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0005",
+      "sample_count": 85,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 83
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 83,
+        "XP4-AP0": 2
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.226299725133206,
+        "mean_jyq_SO2": 9.532705882352948,
+        "risk_rate": 0.011764705882352941,
+        "mean_xstjy_PH": 6.334235294117649
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 85,
+            "sum": 1039.2354766363226,
+            "sum_square": 13370.985597207518,
+            "minimum": 8.412087008930033,
+            "maximum": 15.7543008154897
+          },
+          "xstjy_PH": {
+            "count": 85,
+            "sum": 538.4100000000002,
+            "sum_square": 3418.681899999999,
+            "minimum": 5.92,
+            "maximum": 7.29
+          },
+          "jyq_SO2": {
+            "count": 85,
+            "sum": 810.2800000000005,
+            "sum_square": 9345.351400000001,
+            "minimum": 5.36,
+            "maximum": 35.72
+          }
+        },
+        "risk": {
+          "valid_count": 85,
+          "risk_count": 1
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P6-S1": {
+      "grid_id": "P6-S1",
+      "axis_1_level": 6,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1000.0,
+        1100.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0006",
+      "sample_count": 132,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 116
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 16
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 116,
+        "XP4-AP0": 16
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.229424183594507,
+        "mean_jyq_SO2": 9.18113636363636,
+        "risk_rate": 0.007575757575757576,
+        "mean_xstjy_PH": 6.368939393939387
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 132,
+            "sum": 1614.283992234475,
+            "sum_square": 20672.090918150323,
+            "minimum": 8.33408879760455,
+            "maximum": 15.900655613914813
+          },
+          "xstjy_PH": {
+            "count": 132,
+            "sum": 840.6999999999991,
+            "sum_square": 5368.953799999998,
+            "minimum": 5.88,
+            "maximum": 7.28
+          },
+          "jyq_SO2": {
+            "count": 132,
+            "sum": 1211.9099999999996,
+            "sum_square": 14292.947300000003,
+            "minimum": 0.0,
+            "maximum": 35.62
+          }
+        },
+        "risk": {
+          "valid_count": 132,
+          "risk_count": 1
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P7-S1": {
+      "grid_id": "P7-S1",
+      "axis_1_level": 7,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1100.0,
+        1200.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0006",
+      "sample_count": 214,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 182
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 32
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 182,
+        "XP4-AP0": 32
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.203677590644352,
+        "mean_jyq_SO2": 9.641915887850471,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.389252336448596
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 214,
+            "sum": 2611.587004397891,
+            "sum_square": 33315.71859523381,
+            "minimum": 8.318937942163693,
+            "maximum": 15.988936353444103
+          },
+          "xstjy_PH": {
+            "count": 214,
+            "sum": 1367.2999999999995,
+            "sum_square": 8754.786999999995,
+            "minimum": 5.83,
+            "maximum": 7.24
+          },
+          "jyq_SO2": {
+            "count": 214,
+            "sum": 2063.370000000001,
+            "sum_square": 25144.269499999988,
+            "minimum": 0.0,
+            "maximum": 31.79
+          }
+        },
+        "risk": {
+          "valid_count": 214,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P8-S1": {
+      "grid_id": "P8-S1",
+      "axis_1_level": 8,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1200.0,
+        1300.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0006",
+      "sample_count": 364,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 266
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 98
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 266,
+        "XP4-AP0": 98
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.383583983997088,
+        "mean_jyq_SO2": 9.21689560439561,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.3463461538461505
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 364,
+            "sum": 4507.62457017494,
+            "sum_square": 57837.679173941935,
+            "minimum": 8.308415045923223,
+            "maximum": 17.08896762448132
+          },
+          "xstjy_PH": {
+            "count": 364,
+            "sum": 2310.069999999999,
+            "sum_square": 14681.908099999988,
+            "minimum": 5.83,
+            "maximum": 7.22
+          },
+          "jyq_SO2": {
+            "count": 364,
+            "sum": 3354.950000000002,
+            "sum_square": 37007.3329,
+            "minimum": 0.51,
+            "maximum": 32.61
+          }
+        },
+        "risk": {
+          "valid_count": 364,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P9-S1": {
+      "grid_id": "P9-S1",
+      "axis_1_level": 9,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1300.0,
+        1400.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0009",
+      "sample_count": 671,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 505
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 166
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 505,
+        "XP4-AP0": 166
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 59.35257005598967,
+        "mean_jyq_SO2": 9.400029806259324,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.3457377049180295
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 671,
+            "sum": 39825.57450756907,
+            "sum_square": 203600293.01079527,
+            "minimum": 8.31818522204588,
+            "maximum": 6391.832885754699
+          },
+          "xstjy_PH": {
+            "count": 671,
+            "sum": 4257.989999999998,
+            "sum_square": 27055.01749999988,
+            "minimum": 5.82,
+            "maximum": 7.19
+          },
+          "jyq_SO2": {
+            "count": 671,
+            "sum": 6307.420000000006,
+            "sum_square": 70311.62620000001,
+            "minimum": 0.0,
+            "maximum": 30.69
+          }
+        },
+        "risk": {
+          "valid_count": 671,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P10-S1": {
+      "grid_id": "P10-S1",
+      "axis_1_level": 10,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1400.0,
+        1500.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0009",
+      "sample_count": 908,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 682
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 226
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 682,
+        "XP4-AP0": 226
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 53.75742150124926,
+        "mean_jyq_SO2": 10.050198237885471,
+        "risk_rate": 0.0011013215859030838,
+        "mean_xstjy_PH": 6.3358370044052945
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 908,
+            "sum": 48811.73872313433,
+            "sum_square": 241075078.6619167,
+            "minimum": 8.316535114889145,
+            "maximum": 6762.090652786815
+          },
+          "xstjy_PH": {
+            "count": 908,
+            "sum": 5752.940000000008,
+            "sum_square": 36499.82739999971,
+            "minimum": 5.8,
+            "maximum": 7.17
+          },
+          "jyq_SO2": {
+            "count": 908,
+            "sum": 9125.580000000007,
+            "sum_square": 110386.30119999986,
+            "minimum": 0.0,
+            "maximum": 37.56
+          }
+        },
+        "risk": {
+          "valid_count": 908,
+          "risk_count": 1
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P11-S1": {
+      "grid_id": "P11-S1",
+      "axis_1_level": 11,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1500.0,
+        1600.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0011",
+      "sample_count": 1399,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1064
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 335
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1064,
+        "XP4-AP0": 335
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 70.42421157598119,
+        "mean_jyq_SO2": 10.403059328091507,
+        "risk_rate": 0.0007147962830593281,
+        "mean_xstjy_PH": 6.333888491779852
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 1399,
+            "sum": 98523.47199479768,
+            "sum_square": 528422616.29693174,
+            "minimum": 8.30516555726915,
+            "maximum": 7709.234763258747
+          },
+          "xstjy_PH": {
+            "count": 1399,
+            "sum": 8861.110000000013,
+            "sum_square": 56190.67689999979,
+            "minimum": 5.52,
+            "maximum": 7.15
+          },
+          "jyq_SO2": {
+            "count": 1399,
+            "sum": 14553.880000000017,
+            "sum_square": 182353.6693999999,
+            "minimum": 0.0,
+            "maximum": 45.19
+          }
+        },
+        "risk": {
+          "valid_count": 1399,
+          "risk_count": 1
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P12-S1": {
+      "grid_id": "P12-S1",
+      "axis_1_level": 12,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1600.0,
+        1700.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0012",
+      "sample_count": 2296,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1718
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 578
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1718,
+        "XP4-AP0": 578
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 83.1337061232737,
+        "mean_jyq_SO2": 10.495422473867594,
+        "risk_rate": 0.003048780487804878,
+        "mean_xstjy_PH": 6.331720383275266
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 2296,
+            "sum": 190874.9892590364,
+            "sum_square": 880270123.9411277,
+            "minimum": 8.30516555726915,
+            "maximum": 8133.347245409015
+          },
+          "xstjy_PH": {
+            "count": 2296,
+            "sum": 14537.630000000012,
+            "sum_square": 92162.03010000002,
+            "minimum": 5.52,
+            "maximum": 7.15
+          },
+          "jyq_SO2": {
+            "count": 2296,
+            "sum": 24097.489999999994,
+            "sum_square": 304756.02949999995,
+            "minimum": 0.0,
+            "maximum": 57.87
+          }
+        },
+        "risk": {
+          "valid_count": 2296,
+          "risk_count": 7
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P13-S1": {
+      "grid_id": "P13-S1",
+      "axis_1_level": 13,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1700.0,
+        1800.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0012",
+      "sample_count": 3255,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2571
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 684
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 2571,
+        "XP4-AP0": 684
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 88.31541545753488,
+        "mean_jyq_SO2": 10.993695852534561,
+        "risk_rate": 0.00706605222734255,
+        "mean_xstjy_PH": 6.3451182795699745
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 3255,
+            "sum": 287466.67731427605,
+            "sum_square": 1439369816.1905916,
+            "minimum": 8.322201921174175,
+            "maximum": 9085.677236998346
+          },
+          "xstjy_PH": {
+            "count": 3255,
+            "sum": 20653.360000000266,
+            "sum_square": 131207.37280000036,
+            "minimum": 5.54,
+            "maximum": 7.12
+          },
+          "jyq_SO2": {
+            "count": 3255,
+            "sum": 35784.479999999996,
+            "sum_square": 498942.81239999924,
+            "minimum": 0.0,
+            "maximum": 70.75
+          }
+        },
+        "risk": {
+          "valid_count": 3255,
+          "risk_count": 23
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P14-S1": {
+      "grid_id": "P14-S1",
+      "axis_1_level": 14,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1800.0,
+        1900.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0014",
+      "sample_count": 3879,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2930
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 949
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 2930,
+        "XP4-AP0": 949
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 122.24760347698535,
+        "mean_jyq_SO2": 11.719254962619273,
+        "risk_rate": 0.006702758442897654,
+        "mean_xstjy_PH": 6.328811549368485
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 3879,
+            "sum": 474198.4538872262,
+            "sum_square": 2866064566.048854,
+            "minimum": 8.183373495202806,
+            "maximum": 9085.677236998346
+          },
+          "xstjy_PH": {
+            "count": 3879,
+            "sum": 24549.460000000352,
+            "sum_square": 155548.05680000084,
+            "minimum": 5.54,
+            "maximum": 7.03
+          },
+          "jyq_SO2": {
+            "count": 3879,
+            "sum": 45458.99000000016,
+            "sum_square": 661801.9286999998,
+            "minimum": 0.0,
+            "maximum": 47.93
+          }
+        },
+        "risk": {
+          "valid_count": 3879,
+          "risk_count": 26
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P15-S1": {
+      "grid_id": "P15-S1",
+      "axis_1_level": 15,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        1900.0,
+        2000.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0015",
+      "sample_count": 4924,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3483
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1441
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 3483,
+        "XP4-AP0": 1441
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 55.06855278951561,
+        "mean_jyq_SO2": 12.21918562144599,
+        "risk_rate": 0.014825345247766044,
+        "mean_xstjy_PH": 6.305725020308782
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 4924,
+            "sum": 271157.55393557483,
+            "sum_square": 1376658569.1872478,
+            "minimum": 8.103427385935683,
+            "maximum": 8671.770161935156
+          },
+          "xstjy_PH": {
+            "count": 4924,
+            "sum": 31049.390000000443,
+            "sum_square": 196006.90069999974,
+            "minimum": 5.54,
+            "maximum": 7.05
+          },
+          "jyq_SO2": {
+            "count": 4924,
+            "sum": 60167.270000000055,
+            "sum_square": 924501.2089000012,
+            "minimum": 0.0,
+            "maximum": 51.26
+          }
+        },
+        "risk": {
+          "valid_count": 4924,
+          "risk_count": 73
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P16-S1": {
+      "grid_id": "P16-S1",
+      "axis_1_level": 16,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2000.0,
+        2100.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0016",
+      "sample_count": 5161,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3477
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1684
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 3477,
+        "XP4-AP0": 1684
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 69.57331272697299,
+        "mean_jyq_SO2": 12.962815345863207,
+        "risk_rate": 0.01220693664018601,
+        "mean_xstjy_PH": 6.276353419879946
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 5161,
+            "sum": 359067.8669839076,
+            "sum_square": 1950784661.5924435,
+            "minimum": 8.010414189281516,
+            "maximum": 8997.193787377093
+          },
+          "xstjy_PH": {
+            "count": 5161,
+            "sum": 32392.260000000402,
+            "sum_square": 203514.49920000162,
+            "minimum": 5.54,
+            "maximum": 7.07
+          },
+          "jyq_SO2": {
+            "count": 5161,
+            "sum": 66901.09000000001,
+            "sum_square": 1067895.713900003,
+            "minimum": 0.0,
+            "maximum": 56.32
+          }
+        },
+        "risk": {
+          "valid_count": 5161,
+          "risk_count": 63
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P17-S1": {
+      "grid_id": "P17-S1",
+      "axis_1_level": 17,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2100.0,
+        2200.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0016",
+      "sample_count": 5598,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3568
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2030
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 3568,
+        "XP4-AP0": 2030
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 59.274723645633465,
+        "mean_jyq_SO2": 13.281897106109307,
+        "risk_rate": 0.006788138620936048,
+        "mean_xstjy_PH": 6.249514112183019
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 5598,
+            "sum": 331819.90296825615,
+            "sum_square": 1516370968.794509,
+            "minimum": 8.230853676179159,
+            "maximum": 8669.057747379542
+          },
+          "xstjy_PH": {
+            "count": 5598,
+            "sum": 34984.78000000054,
+            "sum_square": 218843.0064000008,
+            "minimum": 5.59,
+            "maximum": 7.09
+          },
+          "jyq_SO2": {
+            "count": 5598,
+            "sum": 74352.0599999999,
+            "sum_square": 1185695.0920000004,
+            "minimum": 0.0,
+            "maximum": 99.44
+          }
+        },
+        "risk": {
+          "valid_count": 5598,
+          "risk_count": 38
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P18-S1": {
+      "grid_id": "P18-S1",
+      "axis_1_level": 18,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2200.0,
+        2300.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0018",
+      "sample_count": 5318,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 3069
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2245
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 4
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 3069,
+        "XP4-AP0": 2245,
+        "XP5-AP0": 4
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 92.24476500452978,
+        "mean_jyq_SO2": 13.678102670176768,
+        "risk_rate": 0.0077096652877021435,
+        "mean_xstjy_PH": 6.231763820985479
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 5318,
+            "sum": 490557.6602940894,
+            "sum_square": 2711014574.534908,
+            "minimum": 7.316566657684565,
+            "maximum": 8663.999110814717
+          },
+          "xstjy_PH": {
+            "count": 5318,
+            "sum": 33140.520000000775,
+            "sum_square": 206700.5946000025,
+            "minimum": 5.59,
+            "maximum": 7.09
+          },
+          "jyq_SO2": {
+            "count": 5318,
+            "sum": 72740.15000000005,
+            "sum_square": 1159908.0771000031,
+            "minimum": 0.0,
+            "maximum": 98.22
+          }
+        },
+        "risk": {
+          "valid_count": 5318,
+          "risk_count": 41
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P19-S1": {
+      "grid_id": "P19-S1",
+      "axis_1_level": 19,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2300.0,
+        2400.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0019",
+      "sample_count": 5117,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2824
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2272
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 21
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 2824,
+        "XP4-AP0": 2272,
+        "XP5-AP0": 21
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 59.9827146047051,
+        "mean_jyq_SO2": 14.18471760797339,
+        "risk_rate": 0.0070353722884502635,
+        "mean_xstjy_PH": 6.214260308774812
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 5117,
+            "sum": 306931.550632276,
+            "sum_square": 1379079951.6110203,
+            "minimum": 6.124278221992005,
+            "maximum": 7378.353595409235
+          },
+          "xstjy_PH": {
+            "count": 5117,
+            "sum": 31798.370000000716,
+            "sum_square": 197744.54870000214,
+            "minimum": 5.6,
+            "maximum": 7.09
+          },
+          "jyq_SO2": {
+            "count": 5117,
+            "sum": 72583.19999999984,
+            "sum_square": 1184849.7107999988,
+            "minimum": 0.0,
+            "maximum": 61.31
+          }
+        },
+        "risk": {
+          "valid_count": 5117,
+          "risk_count": 36
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P20-S1": {
+      "grid_id": "P20-S1",
+      "axis_1_level": 20,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2400.0,
+        2500.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0020",
+      "sample_count": 4276,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2247
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2024
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 5
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 2247,
+        "XP4-AP0": 2024,
+        "XP5-AP0": 5
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 33.52161675577554,
+        "mean_jyq_SO2": 14.540081852198336,
+        "risk_rate": 0.009354536950420954,
+        "mean_xstjy_PH": 6.205792797006656
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 4276,
+            "sum": 143338.4332476962,
+            "sum_square": 546579772.4149377,
+            "minimum": 8.404160668684403,
+            "maximum": 7322.973343249697
+          },
+          "xstjy_PH": {
+            "count": 4276,
+            "sum": 26535.97000000046,
+            "sum_square": 164788.97410000017,
+            "minimum": 5.84,
+            "maximum": 7.15
+          },
+          "jyq_SO2": {
+            "count": 4276,
+            "sum": 62173.39000000009,
+            "sum_square": 1055439.9664999982,
+            "minimum": 0.0,
+            "maximum": 69.37
+          }
+        },
+        "risk": {
+          "valid_count": 4276,
+          "risk_count": 40
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P21-S1": {
+      "grid_id": "P21-S1",
+      "axis_1_level": 21,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2500.0,
+        2600.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0021",
+      "sample_count": 3417,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1605
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1811
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1605,
+        "XP4-AP0": 1811,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 24.031783586089272,
+        "mean_jyq_SO2": 15.112598770851612,
+        "risk_rate": 0.012291483757682178,
+        "mean_xstjy_PH": 6.199941469125009
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 3417,
+            "sum": 82116.60451366704,
+            "sum_square": 228300448.01732415,
+            "minimum": 8.4664666508422,
+            "maximum": 7298.916944973314
+          },
+          "xstjy_PH": {
+            "count": 3417,
+            "sum": 21185.200000000157,
+            "sum_square": 131426.6586000004,
+            "minimum": 5.84,
+            "maximum": 6.98
+          },
+          "jyq_SO2": {
+            "count": 3417,
+            "sum": 51639.749999999956,
+            "sum_square": 908368.0292999999,
+            "minimum": 0.0,
+            "maximum": 88.67
+          }
+        },
+        "risk": {
+          "valid_count": 3417,
+          "risk_count": 42
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P22-S1": {
+      "grid_id": "P22-S1",
+      "axis_1_level": 22,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2600.0,
+        2700.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0022",
+      "sample_count": 2622,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1049
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1572
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1049,
+        "XP4-AP0": 1572,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.301418027295266,
+        "mean_jyq_SO2": 15.645964912280732,
+        "risk_rate": 0.012585812356979404,
+        "mean_xstjy_PH": 6.187154843630804
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 2622,
+            "sum": 32254.31806756819,
+            "sum_square": 944756.8420833739,
+            "minimum": 8.408388432667946,
+            "maximum": 232.0861740877052
+          },
+          "xstjy_PH": {
+            "count": 2622,
+            "sum": 16222.719999999968,
+            "sum_square": 100431.93700000028,
+            "minimum": 5.84,
+            "maximum": 7.0
+          },
+          "jyq_SO2": {
+            "count": 2622,
+            "sum": 41023.72000000008,
+            "sum_square": 729115.8921999997,
+            "minimum": 0.0,
+            "maximum": 55.6
+          }
+        },
+        "risk": {
+          "valid_count": 2622,
+          "risk_count": 33
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P23-S1": {
+      "grid_id": "P23-S1",
+      "axis_1_level": 23,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2700.0,
+        2800.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0022",
+      "sample_count": 1860,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 589
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1270
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 589,
+        "XP4-AP0": 1270,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 12.034250448729372,
+        "mean_jyq_SO2": 15.66303763440861,
+        "risk_rate": 0.013978494623655914,
+        "mean_xstjy_PH": 6.1801344086021315
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 1860,
+            "sum": 22383.705834636632,
+            "sum_square": 559681.6035322539,
+            "minimum": 8.419322588361146,
+            "maximum": 207.7050029393789
+          },
+          "xstjy_PH": {
+            "count": 1860,
+            "sum": 11495.049999999965,
+            "sum_square": 71075.60689999956,
+            "minimum": 5.89,
+            "maximum": 6.98
+          },
+          "jyq_SO2": {
+            "count": 1860,
+            "sum": 29133.250000000015,
+            "sum_square": 518601.12430000043,
+            "minimum": 0.0,
+            "maximum": 92.34
+          }
+        },
+        "risk": {
+          "valid_count": 1860,
+          "risk_count": 26
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P24-S1": {
+      "grid_id": "P24-S1",
+      "axis_1_level": 24,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2800.0,
+        2900.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 1513,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 368
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1144
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 368,
+        "XP4-AP0": 1144,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.2980838301129,
+        "mean_jyq_SO2": 16.181143423661585,
+        "risk_rate": 0.018506278916060808,
+        "mean_xstjy_PH": 6.17397884996696
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 1513,
+            "sum": 17094.000834960818,
+            "sum_square": 195437.91997887596,
+            "minimum": 8.424902737136875,
+            "maximum": 17.463632042281034
+          },
+          "xstjy_PH": {
+            "count": 1513,
+            "sum": 9341.23000000001,
+            "sum_square": 57694.76669999961,
+            "minimum": 5.89,
+            "maximum": 6.79
+          },
+          "jyq_SO2": {
+            "count": 1513,
+            "sum": 24482.069999999978,
+            "sum_square": 460231.2493000006,
+            "minimum": 0.0,
+            "maximum": 85.19
+          }
+        },
+        "risk": {
+          "valid_count": 1513,
+          "risk_count": 28
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P25-S1": {
+      "grid_id": "P25-S1",
+      "axis_1_level": 25,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        2900.0,
+        3000.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 1179,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 274
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 904
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 274,
+        "XP4-AP0": 904,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.314346382033007,
+        "mean_jyq_SO2": 16.944054283290924,
+        "risk_rate": 0.02714164546225615,
+        "mean_xstjy_PH": 6.173316369804926
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 1179,
+            "sum": 13339.614384416915,
+            "sum_square": 152680.39917455998,
+            "minimum": 8.437768077742207,
+            "maximum": 17.583347137877436
+          },
+          "xstjy_PH": {
+            "count": 1179,
+            "sum": 7278.340000000007,
+            "sum_square": 44953.84719999982,
+            "minimum": 5.89,
+            "maximum": 6.79
+          },
+          "jyq_SO2": {
+            "count": 1179,
+            "sum": 19977.04,
+            "sum_square": 397515.6710000003,
+            "minimum": 0.0,
+            "maximum": 53.54
+          }
+        },
+        "risk": {
+          "valid_count": 1179,
+          "risk_count": 32
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P26-S1": {
+      "grid_id": "P26-S1",
+      "axis_1_level": 26,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3000.0,
+        3100.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 1067,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 148
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 918
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 148,
+        "XP4-AP0": 918,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.327353094548895,
+        "mean_jyq_SO2": 16.691874414245518,
+        "risk_rate": 0.019681349578256794,
+        "mean_xstjy_PH": 6.176579194001879
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 1067,
+            "sum": 12086.285751883672,
+            "sum_square": 137933.25002891425,
+            "minimum": 8.445931456489774,
+            "maximum": 17.583347137877436
+          },
+          "xstjy_PH": {
+            "count": 1067,
+            "sum": 6590.410000000004,
+            "sum_square": 40725.40169999984,
+            "minimum": 5.94,
+            "maximum": 6.77
+          },
+          "jyq_SO2": {
+            "count": 1067,
+            "sum": 17810.229999999967,
+            "sum_square": 343067.29409999977,
+            "minimum": 0.0,
+            "maximum": 52.27
+          }
+        },
+        "risk": {
+          "valid_count": 1067,
+          "risk_count": 21
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P27-S1": {
+      "grid_id": "P27-S1",
+      "axis_1_level": 27,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3100.0,
+        3200.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 715,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 66
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 648
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 66,
+        "XP4-AP0": 648,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.375953942853402,
+        "mean_jyq_SO2": 16.20816783216783,
+        "risk_rate": 0.008391608391608392,
+        "mean_xstjy_PH": 6.181440559440554
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 715,
+            "sum": 8133.807069140182,
+            "sum_square": 93134.53482133216,
+            "minimum": 8.479971461460167,
+            "maximum": 16.76858660753813
+          },
+          "xstjy_PH": {
+            "count": 715,
+            "sum": 4419.729999999996,
+            "sum_square": 27330.923899999885,
+            "minimum": 5.93,
+            "maximum": 6.76
+          },
+          "jyq_SO2": {
+            "count": 715,
+            "sum": 11588.84,
+            "sum_square": 213692.96940000032,
+            "minimum": 0.0,
+            "maximum": 51.5
+          }
+        },
+        "risk": {
+          "valid_count": 715,
+          "risk_count": 6
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P28-S1": {
+      "grid_id": "P28-S1",
+      "axis_1_level": 28,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3200.0,
+        3300.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 474,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 29
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 444
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 29,
+        "XP4-AP0": 444,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.348830514753365,
+        "mean_jyq_SO2": 17.056244725738388,
+        "risk_rate": 0.014767932489451477,
+        "mean_xstjy_PH": 6.176983122362867
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 474,
+            "sum": 5379.345663993095,
+            "sum_square": 61355.419345168564,
+            "minimum": 8.629438833330868,
+            "maximum": 16.653172238371415
+          },
+          "xstjy_PH": {
+            "count": 474,
+            "sum": 2927.889999999999,
+            "sum_square": 18092.322499999966,
+            "minimum": 5.94,
+            "maximum": 6.76
+          },
+          "jyq_SO2": {
+            "count": 474,
+            "sum": 8084.659999999996,
+            "sum_square": 155423.0183999999,
+            "minimum": 0.0,
+            "maximum": 47.42
+          }
+        },
+        "risk": {
+          "valid_count": 474,
+          "risk_count": 7
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P29-S1": {
+      "grid_id": "P29-S1",
+      "axis_1_level": 29,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3300.0,
+        3400.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 359,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 341
+        },
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 16
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 2
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 341,
+        "XP3-AP0": 16,
+        "XP5-AP0": 2
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.311768626958408,
+        "mean_jyq_SO2": 16.88431754874652,
+        "risk_rate": 0.013927576601671309,
+        "mean_xstjy_PH": 6.17183844011142
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 359,
+            "sum": 4060.9249370780685,
+            "sum_square": 46103.19622187372,
+            "minimum": 8.629438833330868,
+            "maximum": 15.086645756485328
+          },
+          "xstjy_PH": {
+            "count": 359,
+            "sum": 2215.69,
+            "sum_square": 13679.8341,
+            "minimum": 5.97,
+            "maximum": 6.58
+          },
+          "jyq_SO2": {
+            "count": 359,
+            "sum": 6061.47,
+            "sum_square": 116804.58490000006,
+            "minimum": 0.0,
+            "maximum": 40.64
+          }
+        },
+        "risk": {
+          "valid_count": 359,
+          "risk_count": 5
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P30-S1": {
+      "grid_id": "P30-S1",
+      "axis_1_level": 30,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3400.0,
+        3500.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0024",
+      "sample_count": 282,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 262
+        },
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 14
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 6
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 262,
+        "XP3-AP0": 14,
+        "XP5-AP0": 6
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.359943680288486,
+        "mean_jyq_SO2": 16.703049645390077,
+        "risk_rate": 0.010638297872340425,
+        "mean_xstjy_PH": 6.185425531914901
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 282,
+            "sum": 3203.504117841353,
+            "sum_square": 36583.19905064246,
+            "minimum": 8.953483294574788,
+            "maximum": 16.578593112301732
+          },
+          "xstjy_PH": {
+            "count": 282,
+            "sum": 1744.290000000002,
+            "sum_square": 10793.007499999994,
+            "minimum": 5.97,
+            "maximum": 6.56
+          },
+          "jyq_SO2": {
+            "count": 282,
+            "sum": 4710.260000000002,
+            "sum_square": 90252.32859999995,
+            "minimum": 0.0,
+            "maximum": 40.3
+          }
+        },
+        "risk": {
+          "valid_count": 282,
+          "risk_count": 3
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P31-S1": {
+      "grid_id": "P31-S1",
+      "axis_1_level": 31,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3500.0,
+        3600.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0031",
+      "sample_count": 263,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 253
+        },
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 9
+        },
+        "XP5-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 253,
+        "XP3-AP0": 9,
+        "XP5-AP0": 1
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.462901584208598,
+        "mean_jyq_SO2": 17.35384030418251,
+        "risk_rate": 0.022813688212927757,
+        "mean_xstjy_PH": 6.161368821292782
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 263,
+            "sum": 3014.7431166468614,
+            "sum_square": 34775.99135406133,
+            "minimum": 8.964643136954235,
+            "maximum": 16.34185418907224
+          },
+          "xstjy_PH": {
+            "count": 263,
+            "sum": 1620.4400000000016,
+            "sum_square": 9987.05399999999,
+            "minimum": 5.96,
+            "maximum": 6.55
+          },
+          "jyq_SO2": {
+            "count": 263,
+            "sum": 4564.0599999999995,
+            "sum_square": 88553.97939999995,
+            "minimum": 8.01,
+            "maximum": 41.34
+          }
+        },
+        "risk": {
+          "valid_count": 263,
+          "risk_count": 6
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P32-S1": {
+      "grid_id": "P32-S1",
+      "axis_1_level": 32,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3600.0,
+        3700.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0031",
+      "sample_count": 177,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 170
+        },
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 7
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 170,
+        "XP3-AP0": 7
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.388828402055424,
+        "mean_jyq_SO2": 17.960112994350286,
+        "risk_rate": 0.022598870056497175,
+        "mean_xstjy_PH": 6.179943502824863
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 177,
+            "sum": 2015.82262716381,
+            "sum_square": 23041.78976834202,
+            "minimum": 8.965000213630377,
+            "maximum": 15.924045469533732
+          },
+          "xstjy_PH": {
+            "count": 177,
+            "sum": 1093.8500000000008,
+            "sum_square": 6761.825099999997,
+            "minimum": 5.98,
+            "maximum": 6.49
+          },
+          "jyq_SO2": {
+            "count": 177,
+            "sum": 3178.940000000001,
+            "sum_square": 64590.50999999998,
+            "minimum": 8.18,
+            "maximum": 36.95
+          }
+        },
+        "risk": {
+          "valid_count": 177,
+          "risk_count": 4
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P33-S1": {
+      "grid_id": "P33-S1",
+      "axis_1_level": 33,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3700.0,
+        3800.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0031",
+      "sample_count": 113,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 108
+        },
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 5
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 108,
+        "XP3-AP0": 5
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.411780086291675,
+        "mean_jyq_SO2": 16.89389380530973,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.196725663716812
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 113,
+            "sum": 1289.5311497509592,
+            "sum_square": 14754.97926486148,
+            "minimum": 8.965000213630377,
+            "maximum": 12.63868850299386
+          },
+          "xstjy_PH": {
+            "count": 113,
+            "sum": 700.2299999999998,
+            "sum_square": 4340.609099999996,
+            "minimum": 5.98,
+            "maximum": 6.48
+          },
+          "jyq_SO2": {
+            "count": 113,
+            "sum": 1909.0099999999995,
+            "sum_square": 35373.094900000004,
+            "minimum": 8.27,
+            "maximum": 33.22
+          }
+        },
+        "risk": {
+          "valid_count": 113,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P34-S1": {
+      "grid_id": "P34-S1",
+      "axis_1_level": 34,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3800.0,
+        3900.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0034",
+      "sample_count": 52,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 6
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 46
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 6,
+        "XP4-AP0": 46
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.261445120956987,
+        "mean_jyq_SO2": 18.714999999999996,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.1659615384615405
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 52,
+            "sum": 585.5951462897633,
+            "sum_square": 6628.946983809989,
+            "minimum": 9.004350360331403,
+            "maximum": 12.224849484481272
+          },
+          "xstjy_PH": {
+            "count": 52,
+            "sum": 320.6300000000001,
+            "sum_square": 1977.3918999999996,
+            "minimum": 6.06,
+            "maximum": 6.46
+          },
+          "jyq_SO2": {
+            "count": 52,
+            "sum": 973.1799999999997,
+            "sum_square": 20345.8932,
+            "minimum": 8.65,
+            "maximum": 33.78
+          }
+        },
+        "risk": {
+          "valid_count": 52,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P35-S1": {
+      "grid_id": "P35-S1",
+      "axis_1_level": 35,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        3900.0,
+        4000.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "MATURE",
+      "policy_region_id": "R_0035",
+      "sample_count": 51,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 50
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1,
+        "XP4-AP0": 50
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.475874655616545,
+        "mean_jyq_SO2": 17.467254901960786,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.186078431372546
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 51,
+            "sum": 585.2696074364438,
+            "sum_square": 6726.197060447113,
+            "minimum": 9.702421222931385,
+            "maximum": 12.204489071766602
+          },
+          "xstjy_PH": {
+            "count": 51,
+            "sum": 315.48999999999984,
+            "sum_square": 1951.8794999999996,
+            "minimum": 6.06,
+            "maximum": 6.34
+          },
+          "jyq_SO2": {
+            "count": 51,
+            "sum": 890.8300000000002,
+            "sum_square": 17454.171300000013,
+            "minimum": 9.44,
+            "maximum": 33.65
+          }
+        },
+        "risk": {
+          "valid_count": 51,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P36-S1": {
+      "grid_id": "P36-S1",
+      "axis_1_level": 36,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4000.0,
+        4100.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0036",
+      "sample_count": 23,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 23
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 23
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.3221257143729,
+        "mean_jyq_SO2": 22.698260869565214,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.150434782608698
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 23,
+            "sum": 260.4088914305767,
+            "sum_square": 2953.742118957196,
+            "minimum": 10.786901245789362,
+            "maximum": 12.22755431521392
+          },
+          "xstjy_PH": {
+            "count": 23,
+            "sum": 141.46000000000004,
+            "sum_square": 870.2238000000001,
+            "minimum": 6.06,
+            "maximum": 6.34
+          },
+          "jyq_SO2": {
+            "count": 23,
+            "sum": 522.06,
+            "sum_square": 12667.502599999998,
+            "minimum": 12.67,
+            "maximum": 31.39
+          }
+        },
+        "risk": {
+          "valid_count": 23,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P37-S1": {
+      "grid_id": "P37-S1",
+      "axis_1_level": 37,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4100.0,
+        4200.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0037",
+      "sample_count": 10,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 10
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 10
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.730823241404126,
+        "mean_jyq_SO2": 19.57,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.186999999999999
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 10,
+            "sum": 117.30823241404126,
+            "sum_square": 1378.6458770070626,
+            "minimum": 10.965040204165671,
+            "maximum": 12.25372813931019
+          },
+          "xstjy_PH": {
+            "count": 10,
+            "sum": 61.86999999999999,
+            "sum_square": 382.84970000000004,
+            "minimum": 6.06,
+            "maximum": 6.34
+          },
+          "jyq_SO2": {
+            "count": 10,
+            "sum": 195.7,
+            "sum_square": 4140.776,
+            "minimum": 13.5,
+            "maximum": 32.88
+          }
+        },
+        "risk": {
+          "valid_count": 10,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P38-S1": {
+      "grid_id": "P38-S1",
+      "axis_1_level": 38,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4200.0,
+        4300.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0038",
+      "sample_count": 10,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 1
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 9
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 1,
+        "XP4-AP0": 9
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.684279603588108,
+        "mean_jyq_SO2": 19.501,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.172000000000001
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 10,
+            "sum": 116.84279603588108,
+            "sum_square": 1368.9352556795961,
+            "minimum": 10.065156122095702,
+            "maximum": 12.23059700170131
+          },
+          "xstjy_PH": {
+            "count": 10,
+            "sum": 61.720000000000006,
+            "sum_square": 381.11740000000003,
+            "minimum": 6.06,
+            "maximum": 6.53
+          },
+          "jyq_SO2": {
+            "count": 10,
+            "sum": 195.01000000000002,
+            "sum_square": 4300.9757,
+            "minimum": 6.8,
+            "maximum": 31.52
+          }
+        },
+        "risk": {
+          "valid_count": 10,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P39-S1": {
+      "grid_id": "P39-S1",
+      "axis_1_level": 39,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4300.0,
+        4400.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0039",
+      "sample_count": 17,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 6
+        },
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 11
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 6,
+        "XP4-AP0": 11
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 10.63298869642219,
+        "mean_jyq_SO2": 16.296470588235294,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.300588235294117
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 17,
+            "sum": 180.76080783917723,
+            "sum_square": 1952.3482364923002,
+            "minimum": 8.468971324193472,
+            "maximum": 12.237301528228205
+          },
+          "xstjy_PH": {
+            "count": 17,
+            "sum": 107.10999999999999,
+            "sum_square": 675.5795000000002,
+            "minimum": 6.06,
+            "maximum": 6.58
+          },
+          "jyq_SO2": {
+            "count": 17,
+            "sum": 277.04,
+            "sum_square": 5686.5662,
+            "minimum": 5.88,
+            "maximum": 30.43
+          }
+        },
+        "risk": {
+          "valid_count": 17,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P40-S1": {
+      "grid_id": "P40-S1",
+      "axis_1_level": 40,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4400.0,
+        4500.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "OBSERVED",
+      "policy_region_id": "R_0040",
+      "sample_count": 8,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 8
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 8
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.573109409483237,
+        "mean_jyq_SO2": 19.02375,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.181249999999999
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 8,
+            "sum": 92.5848752758659,
+            "sum_square": 1073.1775431121278,
+            "minimum": 10.977685793987357,
+            "maximum": 12.334595687688076
+          },
+          "xstjy_PH": {
+            "count": 8,
+            "sum": 49.44999999999999,
+            "sum_square": 305.7117,
+            "minimum": 6.08,
+            "maximum": 6.32
+          },
+          "jyq_SO2": {
+            "count": 8,
+            "sum": 152.19,
+            "sum_square": 2952.6515,
+            "minimum": 15.63,
+            "maximum": 23.31
+          }
+        },
+        "risk": {
+          "valid_count": 8,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P41-S1": {
+      "grid_id": "P41-S1",
+      "axis_1_level": 41,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4500.0,
+        4600.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "OBSERVED",
+      "policy_region_id": "R_0041",
+      "sample_count": 9,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP4-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 9
+        }
+      },
+      "pump_distribution": {
+        "XP4-AP0": 9
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 11.584869687890318,
+        "mean_jyq_SO2": 19.37333333333333,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 6.196666666666666
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 9,
+            "sum": 104.26382719101287,
+            "sum_square": 1211.9205492368578,
+            "minimum": 10.970506489953552,
+            "maximum": 12.334595687688076
+          },
+          "xstjy_PH": {
+            "count": 9,
+            "sum": 55.769999999999996,
+            "sum_square": 345.68670000000003,
+            "minimum": 6.08,
+            "maximum": 6.3
+          },
+          "jyq_SO2": {
+            "count": 9,
+            "sum": 174.35999999999999,
+            "sum_square": 3486.2012,
+            "minimum": 15.55,
+            "maximum": 23.31
+          }
+        },
+        "risk": {
+          "valid_count": 9,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P42-S1": {
+      "grid_id": "P42-S1",
+      "axis_1_level": 42,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4600.0,
+        4700.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "EMPTY",
+      "policy_region_id": "R_0042",
+      "sample_count": 0,
+      "clipped_count": 0,
+      "state_profiles": {},
+      "pump_distribution": {},
+      "statistics": {
+        "mean_liquid_gas_ratio": null,
+        "mean_jyq_SO2": null,
+        "risk_rate": null,
+        "mean_xstjy_PH": null
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "xstjy_PH": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "jyq_SO2": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "risk": {
+          "valid_count": 0,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P43-S1": {
+      "grid_id": "P43-S1",
+      "axis_1_level": 43,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4700.0,
+        4800.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "EMPTY",
+      "policy_region_id": "R_0043",
+      "sample_count": 0,
+      "clipped_count": 0,
+      "state_profiles": {},
+      "pump_distribution": {},
+      "statistics": {
+        "mean_liquid_gas_ratio": null,
+        "mean_jyq_SO2": null,
+        "risk_rate": null,
+        "mean_xstjy_PH": null
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "xstjy_PH": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "jyq_SO2": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "risk": {
+          "valid_count": 0,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P44-S1": {
+      "grid_id": "P44-S1",
+      "axis_1_level": 44,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4800.0,
+        4900.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "EMPTY",
+      "policy_region_id": "R_0044",
+      "sample_count": 0,
+      "clipped_count": 0,
+      "state_profiles": {},
+      "pump_distribution": {},
+      "statistics": {
+        "mean_liquid_gas_ratio": null,
+        "mean_jyq_SO2": null,
+        "risk_rate": null,
+        "mean_xstjy_PH": null
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "xstjy_PH": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          },
+          "jyq_SO2": {
+            "count": 0,
+            "sum": 0.0,
+            "sum_square": 0.0,
+            "minimum": null,
+            "maximum": null
+          }
+        },
+        "risk": {
+          "valid_count": 0,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    },
+    "P45-S1": {
+      "grid_id": "P45-S1",
+      "axis_1_level": 45,
+      "axis_2_level": 1,
+      "axis_1_range": [
+        4900.0,
+        5000.0
+      ],
+      "axis_2_range": [
+        -1e+100,
+        1e+100
+      ],
+      "validity": "VALID",
+      "coverage_status": "LEARNING",
+      "policy_region_id": "R_0045",
+      "sample_count": 17,
+      "clipped_count": 0,
+      "state_profiles": {
+        "XP3-AP0-NORMAL-SUPPLY_NORMAL": {
+          "sample_count": 17
+        }
+      },
+      "pump_distribution": {
+        "XP3-AP0": 17
+      },
+      "statistics": {
+        "mean_liquid_gas_ratio": 29.958345441229703,
+        "mean_jyq_SO2": 10.78235294117647,
+        "risk_rate": 0.0,
+        "mean_xstjy_PH": 7.123529411764706
+      },
+      "accumulators": {
+        "numeric": {
+          "liquid_gas_ratio": {
+            "count": 17,
+            "sum": 509.29187250090496,
+            "sum_square": 24653.52930692146,
+            "minimum": 8.171376102802727,
+            "maximum": 65.08892703332269
+          },
+          "xstjy_PH": {
+            "count": 17,
+            "sum": 121.10000000000001,
+            "sum_square": 865.1131999999996,
+            "minimum": 6.6,
+            "maximum": 7.42
+          },
+          "jyq_SO2": {
+            "count": 17,
+            "sum": 183.29999999999998,
+            "sum_square": 2672.6803999999997,
+            "minimum": 4.48,
+            "maximum": 28.23
+          }
+        },
+        "risk": {
+          "valid_count": 17,
+          "risk_count": 0
+        },
+        "statistics_quality": "EXACT_INITIAL"
+      }
+    }
+  },
+  "grid_adjacency": {
+    "P1-S1": [
+      "P2-S1"
+    ],
+    "P2-S1": [
+      "P1-S1",
+      "P3-S1"
+    ],
+    "P3-S1": [
+      "P2-S1",
+      "P4-S1"
+    ],
+    "P4-S1": [
+      "P3-S1",
+      "P5-S1"
+    ],
+    "P5-S1": [
+      "P4-S1",
+      "P6-S1"
+    ],
+    "P6-S1": [
+      "P5-S1",
+      "P7-S1"
+    ],
+    "P7-S1": [
+      "P6-S1",
+      "P8-S1"
+    ],
+    "P8-S1": [
+      "P7-S1",
+      "P9-S1"
+    ],
+    "P9-S1": [
+      "P10-S1",
+      "P8-S1"
+    ],
+    "P10-S1": [
+      "P11-S1",
+      "P9-S1"
+    ],
+    "P11-S1": [
+      "P10-S1",
+      "P12-S1"
+    ],
+    "P12-S1": [
+      "P11-S1",
+      "P13-S1"
+    ],
+    "P13-S1": [
+      "P12-S1",
+      "P14-S1"
+    ],
+    "P14-S1": [
+      "P13-S1",
+      "P15-S1"
+    ],
+    "P15-S1": [
+      "P14-S1",
+      "P16-S1"
+    ],
+    "P16-S1": [
+      "P15-S1",
+      "P17-S1"
+    ],
+    "P17-S1": [
+      "P16-S1",
+      "P18-S1"
+    ],
+    "P18-S1": [
+      "P17-S1",
+      "P19-S1"
+    ],
+    "P19-S1": [
+      "P18-S1",
+      "P20-S1"
+    ],
+    "P20-S1": [
+      "P19-S1",
+      "P21-S1"
+    ],
+    "P21-S1": [
+      "P20-S1",
+      "P22-S1"
+    ],
+    "P22-S1": [
+      "P21-S1",
+      "P23-S1"
+    ],
+    "P23-S1": [
+      "P22-S1",
+      "P24-S1"
+    ],
+    "P24-S1": [
+      "P23-S1",
+      "P25-S1"
+    ],
+    "P25-S1": [
+      "P24-S1",
+      "P26-S1"
+    ],
+    "P26-S1": [
+      "P25-S1",
+      "P27-S1"
+    ],
+    "P27-S1": [
+      "P26-S1",
+      "P28-S1"
+    ],
+    "P28-S1": [
+      "P27-S1",
+      "P29-S1"
+    ],
+    "P29-S1": [
+      "P28-S1",
+      "P30-S1"
+    ],
+    "P30-S1": [
+      "P29-S1",
+      "P31-S1"
+    ],
+    "P31-S1": [
+      "P30-S1",
+      "P32-S1"
+    ],
+    "P32-S1": [
+      "P31-S1",
+      "P33-S1"
+    ],
+    "P33-S1": [
+      "P32-S1",
+      "P34-S1"
+    ],
+    "P34-S1": [
+      "P33-S1",
+      "P35-S1"
+    ],
+    "P35-S1": [
+      "P34-S1",
+      "P36-S1"
+    ],
+    "P36-S1": [
+      "P35-S1",
+      "P37-S1"
+    ],
+    "P37-S1": [
+      "P36-S1",
+      "P38-S1"
+    ],
+    "P38-S1": [
+      "P37-S1",
+      "P39-S1"
+    ],
+    "P39-S1": [
+      "P38-S1",
+      "P40-S1"
+    ],
+    "P40-S1": [
+      "P39-S1",
+      "P41-S1"
+    ],
+    "P41-S1": [
+      "P40-S1",
+      "P42-S1"
+    ],
+    "P42-S1": [
+      "P41-S1",
+      "P43-S1"
+    ],
+    "P43-S1": [
+      "P42-S1",
+      "P44-S1"
+    ],
+    "P44-S1": [
+      "P43-S1",
+      "P45-S1"
+    ],
+    "P45-S1": [
+      "P44-S1"
+    ]
+  },
+  "policy_regions": {
+    "R_0001": {
+      "region_id": "R_0001",
+      "member_grid_ids": [
+        "P1-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "1"
+    },
+    "R_0002": {
+      "region_id": "R_0002",
+      "member_grid_ids": [
+        "P2-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "2"
+    },
+    "R_0003": {
+      "region_id": "R_0003",
+      "member_grid_ids": [
+        "P3-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "3"
+    },
+    "R_0004": {
+      "region_id": "R_0004",
+      "member_grid_ids": [
+        "P4-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "4"
+    },
+    "R_0005": {
+      "region_id": "R_0005",
+      "member_grid_ids": [
+        "P5-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "5"
+    },
+    "R_0006": {
+      "region_id": "R_0006",
+      "member_grid_ids": [
+        "P6-S1",
+        "P7-S1",
+        "P8-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P6-S1|P7-S1|P8-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 132,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P6-S1": 132,
+          "P7-S1": 214,
+          "P8-S1": 364
+        },
+        "member_evidence_counts": {
+          "P6-S1": 0,
+          "P7-S1": 0,
+          "P8-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P6-S1": 0,
+          "P7-S1": 0,
+          "P8-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P6-S1",
+              "P7-S1",
+              "P8-S1"
+            ],
+            "member_count": 3,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 132,
+                  "second_sample_count": 214,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 116,
+                      "second_sample_count": 182
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 16,
+                      "second_sample_count": 32
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 12.229424183594507,
+                  "second_mean_liquid_gas": 12.203677590644352,
+                  "first_liquid_gas_count": 132,
+                  "second_liquid_gas_count": 214,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.002105298872917749,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.02832058906825262,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 132,
+                  "second_risk_valid_count": 214,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.007575757575757576,
+                  "second_risk_rate": 0.0,
+                  "risk_rate_difference": 0.007575757575757576,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 214,
+                  "second_sample_count": 364,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 182,
+                      "second_sample_count": 266
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 32,
+                      "second_sample_count": 98
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 12.203677590644352,
+                  "second_mean_liquid_gas": 12.383583983997088,
+                  "first_liquid_gas_count": 214,
+                  "second_liquid_gas_count": 364,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.014527813077799075,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.11969805895039541,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 214,
+                  "second_risk_valid_count": 364,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.0,
+                  "second_risk_rate": 0.0,
+                  "risk_rate_difference": 0.0,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.014527813077799075,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "6"
+    },
+    "R_0009": {
+      "region_id": "R_0009",
+      "member_grid_ids": [
+        "P9-S1",
+        "P10-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P9-S1|P10-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 671,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P9-S1": 671,
+          "P10-S1": 908
+        },
+        "member_evidence_counts": {
+          "P9-S1": 0,
+          "P10-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P9-S1": 0,
+          "P10-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P10-S1",
+              "P9-S1"
+            ],
+            "member_count": 2,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 671,
+                  "second_sample_count": 908,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 505,
+                      "second_sample_count": 682
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 166,
+                      "second_sample_count": 226
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 59.35257005598967,
+                  "second_mean_liquid_gas": 53.75742150124926,
+                  "first_liquid_gas_count": 671,
+                  "second_liquid_gas_count": 908,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.09426969294610633,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.0015067261041118302,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 671,
+                  "second_risk_valid_count": 908,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.0,
+                  "second_risk_rate": 0.0011013215859030838,
+                  "risk_rate_difference": 0.0011013215859030838,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.09426969294610633,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "9"
+    },
+    "R_0011": {
+      "region_id": "R_0011",
+      "member_grid_ids": [
+        "P11-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "11"
+    },
+    "R_0012": {
+      "region_id": "R_0012",
+      "member_grid_ids": [
+        "P12-S1",
+        "P13-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P12-S1|P13-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 2296,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P12-S1": 2296,
+          "P13-S1": 3255
+        },
+        "member_evidence_counts": {
+          "P12-S1": 0,
+          "P13-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P12-S1": 0,
+          "P13-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P12-S1",
+              "P13-S1"
+            ],
+            "member_count": 2,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 2296,
+                  "second_sample_count": 3255,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 1718,
+                      "second_sample_count": 2571
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 578,
+                      "second_sample_count": 684
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 83.1337061232737,
+                  "second_mean_liquid_gas": 88.31541545753488,
+                  "first_liquid_gas_count": 2296,
+                  "second_liquid_gas_count": 3255,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.058672761798337816,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.041603911430819346,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 2296,
+                  "second_risk_valid_count": 3255,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.003048780487804878,
+                  "second_risk_rate": 0.00706605222734255,
+                  "risk_rate_difference": 0.004017271739537672,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.058672761798337816,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "12"
+    },
+    "R_0014": {
+      "region_id": "R_0014",
+      "member_grid_ids": [
+        "P14-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "14"
+    },
+    "R_0015": {
+      "region_id": "R_0015",
+      "member_grid_ids": [
+        "P15-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "15"
+    },
+    "R_0016": {
+      "region_id": "R_0016",
+      "member_grid_ids": [
+        "P16-S1",
+        "P17-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P16-S1|P17-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 5161,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P16-S1": 5161,
+          "P17-S1": 5598
+        },
+        "member_evidence_counts": {
+          "P16-S1": 0,
+          "P17-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P16-S1": 0,
+          "P17-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P16-S1",
+              "P17-S1"
+            ],
+            "member_count": 2,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 5161,
+                  "second_sample_count": 5598,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 3477,
+                      "second_sample_count": 3568
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 1684,
+                      "second_sample_count": 2030
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 69.57331272697299,
+                  "second_mean_liquid_gas": 59.274723645633465,
+                  "first_liquid_gas_count": 5161,
+                  "second_liquid_gas_count": 5598,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.1480249923092543,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.03633615653831582,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 5161,
+                  "second_risk_valid_count": 5598,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.01220693664018601,
+                  "second_risk_rate": 0.006788138620936048,
+                  "risk_rate_difference": 0.005418798019249962,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.1480249923092543,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "16"
+    },
+    "R_0018": {
+      "region_id": "R_0018",
+      "member_grid_ids": [
+        "P18-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "18"
+    },
+    "R_0019": {
+      "region_id": "R_0019",
+      "member_grid_ids": [
+        "P19-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "19"
+    },
+    "R_0020": {
+      "region_id": "R_0020",
+      "member_grid_ids": [
+        "P20-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "20"
+    },
+    "R_0021": {
+      "region_id": "R_0021",
+      "member_grid_ids": [
+        "P21-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "21"
+    },
+    "R_0022": {
+      "region_id": "R_0022",
+      "member_grid_ids": [
+        "P22-S1",
+        "P23-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P22-S1|P23-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 1860,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P22-S1": 2622,
+          "P23-S1": 1860
+        },
+        "member_evidence_counts": {
+          "P22-S1": 0,
+          "P23-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P22-S1": 0,
+          "P23-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P22-S1",
+              "P23-S1"
+            ],
+            "member_count": 2,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 2622,
+                  "second_sample_count": 1860,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 1049,
+                      "second_sample_count": 589
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 1572,
+                      "second_sample_count": 1270
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 12.301418027295266,
+                  "second_mean_liquid_gas": 12.034250448729372,
+                  "first_liquid_gas_count": 2622,
+                  "second_liquid_gas_count": 1860,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.021718437498269218,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.0834096109839817,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 2622,
+                  "second_risk_valid_count": 1860,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.012585812356979404,
+                  "second_risk_rate": 0.013978494623655914,
+                  "risk_rate_difference": 0.00139268226667651,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.021718437498269218,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "22"
+    },
+    "R_0024": {
+      "region_id": "R_0024",
+      "member_grid_ids": [
+        "P24-S1",
+        "P25-S1",
+        "P26-S1",
+        "P27-S1",
+        "P28-S1",
+        "P29-S1",
+        "P30-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P24-S1|P25-S1|P26-S1|P27-S1|P28-S1|P29-S1|P30-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 282,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P24-S1": 1513,
+          "P25-S1": 1179,
+          "P26-S1": 1067,
+          "P27-S1": 715,
+          "P28-S1": 474,
+          "P29-S1": 359,
+          "P30-S1": 282
+        },
+        "member_evidence_counts": {
+          "P24-S1": 0,
+          "P25-S1": 0,
+          "P26-S1": 0,
+          "P27-S1": 0,
+          "P28-S1": 0,
+          "P29-S1": 0,
+          "P30-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P24-S1": 0,
+          "P25-S1": 0,
+          "P26-S1": 0,
+          "P27-S1": 0,
+          "P28-S1": 0,
+          "P29-S1": 0,
+          "P30-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P24-S1",
+              "P25-S1",
+              "P26-S1",
+              "P27-S1",
+              "P28-S1",
+              "P29-S1",
+              "P30-S1"
+            ],
+            "member_count": 7,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 1513,
+                  "second_sample_count": 1179,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 368,
+                      "second_sample_count": 274
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 1144,
+                      "second_sample_count": 904
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.2980838301129,
+                  "second_mean_liquid_gas": 11.314346382033007,
+                  "first_liquid_gas_count": 1513,
+                  "second_liquid_gas_count": 1179,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0014373390535340012,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.010825040769088018,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 1513,
+                  "second_risk_valid_count": 1179,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.018506278916060808,
+                  "second_risk_rate": 0.02714164546225615,
+                  "risk_rate_difference": 0.008635366546195341,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 1179,
+                  "second_sample_count": 1067,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 274,
+                      "second_sample_count": 148
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 904,
+                      "second_sample_count": 918
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.314346382033007,
+                  "second_mean_liquid_gas": 11.327353094548895,
+                  "first_liquid_gas_count": 1179,
+                  "second_liquid_gas_count": 1067,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0011482570029663925,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.0936936850999966,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 1179,
+                  "second_risk_valid_count": 1067,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.02714164546225615,
+                  "second_risk_rate": 0.019681349578256794,
+                  "risk_rate_difference": 0.007460295883999355,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 1067,
+                  "second_sample_count": 715,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 148,
+                      "second_sample_count": 66
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 918,
+                      "second_sample_count": 648
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.327353094548895,
+                  "second_mean_liquid_gas": 11.375953942853402,
+                  "first_liquid_gas_count": 1067,
+                  "second_liquid_gas_count": 715,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0042722437651075565,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.0463989618628794,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 1067,
+                  "second_risk_valid_count": 715,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.019681349578256794,
+                  "second_risk_rate": 0.008391608391608392,
+                  "risk_rate_difference": 0.011289741186648402,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 715,
+                  "second_sample_count": 474,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 66,
+                      "second_sample_count": 29
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 648,
+                      "second_sample_count": 444
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.375953942853402,
+                  "second_mean_liquid_gas": 11.348830514753365,
+                  "first_liquid_gas_count": 715,
+                  "second_liquid_gas_count": 474,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.002384277242707741,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.03112625770853618,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 715,
+                  "second_risk_valid_count": 474,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.008391608391608392,
+                  "second_risk_rate": 0.014767932489451477,
+                  "risk_rate_difference": 0.006376324097843085,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 474,
+                  "second_sample_count": 359,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 29,
+                      "second_sample_count": 16
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 444,
+                      "second_sample_count": 341
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.348830514753365,
+                  "second_mean_liquid_gas": 11.311768626958408,
+                  "first_liquid_gas_count": 474,
+                  "second_liquid_gas_count": 359,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0032657010558732936,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.016613189473807924,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 474,
+                  "second_risk_valid_count": 359,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.014767932489451477,
+                  "second_risk_rate": 0.013927576601671309,
+                  "risk_rate_difference": 0.000840355887780168,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 359,
+                  "second_sample_count": 282,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP3-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 16,
+                      "second_sample_count": 14
+                    },
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 341,
+                      "second_sample_count": 262
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.311768626958408,
+                  "second_mean_liquid_gas": 11.359943680288486,
+                  "first_liquid_gas_count": 359,
+                  "second_liquid_gas_count": 282,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.004240782761420807,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.02078271004958611,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 359,
+                  "second_risk_valid_count": 282,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.013927576601671309,
+                  "second_risk_rate": 0.010638297872340425,
+                  "risk_rate_difference": 0.0032892787293308835,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.006845150141401697,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "24"
+    },
+    "R_0031": {
+      "region_id": "R_0031",
+      "member_grid_ids": [
+        "P31-S1",
+        "P32-S1",
+        "P33-S1"
+      ],
+      "status": "AUTO_PROVISIONAL_MERGE",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2",
+        "signature": "P31-S1|P32-S1|P33-S1",
+        "verification_passes": 1,
+        "consecutive_passes": 1,
+        "required_verification_passes": 3,
+        "minimum_member_sample_count": 113,
+        "minimum_member_evidence_count": 0,
+        "required_confirm_evidence_samples": 300,
+        "minimum_new_samples_per_member_for_confirmation": 10,
+        "member_sample_counts": {
+          "P31-S1": 263,
+          "P32-S1": 177,
+          "P33-S1": 113
+        },
+        "member_evidence_counts": {
+          "P31-S1": 0,
+          "P32-S1": 0,
+          "P33-S1": 0
+        },
+        "new_evidence_samples_since_last_counted_pass": {
+          "P31-S1": 0,
+          "P32-S1": 0,
+          "P33-S1": 0
+        },
+        "verification_progress": "INITIAL_PASS",
+        "region_decision": {
+          "decision": "AUTO_REGION_ELIGIBLE",
+          "allowed": true,
+          "evidence": {
+            "member_grid_ids": [
+              "P31-S1",
+              "P32-S1",
+              "P33-S1"
+            ],
+            "member_count": 3,
+            "pair_decisions": [
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 263,
+                  "second_sample_count": 177,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 253,
+                      "second_sample_count": 170
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.462901584208598,
+                  "second_mean_liquid_gas": 11.388828402055424,
+                  "first_liquid_gas_count": 263,
+                  "second_liquid_gas_count": 177,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0064619923331818985,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.005327490279478411,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 263,
+                  "second_risk_valid_count": 177,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.022813688212927757,
+                  "second_risk_rate": 0.022598870056497175,
+                  "risk_rate_difference": 0.00021481815643058233,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              },
+              {
+                "decision": "AUTO_PROVISIONAL_ELIGIBLE",
+                "allowed": true,
+                "evidence": {
+                  "geometric_adjacent": true,
+                  "first_coverage_status": "MATURE",
+                  "second_coverage_status": "MATURE",
+                  "first_sample_count": 177,
+                  "second_sample_count": 113,
+                  "mode": "evidence_only",
+                  "required_auto_samples": 100,
+                  "qualified_common_states": [
+                    {
+                      "state_key": "XP4-AP0-NORMAL-SUPPLY_NORMAL",
+                      "first_sample_count": 170,
+                      "second_sample_count": 108
+                    }
+                  ],
+                  "required_common_state_samples": 10,
+                  "first_mean_liquid_gas": 11.388828402055424,
+                  "second_mean_liquid_gas": 11.411780086291675,
+                  "first_liquid_gas_count": 177,
+                  "second_liquid_gas_count": 113,
+                  "minimum_metric_coverage_ratio": 0.8,
+                  "first_liquid_gas_coverage_ratio": 1.0,
+                  "second_liquid_gas_coverage_ratio": 1.0,
+                  "liquid_gas_relative_difference": 0.0020112273512719785,
+                  "liquid_gas_threshold": 0.15,
+                  "liquid_gas_compatible": true,
+                  "pump_distribution_distance": 0.004699765011749405,
+                  "pump_distribution_threshold": 0.25,
+                  "pump_distribution_compatible": true,
+                  "first_risk_valid_count": 177,
+                  "second_risk_valid_count": 113,
+                  "required_risk_samples": 30,
+                  "first_risk_rate": 0.022598870056497175,
+                  "second_risk_rate": 0.0,
+                  "risk_rate_difference": 0.022598870056497175,
+                  "risk_rate_threshold": 0.1,
+                  "risk_compatible": true
+                }
+              }
+            ],
+            "region_liquid_gas_relative_difference": 0.0064619923331818985,
+            "region_liquid_gas_threshold": 0.15
+          }
+        }
+      },
+      "condition_label": "31"
+    },
+    "R_0034": {
+      "region_id": "R_0034",
+      "member_grid_ids": [
+        "P34-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "34"
+    },
+    "R_0035": {
+      "region_id": "R_0035",
+      "member_grid_ids": [
+        "P35-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "35"
+    },
+    "R_0036": {
+      "region_id": "R_0036",
+      "member_grid_ids": [
+        "P36-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "36"
+    },
+    "R_0037": {
+      "region_id": "R_0037",
+      "member_grid_ids": [
+        "P37-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "37"
+    },
+    "R_0038": {
+      "region_id": "R_0038",
+      "member_grid_ids": [
+        "P38-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "38"
+    },
+    "R_0039": {
+      "region_id": "R_0039",
+      "member_grid_ids": [
+        "P39-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "39"
+    },
+    "R_0040": {
+      "region_id": "R_0040",
+      "member_grid_ids": [
+        "P40-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "40"
+    },
+    "R_0041": {
+      "region_id": "R_0041",
+      "member_grid_ids": [
+        "P41-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "41"
+    },
+    "R_0042": {
+      "region_id": "R_0042",
+      "member_grid_ids": [
+        "P42-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "42"
+    },
+    "R_0043": {
+      "region_id": "R_0043",
+      "member_grid_ids": [
+        "P43-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "43"
+    },
+    "R_0044": {
+      "region_id": "R_0044",
+      "member_grid_ids": [
+        "P44-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "44"
+    },
+    "R_0045": {
+      "region_id": "R_0045",
+      "member_grid_ids": [
+        "P45-S1"
+      ],
+      "status": "INDEPENDENT",
+      "evidence": {
+        "source": "AUTO_MERGE_MANAGER",
+        "algorithm_version": "auto-merge-v2"
+      },
+      "condition_label": "45"
+    }
+  },
+  "metadata": {
+    "snapshot_schema_version": "6.0",
+    "auto_merge_state": {
+      "algorithm_version": "auto-merge-v2",
+      "last_evaluated_snapshot_version": "v001",
+      "regions": {
+        "P6-S1|P7-S1|P8-S1": {
+          "member_grid_ids": [
+            "P6-S1",
+            "P7-S1",
+            "P8-S1"
+          ],
+          "condition_label": "6",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P6-S1": 132,
+            "P7-S1": 214,
+            "P8-S1": 364
+          },
+          "member_evidence_counts": {
+            "P6-S1": 0,
+            "P7-S1": 0,
+            "P8-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P6-S1": 0,
+            "P7-S1": 0,
+            "P8-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P9-S1|P10-S1": {
+          "member_grid_ids": [
+            "P9-S1",
+            "P10-S1"
+          ],
+          "condition_label": "9",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P9-S1": 671,
+            "P10-S1": 908
+          },
+          "member_evidence_counts": {
+            "P9-S1": 0,
+            "P10-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P9-S1": 0,
+            "P10-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P12-S1|P13-S1": {
+          "member_grid_ids": [
+            "P12-S1",
+            "P13-S1"
+          ],
+          "condition_label": "12",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P12-S1": 2296,
+            "P13-S1": 3255
+          },
+          "member_evidence_counts": {
+            "P12-S1": 0,
+            "P13-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P12-S1": 0,
+            "P13-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P16-S1|P17-S1": {
+          "member_grid_ids": [
+            "P16-S1",
+            "P17-S1"
+          ],
+          "condition_label": "16",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P16-S1": 5161,
+            "P17-S1": 5598
+          },
+          "member_evidence_counts": {
+            "P16-S1": 0,
+            "P17-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P16-S1": 0,
+            "P17-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P22-S1|P23-S1": {
+          "member_grid_ids": [
+            "P22-S1",
+            "P23-S1"
+          ],
+          "condition_label": "22",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P22-S1": 2622,
+            "P23-S1": 1860
+          },
+          "member_evidence_counts": {
+            "P22-S1": 0,
+            "P23-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P22-S1": 0,
+            "P23-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P24-S1|P25-S1|P26-S1|P27-S1|P28-S1|P29-S1|P30-S1": {
+          "member_grid_ids": [
+            "P24-S1",
+            "P25-S1",
+            "P26-S1",
+            "P27-S1",
+            "P28-S1",
+            "P29-S1",
+            "P30-S1"
+          ],
+          "condition_label": "24",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P24-S1": 1513,
+            "P25-S1": 1179,
+            "P26-S1": 1067,
+            "P27-S1": 715,
+            "P28-S1": 474,
+            "P29-S1": 359,
+            "P30-S1": 282
+          },
+          "member_evidence_counts": {
+            "P24-S1": 0,
+            "P25-S1": 0,
+            "P26-S1": 0,
+            "P27-S1": 0,
+            "P28-S1": 0,
+            "P29-S1": 0,
+            "P30-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P24-S1": 0,
+            "P25-S1": 0,
+            "P26-S1": 0,
+            "P27-S1": 0,
+            "P28-S1": 0,
+            "P29-S1": 0,
+            "P30-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        },
+        "P31-S1|P32-S1|P33-S1": {
+          "member_grid_ids": [
+            "P31-S1",
+            "P32-S1",
+            "P33-S1"
+          ],
+          "condition_label": "31",
+          "status": "AUTO_PROVISIONAL_MERGE",
+          "verification_passes": 1,
+          "consecutive_passes": 1,
+          "verification_progress": "INITIAL_PASS",
+          "member_sample_counts": {
+            "P31-S1": 263,
+            "P32-S1": 177,
+            "P33-S1": 113
+          },
+          "member_evidence_counts": {
+            "P31-S1": 0,
+            "P32-S1": 0,
+            "P33-S1": 0
+          },
+          "counted_member_evidence_counts": {
+            "P31-S1": 0,
+            "P32-S1": 0,
+            "P33-S1": 0
+          },
+          "first_seen_snapshot_version": "v001",
+          "last_seen_snapshot_version": "v001",
+          "last_counted_snapshot_version": "v001"
+        }
+      },
+      "region_lifecycle_events": [],
+      "split_events": [],
+      "summary": {
+        "candidate_count": 44,
+        "eligible_pair_count": 16,
+        "region_attempt_count": 16,
+        "published_merged_region_count": 7,
+        "provisional_region_count": 7,
+        "confirmed_region_count": 0,
+        "confirmation_held_region_count": 0,
+        "lifecycle_event_count": 0,
+        "split_event_count": 0
+      }
+    }
+  }
+}

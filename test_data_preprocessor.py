@@ -19,9 +19,9 @@ import sys
 import time
 
 # ===================== 可配置全局变量 =====================
-INPUT_CSV = r"F:\xiregangchang\ind_optim_serv\files\selected_30s_filtered.csv"
-OUTPUT_CSV = r"F:\xiregangchang\ind_optim_serv\files\selected_30s_processed.csv"
-PROCESS_MODE = "both"  # "filter" / "features" / "both"
+INPUT_CSV = r"F:\tlgj_new\files\new_data_val.csv"
+OUTPUT_CSV = r"F:\tlgj_new\files\new_data_val.csv"
+PROCESS_MODE = "features"  # "filter" / "features" / "both"
 MAX_ROWS = None        # None=全部；测试可设 100/1000 先跑通
 PRINT_EVERY = 1000     # 进度打印间隔（行数）
 # ========================================================
