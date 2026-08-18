@@ -1,7 +1,11 @@
 """Process4MapControl 专用配置。
 
-本文件集中管理 ``system/model/Process4MapControl.py`` 的可调参数。
-换厂或切换停机判断信号时，优先修改这里，不要再到业务代码中查找数字常量。
+本文件集中管理 ``system/model/Process4MapControl.py`` 的运行/训练参数。
+
+厂级现场字段、单塔/双塔、阀门和泵拓扑不在这里重复配置：
+- 通讯层负责把现场点位映射成系统使用的字段名，并将完整数据帧写入 GLOBAL_DATA；
+- P4PC 对通讯层传入的完整 dict 做透传和预处理，不维护现场字段白名单；
+- 真正随厂变化的物理/信号拓扑统一由 ``plant_config.py`` 管理。
 """
 
 from __future__ import annotations
@@ -127,17 +131,10 @@ class PersistenceConfig:
     model_write_target: str = 'model_result'  # db_queue 中模型结果的目标标记。
 
 
-DEFAULT_INPUT_FIELDS: Tuple[str, ...] = (
-    # data_preprocessor1 当前基础输出；额外现场字段仍会由 clean_data 原样透传。
-    'id', 'date', 'xstshsjy_MD', 'xstgjb_ADL', 'xstgjb_BDL',
-    'xst_FMKD1', 'xst_FMKD2', 'yyq_SO2', 'jyq_SO2', 'yyq_O2',
-    'yyq_LL', 'jyq_LL', 'xst_YW', 'xstjyxhb_ADL', 'xstjyxhb_BDL',
-    'xstjyxhb_CDL', 'xstjyxhb_DDL', 'xstjyxhb_EDL', 'xstyhfj_ADL',
-    'xstjy_PH', 'xst_ADL_status', 'xst_BDL_status', 'xst_CDL_status',
-    'xst_DDL_status', 'xst_EDL_status', 'xst_pump_status',
-    'combined_pump_status', 'liquid_gas_ratio', 'desulfurization_efficiency',
-    'outlet_so2_target', 'jym', 'connection_status',
-)
+# P4PC 内部兼容字段，不是现场输入字段白名单，也不需要换厂时配置。
+# 现场通讯传入的其他字段由 clean_data 整帧复制并继续透传。
+_P4PC_INTERNAL_FRAME_FIELDS: Tuple[str, ...] = ('date',)
+
 
 DEFAULT_LIMITS: Dict[str, Dict[str, float | str]] = {
     'yyq_SO2': {'min': 0.0, 'max': 1.207110e5, 'comments': '原烟气SO2'},
@@ -154,17 +151,21 @@ DEFAULT_LIMITS: Dict[str, Dict[str, float | str]] = {
 
 @dataclass(frozen=True)
 class Process4MapControlConfig:
-    """Process4MapControl 的唯一参数入口。"""
+    """Process4MapControl 的运行/训练参数入口。"""
 
     data_validation: DataValidationConfig = field(default_factory=DataValidationConfig)
     unit_stop: UnitStopConfig = field(default_factory=UnitStopConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     persistence: PersistenceConfig = field(default_factory=PersistenceConfig)
-    input_fields: Tuple[str, ...] = DEFAULT_INPUT_FIELDS
     limits: Dict[str, Dict[str, float | str]] = field(
         default_factory=lambda: {key: value.copy() for key, value in DEFAULT_LIMITS.items()}
     )
+
+    @property
+    def input_fields(self) -> Tuple[str, ...]:
+        """仅供旧 P4PC ``titles`` 初始化兼容；不限制通讯层实际输入字段。"""
+        return _P4PC_INTERNAL_FRAME_FIELDS
 
 
 PROCESS4MAP_CONFIG = Process4MapControlConfig()
