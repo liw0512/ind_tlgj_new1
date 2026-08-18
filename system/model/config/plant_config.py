@@ -109,17 +109,17 @@ PLANT_CONFIG = {
     # 工况轴唯一配置。支持 1 个或 2 个任意数值字段。
     # 第 1 个轴内部编码为 P#，第 2 个轴内部编码为 S#；P/S 不再代表固定物理量。
     "condition_axes": [
-        {
-            "column": "jzfh",
-            "min": 100.0,
-            "max": 660.0,
-            "step": 10.0,
-        },
+        # {
+        #     "column": "jzfh",
+        #     "min": 100.0,
+        #     "max": 660.0,
+        #     "step": 10.0,
+        # },
         {
             "column": "yyq_SO2",
             "min": 500.0,
-            "max": 7000.0,
-            "step": 200.0,
+            "max": 5000.0,
+            "step": 100.0,
         },
     ],
 
@@ -140,7 +140,7 @@ PLANT_CONFIG = {
             "display_name": "一级塔",
             "enabled": True,
             "ph_column": "xstjy_PH",
-            "ph_safe_range": [4.6, 5.6],
+            "ph_safe_range": [5.6, 6.8],
             "ph_guard_band": 0.15,
 
             # GUI 塔体实时测点。可按厂增删，pH 也可在此重复展示。
@@ -169,19 +169,19 @@ PLANT_CONFIG = {
                 {
                     "valve_id": "xst_v1",
                     "display_name": "一级塔供浆阀1",
-                    "column": "xst_FMKD1",
+                    "column": "xst_FMKD",
                     "min_opening": 0.0,
                     "max_opening": 100.0,
                     "action_threshold": 0.50,
                 },
-                {
-                    "valve_id": "xst_v2",
-                    "display_name": "一级塔供浆阀2",
-                    "column": "xst_FMKD2",
-                    "min_opening": 0.0,
-                    "max_opening": 100.0,
-                    "action_threshold": 0.50,
-                },
+                # {
+                #     "valve_id": "xst_v2",
+                #     "display_name": "一级塔供浆阀2",
+                #     "column": "xst_FMKD2",
+                #     "min_opening": 0.0,
+                #     "max_opening": 100.0,
+                #     "action_threshold": 0.50,
+                # },
             ],
 
             "supply_flows": [
@@ -200,7 +200,7 @@ PLANT_CONFIG = {
                 {
                     "pump_id": "xst_supply_A",
                     "display_name": "供浆泵2A",
-                    "value_column": "xstshsjy_APL",
+                    "value_column": "xstgjb_APL",
                     "unit": "Hz",
                     "digits": 1,
                     "run_threshold": 1.0,
@@ -208,7 +208,7 @@ PLANT_CONFIG = {
                 {
                     "pump_id": "xst_supply_B",
                     "display_name": "供浆泵2B",
-                    "value_column": "xstshsjy_BPL",
+                    "value_column": "xstgjb_BPL",
                     "unit": "Hz",
                     "digits": 1,
                     "run_threshold": 1.0,
@@ -271,36 +271,36 @@ PLANT_CONFIG = {
             # ],
             "supply_pumps": [],
         },
-        {
-            "tower_id": "apt",
-            "display_name": "二级塔",
-            "enabled": True,
-            "ph_column": "aptjy_PH",
-            "ph_safe_range": [5.6, 6.5],
-            "ph_guard_band": 0.15,
-            "monitor_fields": [
-                {
-                    "column": "aptjy_PH",
-                    "display_name": "浆液 pH",
-                    "unit": "",
-                    "digits": 2,
-                },
-            ],
-            "valves": [
-                {
-                    "valve_id": "apt_v1",
-                    "display_name": "二级塔供浆阀",
-                    "column": "apt_FMKD",
-                    "min_opening": 0.0,
-                    "max_opening": 100.0,
-                    "action_threshold": 0.50,
-                }
-            ],
-            "supply_flows": [],
-            "monitor_supply_pumps": [],
-            "circulation_pumps": [],
-            "supply_pumps": [],
-        },
+        # {
+        #     "tower_id": "apt",
+        #     "display_name": "二级塔",
+        #     "enabled": True,
+        #     "ph_column": "aptjy_PH",
+        #     "ph_safe_range": [5.6, 6.5],
+        #     "ph_guard_band": 0.15,
+        #     "monitor_fields": [
+        #         {
+        #             "column": "aptjy_PH",
+        #             "display_name": "浆液 pH",
+        #             "unit": "",
+        #             "digits": 2,
+        #         },
+        #     ],
+        #     "valves": [
+        #         {
+        #             "valve_id": "apt_v1",
+        #             "display_name": "二级塔供浆阀",
+        #             "column": "apt_FMKD",
+        #             "min_opening": 0.0,
+        #             "max_opening": 100.0,
+        #             "action_threshold": 0.50,
+        #         }
+        #     ],
+        #     "supply_flows": [],
+        #     "monitor_supply_pumps": [],
+        #     "circulation_pumps": [],
+        #     "supply_pumps": [],
+        # },
     ],
 }
 
