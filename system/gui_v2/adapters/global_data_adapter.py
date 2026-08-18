@@ -9,6 +9,15 @@ from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 from system.model.config.plant_config import PLANT_CONFIG
 
+from ..reason_text import (
+    summarize_reason_codes,
+    translate_control_mode,
+    translate_decision_state,
+    translate_experience_source,
+    translate_magnitude,
+    translate_reason_codes,
+)
+
 
 class GlobalDataAdapter(QObject):
     """把现有 GLOBAL_DATA 转换成 GUI V2 使用的稳定字段。
@@ -22,6 +31,9 @@ class GlobalDataAdapter(QObject):
     除首页固定摘要字段外，``realtime_values`` 会根据 ``PLANT_CONFIG`` 动态收集
     当前厂配置的烟气侧、塔体、阀门、供浆流量、供浆泵和浆液循环泵测点，
     因此实时监控页不需要把设备数量写死。
+
+    第二模块的英文机器标识仍原样保存在 ``*_code`` / ``reason_codes`` 中；
+    面向操作员的首页与供浆控制页使用本适配器生成的中文展示字段。
     """
 
     data_ready = pyqtSignal(dict)
@@ -185,9 +197,9 @@ class GlobalDataAdapter(QObject):
 
     @classmethod
     def _pump_text(cls, data: Mapping[str, Any]) -> str:
-        # 新现场：供浆泵 2A/2B 频率反馈。
-        a_freq = cls._pick(data, "xstshsjy_APL")
-        b_freq = cls._pick(data, "xstshsjy_BPL")
+        # 当前现场：供浆泵 2A/2B 频率反馈。
+        a_freq = cls._pick(data, "xstgjb_APL")
+        b_freq = cls._pick(data, "xstgjb_BPL")
         parts = []
         if not cls._is_missing(a_freq):
             try:
@@ -231,7 +243,7 @@ class GlobalDataAdapter(QObject):
             return "供浆重分配"
         if family:
             return str(family)
-        return "HOLD"
+        return "保持当前供浆"
 
     @classmethod
     def _delta_text(cls, value: Any) -> str:
@@ -252,13 +264,6 @@ class GlobalDataAdapter(QObject):
             except (TypeError, ValueError):
                 return str(only_value)
         return " / ".join(formatted)
-
-    @classmethod
-    def _reason_text(cls, value: Any) -> str:
-        reasons = [str(item) for item in cls._as_list(value) if str(item).strip()]
-        if not reasons:
-            return "暂无算法 reason_codes。"
-        return " · ".join(reasons[:4])
 
     @classmethod
     def _status(cls, data: Mapping[str, Any]) -> tuple[str, str]:
@@ -307,6 +312,30 @@ class GlobalDataAdapter(QObject):
     def _build_ui_data(self, data: Mapping[str, Any]) -> Dict[str, Any]:
         family = self._pick(data, "slurry_policy_action_family", default="HOLD")
         direction = self._pick(data, "slurry_policy_action_direction", default="HOLD")
+        magnitude_code = self._pick(
+            data, "slurry_policy_action_magnitude", default="HOLD"
+        )
+        experience_source_code = self._pick(
+            data, "slurry_policy_experience_source", default="NONE"
+        )
+        decision_state_code = self._pick(
+            data, "slurry_policy_decision_status", default="WAITING"
+        )
+        control_mode_code = self._pick(
+            data, "slurry_policy_control_mode", default="WAITING"
+        )
+        reason_codes = self._as_list(
+            self._pick(data, "slurry_policy_reason_codes", default=[])
+        )
+        action_text = self._action_text(family, direction)
+        reason_details = translate_reason_codes(reason_codes)
+        reason_summary = summarize_reason_codes(
+            reason_codes,
+            action=action_text,
+            magnitude=magnitude_code,
+            decision_state=decision_state_code,
+            control_mode=control_mode_code,
+        )
         safety_state, safety_text = self._status(data)
 
         ph = self._pick(data, "xstjy_PH")
@@ -356,15 +385,13 @@ class GlobalDataAdapter(QObject):
             "xstshsjy_LL": flow,
             "pump": self._pump_text(data),
             "tower_running": tower_running,
-            "experience_source": self._pick(
-                data, "slurry_policy_experience_source", default="NONE"
-            ),
-            "action": self._action_text(family, direction),
+            "experience_source": translate_experience_source(experience_source_code),
+            "experience_source_code": experience_source_code,
+            "action": action_text,
             "action_family": family,
             "action_direction": direction,
-            "magnitude": self._pick(
-                data, "slurry_policy_action_magnitude", default="HOLD"
-            ),
+            "magnitude": translate_magnitude(magnitude_code),
+            "magnitude_code": magnitude_code,
             "delta": self._delta_text(
                 self._pick(
                     data, "slurry_policy_recommended_valve_deltas", default={}
@@ -380,18 +407,13 @@ class GlobalDataAdapter(QObject):
                     data, "slurry_policy_projected_valve_openings", default={}
                 )
             ),
-            "decision_state": self._pick(
-                data, "slurry_policy_decision_status", default="WAITING"
-            ),
-            "control_mode": self._pick(
-                data, "slurry_policy_control_mode", default="WAITING"
-            ),
-            "reason_codes": self._as_list(
-                self._pick(data, "slurry_policy_reason_codes", default=[])
-            ),
-            "reason": self._reason_text(
-                self._pick(data, "slurry_policy_reason_codes", default=[])
-            ),
+            "decision_state": translate_decision_state(decision_state_code),
+            "decision_state_code": decision_state_code,
+            "control_mode": translate_control_mode(control_mode_code),
+            "control_mode_code": control_mode_code,
+            "reason_codes": reason_codes,
+            "reason_details": reason_details,
+            "reason": reason_summary,
             "historical_reliability": self._pick(
                 data, "slurry_policy_historical_reliability"
             ),
