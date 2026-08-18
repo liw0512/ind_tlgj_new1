@@ -24,7 +24,6 @@ from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 from .history_data_service import HistoryDataService
 from .reason_text import (
-    summarize_reason_codes,
     translate_control_mode,
     translate_decision_state,
     translate_experience_source,
@@ -87,6 +86,17 @@ def _axis_range(values: Sequence[float], *, minimum_span: float = 1.0) -> tuple[
     return low, high
 
 
+def _format_duration(seconds: Any) -> str:
+    value = _number(seconds)
+    if value is None or value <= 0:
+        return "0分钟"
+    if value < 3600:
+        return f"{value / 60.0:.0f}分钟"
+    if value < 86400:
+        return f"{value / 3600.0:.1f}小时"
+    return f"{value / 86400.0:.1f}天"
+
+
 class HistoryQueryThread(QThread):
     result_ready = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -109,7 +119,7 @@ class HistoryQueryThread(QThread):
 
 
 class HistoryLineChart(QWidget):
-    """轻量双 Y 轴历史曲线；不引入第三方绘图库。"""
+    """轻量双 Y 轴历史曲线，并显式展示数据库历史空窗。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -118,6 +128,9 @@ class HistoryLineChart(QWidget):
         self._left_series: List[Dict[str, Any]] = []
         self._right_series: List[Dict[str, Any]] = []
         self._events: List[Dict[str, Any]] = []
+        self._gaps: List[Dict[str, Any]] = []
+        self._range_start: Optional[dt.datetime] = None
+        self._range_end: Optional[dt.datetime] = None
         self._cursor_time: Optional[dt.datetime] = None
         self._left_unit = ""
         self._right_unit = ""
@@ -130,6 +143,9 @@ class HistoryLineChart(QWidget):
         left_series: Sequence[Mapping[str, Any]],
         right_series: Sequence[Mapping[str, Any]],
         events: Sequence[Mapping[str, Any]],
+        gaps: Sequence[Mapping[str, Any]],
+        start: dt.datetime,
+        end: dt.datetime,
         left_unit: str = "",
         right_unit: str = "",
     ) -> None:
@@ -137,26 +153,23 @@ class HistoryLineChart(QWidget):
         self._left_series = []
         self._right_series = []
         self._events = [dict(item) for item in events]
+        self._gaps = [dict(item) for item in gaps]
+        self._range_start = start
+        self._range_end = end
         self._left_unit = left_unit
         self._right_unit = right_unit
 
         if frame is not None and not frame.empty and "date" in frame.columns:
-            self._times = [
-                item for item in (_to_datetime(value) for value in frame["date"].tolist())
-                if item is not None
-            ]
-            if len(self._times) != len(frame):
-                valid = frame.copy()
-                valid["date"] = pd.to_datetime(valid["date"], errors="coerce")
-                valid = valid.dropna(subset=["date"])
-                self._times = [value.to_pydatetime() for value in valid["date"]]
-                frame = valid.reset_index(drop=True)
+            valid = frame.copy()
+            valid["date"] = pd.to_datetime(valid["date"], errors="coerce")
+            valid = valid.dropna(subset=["date"]).reset_index(drop=True)
+            self._times = [value.to_pydatetime() for value in valid["date"]]
 
             for index, spec in enumerate(left_series):
                 column = str(spec.get("column") or "")
-                if column not in frame.columns:
+                if column not in valid.columns:
                     continue
-                values = [_number(value) for value in frame[column].tolist()]
+                values = [_number(value) for value in valid[column].tolist()]
                 self._left_series.append({
                     "name": str(spec.get("name") or column),
                     "values": values,
@@ -166,9 +179,9 @@ class HistoryLineChart(QWidget):
             offset = len(self._left_series)
             for index, spec in enumerate(right_series):
                 column = str(spec.get("column") or "")
-                if column not in frame.columns:
+                if column not in valid.columns:
                     continue
-                values = [_number(value) for value in frame[column].tolist()]
+                values = [_number(value) for value in valid[column].tolist()]
                 self._right_series.append({
                     "name": str(spec.get("name") or column),
                     "values": values,
@@ -189,11 +202,19 @@ class HistoryLineChart(QWidget):
                     values.append(float(value))
         return values
 
+    def _plot_range(self) -> tuple[Optional[dt.datetime], Optional[dt.datetime]]:
+        start = self._range_start
+        end = self._range_end
+        if start is None and self._times:
+            start = self._times[0]
+        if end is None and self._times:
+            end = self._times[-1]
+        return start, end
+
     def _x(self, timestamp: dt.datetime, plot: QRectF) -> float:
-        if not self._times:
+        start, end = self._plot_range()
+        if start is None or end is None:
             return plot.left()
-        start = self._times[0]
-        end = self._times[-1]
         span = max(1.0, (end - start).total_seconds())
         ratio = (timestamp - start).total_seconds() / span
         return plot.left() + max(0.0, min(1.0, ratio)) * plot.width()
@@ -202,6 +223,48 @@ class HistoryLineChart(QWidget):
     def _y(value: float, low: float, high: float, plot: QRectF) -> float:
         ratio = (float(value) - low) / max(1e-12, high - low)
         return plot.bottom() - max(0.0, min(1.0, ratio)) * plot.height()
+
+    def _crosses_gap(self, previous: dt.datetime, current: dt.datetime) -> bool:
+        left = min(previous, current)
+        right = max(previous, current)
+        for gap in self._gaps:
+            gap_start = _to_datetime(gap.get("start"))
+            gap_end = _to_datetime(gap.get("end"))
+            if gap_start is None or gap_end is None:
+                continue
+            if left < gap_end and right > gap_start:
+                return True
+        return False
+
+    def _draw_gap_regions(self, painter: QPainter, plot: QRectF) -> None:
+        start, end = self._plot_range()
+        if start is None or end is None or end <= start:
+            return
+        fill = QColor("#64748b")
+        fill.setAlpha(52)
+        border = QColor("#8290a3")
+        border.setAlpha(110)
+        text = QColor("#aebbd0")
+
+        for gap in self._gaps:
+            gap_start = _to_datetime(gap.get("start"))
+            gap_end = _to_datetime(gap.get("end"))
+            if gap_start is None or gap_end is None:
+                continue
+            clipped_start = max(start, gap_start)
+            clipped_end = min(end, gap_end)
+            if clipped_end <= clipped_start:
+                continue
+            x1 = self._x(clipped_start, plot)
+            x2 = self._x(clipped_end, plot)
+            region = QRectF(x1, plot.top(), max(1.0, x2 - x1), plot.height())
+            painter.fillRect(region, fill)
+            painter.setPen(QPen(border, 1, Qt.DashLine))
+            painter.drawLine(QPointF(region.left(), plot.top()), QPointF(region.left(), plot.bottom()))
+            painter.drawLine(QPointF(region.right(), plot.top()), QPointF(region.right(), plot.bottom()))
+            if region.width() >= 82:
+                painter.setPen(text)
+                painter.drawText(region.adjusted(4, 4, -4, -4), Qt.AlignCenter, "无历史数据\n未记录")
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -214,7 +277,8 @@ class HistoryLineChart(QWidget):
         text_color = QColor("#9fb4d4")
         painter.setFont(QFont("Microsoft YaHei", 9))
 
-        if len(self._times) < 2:
+        start, end = self._plot_range()
+        if start is None or end is None or end <= start:
             painter.setPen(text_color)
             painter.drawText(plot, Qt.AlignCenter, self._empty_text)
             return
@@ -236,8 +300,6 @@ class HistoryLineChart(QWidget):
             painter.drawText(QRectF(0, y - 9, plot.left() - 8, 18), Qt.AlignRight | Qt.AlignVCenter, f"{left_value:.1f}")
             painter.drawText(QRectF(plot.right() + 8, y - 9, self.width() - plot.right() - 8, 18), Qt.AlignLeft | Qt.AlignVCenter, f"{right_value:.1f}")
 
-        start = self._times[0]
-        end = self._times[-1]
         span = end - start
         for index in range(7):
             ratio = index / 6.0
@@ -249,22 +311,24 @@ class HistoryLineChart(QWidget):
             painter.setPen(text_color)
             painter.drawText(QRectF(x - 38, plot.bottom() + 7, 76, 30), Qt.AlignHCenter | Qt.AlignTop, label)
 
+        self._draw_gap_regions(painter, plot)
+
         if self._left_unit:
             painter.setPen(text_color)
-            painter.drawText(QRectF(plot.left(), 4, 120, 18), Qt.AlignLeft, f"左轴：{self._left_unit}")
+            painter.drawText(QRectF(plot.left(), 4, 180, 18), Qt.AlignLeft, f"左轴：{self._left_unit}")
         if self._right_unit:
             painter.setPen(text_color)
-            painter.drawText(QRectF(plot.right() - 120, 4, 120, 18), Qt.AlignRight, f"右轴：{self._right_unit}")
+            painter.drawText(QRectF(plot.right() - 220, 4, 220, 18), Qt.AlignRight, f"右轴：{self._right_unit}")
 
-        legend_x = plot.left() + 130
+        legend_x = plot.left() + 190
         legend_y = 13
         for item in [*self._left_series, *self._right_series]:
             painter.setPen(QPen(item["color"], 3))
             painter.drawLine(QPointF(legend_x, legend_y), QPointF(legend_x + 16, legend_y))
             painter.setPen(text_color)
             name = str(item["name"])
-            painter.drawText(QRectF(legend_x + 21, 4, 120, 20), Qt.AlignLeft | Qt.AlignVCenter, name)
-            legend_x += 28 + min(130, max(58, len(name) * 12))
+            painter.drawText(QRectF(legend_x + 21, 4, 130, 20), Qt.AlignLeft | Qt.AlignVCenter, name)
+            legend_x += 28 + min(140, max(62, len(name) * 12))
 
         for event_item in self._events:
             timestamp = _to_datetime(event_item.get("time"))
@@ -272,12 +336,15 @@ class HistoryLineChart(QWidget):
                 continue
             x = self._x(timestamp, plot)
             color = _EVENT_COLORS.get(str(event_item.get("type")), QColor("#64748b"))
-            pen = QPen(color, 1, Qt.DashLine)
-            painter.setPen(pen)
+            painter.setPen(QPen(color, 1, Qt.DashLine))
             painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
 
         self._draw_series(painter, plot, self._left_series, left_low, left_high)
         self._draw_series(painter, plot, self._right_series, right_low, right_high)
+
+        if not self._times:
+            painter.setPen(text_color)
+            painter.drawText(plot, Qt.AlignCenter, self._empty_text)
 
         if self._cursor_time is not None and start <= self._cursor_time <= end:
             x = self._x(self._cursor_time, plot)
@@ -295,18 +362,26 @@ class HistoryLineChart(QWidget):
         for item in series:
             painter.setPen(QPen(item["color"], 2))
             previous: Optional[QPointF] = None
+            previous_time: Optional[dt.datetime] = None
             values = item.get("values", [])
             for index, value in enumerate(values):
                 if index >= len(self._times) or value is None:
                     previous = None
+                    previous_time = None
                     continue
+                current_time = self._times[index]
                 point = QPointF(
-                    self._x(self._times[index], plot),
+                    self._x(current_time, plot),
                     self._y(float(value), low, high, plot),
                 )
-                if previous is not None:
+                if (
+                    previous is not None
+                    and previous_time is not None
+                    and not self._crosses_gap(previous_time, current_time)
+                ):
                     painter.drawLine(previous, point)
                 previous = point
+                previous_time = current_time
 
 
 class EventTimelineWidget(QWidget):
@@ -314,12 +389,20 @@ class EventTimelineWidget(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(125)
         self._events: List[Dict[str, Any]] = []
+        self._gaps: List[Dict[str, Any]] = []
         self._start: Optional[dt.datetime] = None
         self._end: Optional[dt.datetime] = None
         self._cursor_time: Optional[dt.datetime] = None
 
-    def set_data(self, events: Sequence[Mapping[str, Any]], start: dt.datetime, end: dt.datetime) -> None:
+    def set_data(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        gaps: Sequence[Mapping[str, Any]],
+        start: dt.datetime,
+        end: dt.datetime,
+    ) -> None:
         self._events = [dict(item) for item in events]
+        self._gaps = [dict(item) for item in gaps]
         self._start = start
         self._end = end
         self.update()
@@ -328,21 +411,48 @@ class EventTimelineWidget(QWidget):
         self._cursor_time = value
         self.update()
 
+    def _x(self, timestamp: dt.datetime, rect: QRectF) -> float:
+        if self._start is None or self._end is None:
+            return rect.left()
+        span = max(1.0, (self._end - self._start).total_seconds())
+        ratio = (timestamp - self._start).total_seconds() / span
+        return rect.left() + max(0.0, min(1.0, ratio)) * rect.width()
+
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setFont(QFont("Microsoft YaHei", 9))
         rect = QRectF(self.rect()).adjusted(24, 18, -24, -18)
         baseline_y = rect.center().y()
-        painter.setPen(QPen(QColor("#34445f"), 2))
-        painter.drawLine(QPointF(rect.left(), baseline_y), QPointF(rect.right(), baseline_y))
 
         if self._start is None or self._end is None or self._end <= self._start:
             painter.setPen(QColor("#9fb4d4"))
             painter.drawText(rect, Qt.AlignCenter, "暂无控制事件")
             return
 
-        span = max(1.0, (self._end - self._start).total_seconds())
+        gap_fill = QColor("#64748b")
+        gap_fill.setAlpha(58)
+        gap_text = QColor("#aebbd0")
+        for gap in self._gaps:
+            gap_start = _to_datetime(gap.get("start"))
+            gap_end = _to_datetime(gap.get("end"))
+            if gap_start is None or gap_end is None:
+                continue
+            clipped_start = max(self._start, gap_start)
+            clipped_end = min(self._end, gap_end)
+            if clipped_end <= clipped_start:
+                continue
+            x1 = self._x(clipped_start, rect)
+            x2 = self._x(clipped_end, rect)
+            region = QRectF(x1, rect.top(), max(1.0, x2 - x1), rect.height())
+            painter.fillRect(region, gap_fill)
+            if region.width() >= 90:
+                painter.setPen(gap_text)
+                painter.drawText(region.adjusted(3, 3, -3, -3), Qt.AlignCenter, "无历史数据")
+
+        painter.setPen(QPen(QColor("#34445f"), 2))
+        painter.drawLine(QPointF(rect.left(), baseline_y), QPointF(rect.right(), baseline_y))
+
         labeled = 0
         label_limit = 10
         event_count = max(1, len(self._events))
@@ -352,8 +462,7 @@ class EventTimelineWidget(QWidget):
             stamp = _to_datetime(item.get("time"))
             if stamp is None or stamp < self._start or stamp > self._end:
                 continue
-            ratio = (stamp - self._start).total_seconds() / span
-            x = rect.left() + ratio * rect.width()
+            x = self._x(stamp, rect)
             color = _EVENT_COLORS.get(str(item.get("type")), QColor("#64748b"))
             painter.setPen(QPen(color, 2))
             painter.setBrush(color)
@@ -367,13 +476,12 @@ class EventTimelineWidget(QWidget):
                 painter.drawText(QRectF(x - 55, baseline_y - 48, 110, 24), Qt.AlignHCenter | Qt.AlignBottom, text)
                 labeled += 1
 
-        if not self._events:
+        if not self._events and not self._gaps:
             painter.setPen(QColor("#9fb4d4"))
             painter.drawText(rect, Qt.AlignCenter, "当前时间范围内没有控制事件")
 
         if self._cursor_time is not None and self._start <= self._cursor_time <= self._end:
-            ratio = (self._cursor_time - self._start).total_seconds() / span
-            x = rect.left() + ratio * rect.width()
+            x = self._x(self._cursor_time, rect)
             painter.setPen(QPen(QColor("#ffffff"), 1, Qt.DashLine))
             painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
 
@@ -386,6 +494,8 @@ class HistoryPage(QWidget):
         self._worker: Optional[HistoryQueryThread] = None
         self._cache: "OrderedDict[tuple[str, str], Dict[str, Any]]" = OrderedDict()
         self._events: List[Dict[str, Any]] = []
+        self._gaps: List[Dict[str, Any]] = []
+        self._queried_once = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -424,6 +534,9 @@ class HistoryPage(QWidget):
         section = QLabel("智能控制事件时间线")
         section.setProperty("role", "sectionTitle")
         event_layout.addWidget(section)
+        note = QLabel("灰色区间表示数据库没有历史记录；仅凭数据空窗不判定为机组停机。")
+        note.setProperty("role", "muted")
+        event_layout.addWidget(note)
         self.timeline = EventTimelineWidget()
         event_layout.addWidget(self.timeline)
         root.addWidget(event_card)
@@ -438,7 +551,11 @@ class HistoryPage(QWidget):
         table_layout.addWidget(self.event_table)
         root.addWidget(table_card)
 
-        QTimer.singleShot(200, self.query_history)
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not self._queried_once:
+            self._queried_once = True
+            QTimer.singleShot(100, self.query_history)
 
     def _build_query_bar(self) -> QWidget:
         card = CardFrame()
@@ -552,7 +669,16 @@ class HistoryPage(QWidget):
         events = result.get("events")
         if not isinstance(events, list):
             events = []
+        gaps = result.get("gaps")
+        if not isinstance(gaps, list):
+            gaps = []
         self._events = [dict(item) for item in events]
+        self._gaps = [dict(item) for item in gaps]
+
+        start = result.get("start")
+        end = result.get("end")
+        start = start if isinstance(start, dt.datetime) else self._python_datetime(self.start_edit)
+        end = end if isinstance(end, dt.datetime) else self._python_datetime(self.end_edit)
 
         so2_left = [{"column": "yyq_SO2", "name": "原烟气 SO₂"}]
         so2_right = [
@@ -564,6 +690,9 @@ class HistoryPage(QWidget):
             left_series=so2_left,
             right_series=so2_right,
             events=self._events,
+            gaps=self._gaps,
+            start=start,
+            end=end,
             left_unit="mg/Nm³（原烟气）",
             right_unit="mg/Nm³（净烟气/目标）",
         )
@@ -580,19 +709,27 @@ class HistoryPage(QWidget):
             left_series=left_supply,
             right_series=right_supply,
             events=self._events,
+            gaps=self._gaps,
+            start=start,
+            end=end,
             left_unit="pH",
             right_unit="供浆流量 / 阀位 / 泵反馈",
         )
 
-        start = result.get("start")
-        end = result.get("end")
-        start = start if isinstance(start, dt.datetime) else self._python_datetime(self.start_edit)
-        end = end if isinstance(end, dt.datetime) else self._python_datetime(self.end_edit)
-        self.timeline.set_data(self._events, start, end)
+        self.timeline.set_data(self._events, self._gaps, start, end)
         self._populate_event_table(self._events)
 
+        gap_count = int(result.get("gap_count", 0) or 0)
+        gap_text = ""
+        if gap_count:
+            gap_text = f" · 数据缺口 {gap_count} 段（约{_format_duration(result.get('gap_duration_seconds'))}）"
+        raw_points = int(result.get("raw_process_point_count", result.get("process_point_count", 0)) or 0)
+        shown_points = int(result.get("process_point_count", 0) or 0)
+        point_text = f"原始 {raw_points} 点"
+        if shown_points != raw_points:
+            point_text += f" / 展示 {shown_points} 点"
         self.status_label.setText(
-            f"{source} · 曲线 {int(result.get('process_point_count', 0))} 点 · 控制事件 {int(result.get('event_count', 0))} 条"
+            f"{source} · {point_text} · 控制事件 {int(result.get('event_count', 0) or 0)} 条{gap_text}"
         )
 
     def _populate_event_table(self, events: Sequence[Mapping[str, Any]]) -> None:
@@ -606,7 +743,11 @@ class HistoryPage(QWidget):
             title = str(event.get("title") or "--")
             magnitude = translate_magnitude(event.get("magnitude")) if event.get("magnitude") else "--"
             source = translate_experience_source(event.get("source")) if event.get("source") else "--"
-            status = translate_decision_state(event.get("status")) if event.get("status") else translate_control_mode(event.get("mode"))
+            status = (
+                translate_decision_state(event.get("status"))
+                if event.get("status")
+                else translate_control_mode(event.get("mode"))
+            )
             reasons = event.get("reason_codes")
             if not isinstance(reasons, list):
                 reasons = []
@@ -620,7 +761,9 @@ class HistoryPage(QWidget):
             self.event_table.cellClicked.disconnect()
         except Exception:
             pass
-        self.event_table.cellClicked.connect(lambda row, column, items=display_events: self._focus_event(items, row))
+        self.event_table.cellClicked.connect(
+            lambda row, column, items=display_events: self._focus_event(items, row)
+        )
 
     def _focus_event(self, events: Sequence[Mapping[str, Any]], row: int) -> None:
         if row < 0 or row >= len(events):
