@@ -93,8 +93,8 @@ class MockDataSource(QObject):
             "xst_FMKD1": self._valve,
             "xst_FMKD2": max(0.0, min(100.0, self._valve + 1.3)),
             "xstshsjy_LL": self._flow,
-            "xstshsjy_APL": 45.2,
-            "xstshsjy_BPL": 0.0,
+            "xstgjb_APL": 45.2,
+            "xstgjb_BPL": 0.0,
             "xstjyxhb_ADL": 36.5,
             "xstjyxhb_BDL": 35.8,
             "xstjyxhb_CDL": 34.7,
@@ -174,7 +174,7 @@ class OverviewPage(QWidget):
 
         middle = QHBoxLayout()
         middle.setSpacing(14)
-        self.tower = TowerCard("#2 吸收塔")
+        self.tower = TowerCard("吸收塔")
         self.action = ActionCard()
         middle.addWidget(self.tower, 1)
         middle.addWidget(self.action, 1)
@@ -389,7 +389,7 @@ class DashboardWindow(QMainWindow):
         left = QVBoxLayout()
         self.page_title = QLabel("运行总览")
         self.page_title.setProperty("role", "sectionTitle")
-        self.page_subtitle = QLabel("#2 FGD · 智能供浆控制")
+        self.page_subtitle = QLabel("智能供浆控制")
         self.page_subtitle.setProperty("role", "muted")
         left.addWidget(self.page_title)
         left.addWidget(self.page_subtitle)
