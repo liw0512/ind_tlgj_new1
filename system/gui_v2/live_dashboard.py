@@ -42,7 +42,7 @@ def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
 
 
 def install_overview_title(window: DashboardWindow) -> None:
-    """在运行总览内容顶部增加厂/机组级标题，并整体下移正文区域。"""
+    """在运行总览内容顶部增加厂/机组级标题，并简化当前工况卡片。"""
 
     overview_layout = window.overview.layout()
     if overview_layout is None:
@@ -57,6 +57,9 @@ def install_overview_title(window: DashboardWindow) -> None:
 
     overview_layout.insertWidget(0, title)
     overview_layout.insertSpacing(1, 8)
+
+    # 首页当前工况只展示工况号；稳定/切换状态仍保留在数据中供算法和第三页使用。
+    window.overview.condition.unit_label.hide()
 
     # 保存引用，避免后续页面扩展时标题对象被误认为临时控件。
     window.overview.system_title = title
