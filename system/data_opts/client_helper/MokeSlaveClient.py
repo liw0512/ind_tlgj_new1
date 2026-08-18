@@ -1,103 +1,89 @@
 import csv
 import time
-import struct
 import traceback
 from datetime import datetime
-from pymodbus.server import StartSerialServer  # 改为使用串行服务器
-from pymodbus.datastore import ModbusSequentialDataBlock
-from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
-import threading
 
 
 class MokeSlaveClient:
+    """CSV 实时回放客户端。
+
+    CSV 表头直接作为进入 GLOBAL_DATA 的标准字段名，不再依赖 floats[0]/floats[1]
+    这类固定列序。新增/删除现场字段时，只要 CSV 表头已经按通讯层约定命名，P4PC
+    就会收到完整字段，无需同步修改本文件或 Process4MapControl 的输入字段列表。
+    """
+
     def __init__(self, global_data):
         self.global_data = global_data
         self._last_values = {}
-        # consume_data 和前端读取的是顶层 GLOBAL_DATA 状态。
+        self.playback_interval_seconds = 1.0
         self.global_data["connection_status"] = True
 
-    def _to_float(self, key, value):
+    def _coerce_value(self, key, value):
+        """数值尽量转 float；非数值状态字段保留字符串；空值沿用上一有效值。"""
         if value is None:
-            return self._last_values.get(key, 0.0)
+            return self._last_values.get(key)
 
         text = str(value).strip()
         if text == "" or text.lower() in {"nan", "none", "null"}:
-            return self._last_values.get(key, 0.0)
+            return self._last_values.get(key)
 
         try:
             result = float(text)
         except ValueError:
-            return self._last_values.get(key, 0.0)
+            result = text
 
         self._last_values[key] = result
         return result
 
-    def run(self):
+    def _build_frame(self, row):
+        # 测试回放使用当前系统时间，避免历史 CSV 时间导致在线数据过期判断。
+        frame = {
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
 
+        for key, value in row.items():
+            if key is None:
+                continue
+            column = str(key).strip()
+            if not column or column == "date":
+                continue
+            frame[column] = self._coerce_value(column, value)
+
+        # jym/通讯状态属于运行信息。CSV 若显式提供 jym 则保留其值，否则使用正常值50。
+        if frame.get("jym") is None:
+            frame["jym"] = 50
+        frame["connection_status"] = True
+        return frame
+
+    def run(self):
         try:
             self.global_data["connection_status"] = True
 
             with open(
                 r"F:\xiregangchang\ind_optim_serv_xire\files\selected_30s_processed.csv",
                 newline="",
+                encoding="utf-8-sig",
             ) as csvfile:
-
                 reader = csv.DictReader(csvfile)
-                # 跳过前5万行
-                for _ in range(1):
-                    try:
-                        next(reader)
-                    except StopIteration:
-                        print("文件行数少于5万行，将从头开始读取")
-                        # 如果文件行数不足，重新打开文件
-                        csvfile.seek(0)
-                        reader = csv.DictReader(csvfile)
-                        break
 
-                print("开始从第5万条数据读取...")
+                # 保留原测试逻辑：默认跳过第一条数据。
+                try:
+                    next(reader)
+                except StopIteration:
+                    csvfile.seek(0)
+                    reader = csv.DictReader(csvfile)
+
+                print("开始按 CSV 表头动态回放测试数据...")
                 for row in reader:
-
                     try:
-                        # 将浮点数编码为 Modbus 寄存器格式
-                        floats = []
-                        for key in row:
-                            # print(f"key={key}, row={row}")
-                            if key is not None and key != "date":
-                                floats.append(self._to_float(key, row[key]))
-                        if len(floats) < 14:
-                            floats.extend([0.0] * (14 - len(floats)))
-                        # print(f"Sent data: {floats}")
-
-                        # 构建标准数据格式
-                        std_data = {
-                            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "yyq_SO2": round(floats[0], 2),
-                            "jyq_SO2": round(floats[1], 2),
-                            "yyq_LL": round(floats[2], 2),
-                            "jyq_LL": round(floats[3], 2),
-                            "yyq_O2": round(floats[4], 2),
-                            "xstjy_PH": round(floats[5], 2),
-                            "xstjyxhb_ADL": round(floats[6], 2),
-                            "xstjyxhb_BDL": round(floats[7], 2),
-                            "xstjyxhb_CDL": round(floats[8], 2),
-                            "xstjyxhb_DDL": round(floats[9], 2),
-                            "xstjyxhb_EDL": round(floats[10], 2),
-                            "xstshsjy_MD": round(floats[11], 2),
-                            "xst_YW": round(floats[12], 2),
-                            "xstyhfj_ADL": round(floats[13], 2),
-                            "jym": 50,
-                            "connection_status": True,
-                        }
-                        # print(f"std_data={std_data}")
-
+                        std_data = self._build_frame(row)
                         self.global_data["connection_status"] = True
                         self.global_data["data"].append(std_data)
-
-                    except Exception as e:
+                    except Exception:
                         traceback.print_exc()
                     finally:
-                        time.sleep(1)
+                        time.sleep(self.playback_interval_seconds)
 
-        except Exception as e:
+        except Exception:
             self.global_data["connection_status"] = False
             traceback.print_exc()
