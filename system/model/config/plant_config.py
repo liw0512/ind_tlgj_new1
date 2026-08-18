@@ -1,10 +1,13 @@
 """厂级物理/信号配置唯一事实源。
 
 换厂时只修改本文件中的 ``PLANT_CONFIG``。第一模块 condition_model、第二模块
-slurry_policy_model、P4PC 集成层以及 GUI V2 实时监控页都从这里读取真正随厂变化
-的物理事实。
+slurry_policy_model、P4PC 集成层、数据库基础历史字段以及 GUI V2 实时监控页都从
+这里读取真正随厂变化的物理事实。
 
-标准过程字段名已经固定在 ``standard_fields.py``，不再在这里做二次字段映射。
+字段命名职责边界：
+- 通讯层负责把 DCS/PLC 原始点位映射成系统使用的字段名；
+- P4PC 接收通讯层传入的完整数据帧，不再维护现场字段白名单；
+- 本文件只描述这些字段在当前厂里的物理角色和设备拓扑。
 
 本文件只放“随厂变化”的内容：
 - 工况轴选择、范围与步长；
@@ -12,12 +15,18 @@ slurry_policy_model、P4PC 集成层以及 GUI V2 实时监控页都从这里读
 - 单塔/双塔结构、各塔 pH 字段和安全范围；
 - 每塔供浆阀数量/字段/量程；
 - 定频供浆泵电流阈值以及 pump -> valve 拓扑；
-- GUI 实时监控所需的烟气/塔体/流量/泵等可变测点列表。
+- GUI 实时监控所需的烟气/塔体/流量/泵等可变测点列表；
+- 少量既不属于上述拓扑、但仍要求长期写数据库的额外现场字段。
 
-训练周期、动作评分、响应窗口、线程/队列、数据库等非厂级算法/运行参数仍由
-各自模块配置管理，不应复制到这里。
+注意：不额外维护 tower_count / valve_count / pump_count。数量直接由 enabled=True 的
+塔和对应列表长度得到，避免“数量配置”和“实际列表”不一致。
+
+训练周期、动作评分、响应窗口、线程/队列等非厂级算法/运行参数仍由各自模块配置
+管理，不应复制到这里。
 """
 from __future__ import annotations
+
+from typing import Any, Mapping
 
 
 PLANT_CONFIG = {
@@ -31,6 +40,7 @@ PLANT_CONFIG = {
     # - outlet_signals：净烟气/出口侧；
     # - auxiliary_signals：氧化风等公共辅助系统。
     # digits 控制显示小数位；unit 仅用于显示，不参与算法计算。
+    # 这些 column 同时会自动进入基础历史数据库字段集合。
     "realtime_monitor": {
         "inlet_signals": [
             {
@@ -89,6 +99,13 @@ PLANT_CONFIG = {
     },
 
     # ------------------------------------------------------------------
+    # 若通讯层还传入其他字段，并希望这些字段长期进入 t_data1_filter_rt / 
+    # t_model_result，但它们既不属于工况轴、塔/阀/泵拓扑，也不需要在实时监控页
+    # 展示，可把标准字段名写在这里。这里只需要字段名，默认按数值 float8 保存。
+    # 示例："persistence_extra_fields": ["zml", "coal_quality_xxx"]
+    "persistence_extra_fields": [],
+
+    # ------------------------------------------------------------------
     # 工况轴唯一配置。支持 1 个或 2 个任意数值字段。
     # 第 1 个轴内部编码为 P#，第 2 个轴内部编码为 S#；P/S 不再代表固定物理量。
     "condition_axes": [
@@ -108,13 +125,15 @@ PLANT_CONFIG = {
 
     # ------------------------------------------------------------------
     # 塔/阀门/供浆泵拓扑唯一配置。
-    # - 单塔：将不用的塔 enabled=False，或删除该塔项；
-    # - 每塔 1/2/3/... 个阀：直接增删 valves，GUI 会自动生成同样数量的阀位卡；
-    # - supply_flows：GUI 纯监控供浆流量测点，可配置 0/1/N 个；
-    # - monitor_supply_pumps：GUI 纯监控供浆泵，可配置 0/1/N 台，支持频率/电流等；
-    # - circulation_pumps：GUI 纯监控浆液循环泵，可配置 0/1/N 台；
+    # - 单塔：仅保留一座 enabled=True 的塔；不用的塔 enabled=False 或删除；
+    # - 双塔：保留两座 enabled=True 的塔；不需要额外再写 tower_count=2；
+    # - 每塔 1/2/3/... 个阀：直接增删 valves，阀数量 = len(valves)；
+    # - supply_flows：供浆流量测点，可配置 0/1/N 个；
+    # - monitor_supply_pumps：GUI 监控供浆泵，可配置 0/1/N 台，支持频率/电流等；
+    # - circulation_pumps：浆液循环泵，可配置 0/1/N 台；
     # - supply_pumps：第二模块控制约束使用的“定频泵电流拓扑”，不要把仅用于
     #   显示的变频频率测点直接塞进 supply_pumps。
+    # 上述配置中的测点字段会自动进入数据库基础历史字段集合。
     "towers": [
         {
             "tower_id": "xst",
@@ -165,7 +184,6 @@ PLANT_CONFIG = {
                 },
             ],
 
-            # GUI 供浆流量。换厂时直接增删即可。
             "supply_flows": [
                 {
                     "flow_id": "xst_supply_flow_1",
@@ -285,3 +303,61 @@ PLANT_CONFIG = {
         },
     ],
 }
+
+
+def enabled_towers(config: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], ...]:
+    """返回当前厂所有启用塔；单塔/双塔由返回数量自然决定。"""
+    plant = PLANT_CONFIG if config is None else config
+    return tuple(
+        tower
+        for tower in (plant.get("towers", []) or [])
+        if tower.get("enabled", True)
+    )
+
+
+def configured_persistence_columns(
+    config: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """收集当前厂需要长期写入基础历史表的数值现场字段。
+
+    通讯层可以传入更多字段，P4PC 仍会透传；数据库只需要为算法/监控/显式要求
+    长期留档的字段建稳定列，避免每收到一个临时字段就动态改表结构。
+    """
+    plant = PLANT_CONFIG if config is None else config
+    columns: list[str] = []
+
+    def add(value: Any) -> None:
+        column = str(value or "").strip()
+        if column:
+            columns.append(column)
+
+    for axis in plant.get("condition_axes", []) or []:
+        add(axis.get("column"))
+
+    monitor = plant.get("realtime_monitor", {}) or {}
+    for group_name in ("inlet_signals", "outlet_signals", "auxiliary_signals"):
+        for item in monitor.get(group_name, []) or []:
+            add(item.get("column"))
+
+    for tower in enabled_towers(plant):
+        add(tower.get("ph_column"))
+        for item in tower.get("monitor_fields", []) or []:
+            add(item.get("column"))
+        for valve in tower.get("valves", []) or []:
+            add(valve.get("column"))
+        for flow in tower.get("supply_flows", []) or []:
+            add(flow.get("column"))
+        for pump in tower.get("monitor_supply_pumps", []) or []:
+            add(pump.get("value_column"))
+        for pump in tower.get("circulation_pumps", []) or []:
+            add(pump.get("value_column"))
+        for pump in tower.get("supply_pumps", []) or []:
+            add(pump.get("current_column"))
+
+    for item in plant.get("persistence_extra_fields", []) or []:
+        if isinstance(item, Mapping):
+            add(item.get("column"))
+        else:
+            add(item)
+
+    return tuple(dict.fromkeys(columns))
