@@ -22,9 +22,19 @@ from PyQt5.QtWidgets import (
 )
 
 from .adapters.global_data_adapter import GlobalDataAdapter
+from .decision_widgets import OperatorActionCard
 from .realtime_page import RealtimePage
+from .reason_text import (
+    summarize_reason_codes,
+    translate_control_mode,
+    translate_decision_state,
+    translate_experience_source,
+    translate_magnitude,
+    translate_reason_codes,
+)
+from .slurry_control_page import SlurryControlPage
 from .theme import build_stylesheet
-from .widgets import ActionCard, CardFrame, MetricCard, StatusPill, TowerCard, TrendWidget
+from .widgets import CardFrame, MetricCard, StatusPill, TowerCard, TrendWidget
 
 
 class MockDataSource(QObject):
@@ -52,21 +62,32 @@ class MockDataSource(QObject):
         self._flow = max(10.0, self._flow + random.uniform(-0.4, 0.4))
 
         error = self._jyq - self._target
+        experience_code = "LOCAL_CONDITION"
+        control_mode_code = "REGULAR"
         if abs(error) <= 1.0:
             action = "保持当前供浆"
-            magnitude = "HOLD"
+            direction = "HOLD"
+            magnitude_code = "HOLD"
             delta = "0.0 %"
-            reason = "净烟气 SO₂ 已进入目标死区，优先保持，等待过程自然响应。"
+            decision_code = "HOLD"
+            reason_codes = ["SO2_INSIDE_TARGET_DEADBAND", "HOLD_ACTION"]
+            recommended = {"xst_v1": 0.0}
         elif error > 0:
             action = "增加供浆"
-            magnitude = "SMALL" if error <= 3.0 else "MEDIUM"
-            delta = "+1.2 %" if magnitude == "SMALL" else "+2.5 %"
-            reason = "净烟气 SO₂ 高于目标，示例 LOCAL 经验建议增加供浆，当前 pH 仍在安全区间。"
+            direction = "INCREASE"
+            magnitude_code = "SMALL" if error <= 3.0 else "MEDIUM"
+            delta = "+1.2 %" if magnitude_code == "SMALL" else "+2.5 %"
+            decision_code = "RECOMMENDED"
+            reason_codes = ["OUTLET_SO2_ABOVE_TARGET", "SO2_ABOVE_TARGET", "EXPERIENCE_SOURCE:LOCAL_CONDITION"]
+            recommended = {"xst_v1": 1.2 if magnitude_code == "SMALL" else 2.5}
         else:
             action = "减少供浆"
-            magnitude = "MICRO"
+            direction = "DECREASE"
+            magnitude_code = "MICRO"
             delta = "-0.6 %"
-            reason = "净烟气 SO₂ 低于目标且具备余量，示例策略进行保守减浆。"
+            decision_code = "RECOMMENDED"
+            reason_codes = ["OUTLET_SO2_BELOW_TARGET", "SO2_BELOW_TARGET", "EXPERIENCE_SOURCE:LOCAL_CONDITION"]
+            recommended = {"xst_v1": -0.6}
 
         safety = "normal"
         safety_text = "正常"
@@ -90,8 +111,7 @@ class MockDataSource(QObject):
             "xstjy_PH": self._ph,
             "xstshsjy_MD": 1125.0 + random.uniform(-2.0, 2.0),
             "xst_YW": 7.42 + random.uniform(-0.03, 0.03),
-            "xst_FMKD1": self._valve,
-            "xst_FMKD2": max(0.0, min(100.0, self._valve + 1.3)),
+            "xst_FMKD": self._valve,
             "xstshsjy_LL": self._flow,
             "xstgjb_APL": 45.2,
             "xstgjb_BPL": 0.0,
@@ -100,9 +120,19 @@ class MockDataSource(QObject):
             "xstjyxhb_CDL": 34.7,
             "xstjyxhb_DDL": 33.9,
             "xstjyxhb_EDL": 0.2,
-            "aptjy_PH": 6.05 + random.uniform(-0.02, 0.02),
-            "apt_FMKD": 28.5 + random.uniform(-0.2, 0.2),
         }
+
+        projected = {
+            key: self._valve + float(value)
+            for key, value in recommended.items()
+        }
+        reason_summary = summarize_reason_codes(
+            reason_codes,
+            action=action,
+            magnitude=magnitude_code,
+            decision_state=decision_code,
+            control_mode=control_mode_code,
+        )
 
         self.data_ready.emit(
             {
@@ -118,13 +148,27 @@ class MockDataSource(QObject):
                 "xstshsjy_LL": self._flow,
                 "pump": "2A 45.2 Hz / 2B 0.0 Hz",
                 "tower_running": True,
-                "experience_source": "LOCAL_CONDITION",
+                "experience_source": translate_experience_source(experience_code),
+                "experience_source_code": experience_code,
                 "action": action,
-                "magnitude": magnitude,
+                "action_family": "HOLD" if direction == "HOLD" else "TOWER:xst|SUPPLY",
+                "action_direction": direction,
+                "magnitude": translate_magnitude(magnitude_code),
+                "magnitude_code": magnitude_code,
                 "delta": delta,
-                "decision_state": "RECOMMENDED" if magnitude != "HOLD" else "HOLD",
-                "control_mode": "NORMAL",
-                "reason": reason,
+                "recommended_valve_deltas": recommended,
+                "projected_valve_openings": projected,
+                "decision_state": translate_decision_state(decision_code),
+                "decision_state_code": decision_code,
+                "control_mode": translate_control_mode(control_mode_code),
+                "control_mode_code": control_mode_code,
+                "reason_codes": reason_codes,
+                "reason_details": translate_reason_codes(reason_codes),
+                "reason": reason_summary,
+                "historical_reliability": 82.4,
+                "historical_safety_score": 94.0,
+                "historical_direction_consistency": 0.86,
+                "integration_valid": True,
                 "safety_state": safety,
                 "safety_text": safety_text,
                 "connection_status": True,
@@ -175,7 +219,7 @@ class OverviewPage(QWidget):
         middle = QHBoxLayout()
         middle.setSpacing(14)
         self.tower = TowerCard("吸收塔")
-        self.action = ActionCard()
+        self.action = OperatorActionCard()
         middle.addWidget(self.tower, 1)
         middle.addWidget(self.action, 1)
         root.addLayout(middle)
@@ -224,12 +268,14 @@ class OverviewPage(QWidget):
             running=bool(data.get("tower_running", False)),
         )
         self.action.update_values(
-            source=str(data.get("experience_source", "NONE")),
-            action=str(data.get("action", "HOLD")),
-            magnitude=str(data.get("magnitude", "HOLD")),
+            source=str(data.get("experience_source", "无可用经验")),
+            action=str(data.get("action", "保持当前供浆")),
+            magnitude=str(data.get("magnitude", "保持")),
             delta=str(data.get("delta", "0.0 %")),
-            state=str(data.get("decision_state", "WAITING")),
-            mode=str(data.get("control_mode", "WAITING")),
+            state=str(data.get("decision_state", "等待")),
+            mode=str(data.get("control_mode", "等待")),
+            state_code=str(data.get("decision_state_code", "WAITING")),
+            mode_code=str(data.get("control_mode_code", "WAITING")),
             reason=str(data.get("reason", "")),
         )
 
@@ -292,16 +338,10 @@ class DashboardWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.overview = OverviewPage()
         self.realtime = RealtimePage()
+        self.slurry = SlurryControlPage()
         self.stack.addWidget(self._scroll_wrap(self.overview))
         self.stack.addWidget(self._scroll_wrap(self.realtime))
-        self.stack.addWidget(
-            self._scroll_wrap(
-                PlaceholderPage(
-                    "供浆控制",
-                    "用于展示 slurry_policy_model 的候选来源、动作、强度、阀位投影、可靠性和 reason_codes。",
-                )
-            )
-        )
+        self.stack.addWidget(self._scroll_wrap(self.slurry))
         self.stack.addWidget(
             self._scroll_wrap(
                 PlaceholderPage(
@@ -314,7 +354,7 @@ class DashboardWindow(QMainWindow):
             self._scroll_wrap(
                 PlaceholderPage(
                     "报警信息",
-                    "集中显示数据异常、模型 BLOCKED、pH 安全边界、SO₂ 预警以及设备不可用原因。",
+                    "集中显示数据异常、模型阻断、pH 安全边界、SO₂ 预警以及设备不可用原因。",
                 )
             )
         )
@@ -437,6 +477,7 @@ class DashboardWindow(QMainWindow):
     def _on_data(self, data: dict):
         self.overview.update_data(data)
         self.realtime.update_data(data)
+        self.slurry.update_data(data)
         self.safety.set_state(
             str(data.get("safety_state", "warning")),
             str(data.get("safety_text", "等待数据")),
