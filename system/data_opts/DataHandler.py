@@ -41,10 +41,11 @@ class DataHandler:
         "jyxhb_dl2": ("xstjyxhb_BDL", "循环泵B电流"),
         "jyxhb_dl3": ("xstjyxhb_CDL", "循环泵C电流"),
         "jyxhb_dl4": ("xstjyxhb_DDL", "循环泵D电流"),
+        "jyxhb_dl5": ("xstjyxhb_EDL", "循环泵D电流"),
         "xstgjb_adl": ("xstgjb_ADL", "供浆泵A电流"),
         "xstgjb_bdl": ("xstgjb_BDL", "供浆泵B电流"),
-        "xst_fmkd1": ("xst_FMKD1", "供浆阀1开度"),
-        "xst_fmkd2": ("xst_FMKD2", "供浆阀2开度"),
+        "xst_fmkd1": ("xst_FMKD", "供浆阀开度"),
+        # "xst_fmkd2": ("xst_FMKD2", "供浆阀2开度"),
         "liquid_gas_ratio": ("liquid_gas_ratio", "液气比"),
     }
 
