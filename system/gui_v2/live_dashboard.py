@@ -12,6 +12,7 @@ from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
 
 from .demo_dashboard import DashboardWindow, build_application
+from .history_page import HistoryPage
 
 
 def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
@@ -65,6 +66,22 @@ def install_overview_title(window: DashboardWindow) -> None:
     window.overview.system_title = title
 
 
+def install_history_page(window: DashboardWindow) -> None:
+    """用数据库历史页替换 DashboardWindow 中第 4 页的占位页面。"""
+    history_index = 3
+    old_page = window.stack.widget(history_index)
+    history_page = HistoryPage(window)
+    wrapped = window._scroll_wrap(history_page)
+
+    if old_page is not None:
+        window.stack.removeWidget(old_page)
+        old_page.deleteLater()
+    window.stack.insertWidget(history_index, wrapped)
+
+    # 保存明确引用，后续可用于页面刷新、导出和事件定位扩展。
+    window.history = history_page
+
+
 def main() -> int:
     try:
         global_data: Dict[str, Any] = {"data": []}
@@ -73,6 +90,7 @@ def main() -> int:
         app = build_application()
         window = DashboardWindow(global_data, data_mode="live")
         install_overview_title(window)
+        install_history_page(window)
         # 防止未来重构时误释放后端对象。
         window._backend_refs = backend_refs
         window.show()
