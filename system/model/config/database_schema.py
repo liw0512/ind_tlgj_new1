@@ -4,6 +4,9 @@
 - t_data1_filter_rt_YYYY_M：data_preprocessor1 处理后的基础历史数据；
 - t_model_result_YYYY_M：同一基础数据 + condition_model + slurry_policy_model 在线结果。
 
+现场测点列不再在本文件重复硬编码。通讯层负责字段命名，P4PC 完整透传，真正需要
+长期留档的厂级字段由 ``plant_config.py`` 自动收集并建列。
+
 旧 t_data1_rt_*、cluster/Q-learning/PH_predict 结果字段不再属于当前架构。
 """
 from __future__ import annotations
@@ -17,39 +20,22 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 
 import pandas as pd
 
-from system.model.config.plant_config import PLANT_CONFIG
+from system.model.config.plant_config import (
+    PLANT_CONFIG,
+    configured_persistence_columns,
+    enabled_towers,
+)
 from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
-# 用户当前 data_preprocessor1 输出的基础字段。顺序同时作为 INSERT 顺序。
+# 这里只保留“系统固定/预处理派生”字段，不再写死某个厂的阀门、泵和测点。
+# 现场数值字段由 _append_plant_dynamic_fields() 从 plant_config 自动加入。
 _BASE_FIELDS = OrderedDict([
     ("id", "uuid NOT NULL"),
     ("date", "timestamp(6) NOT NULL"),
-    ("xstshsjy_MD", "float8"),
-    ("xstgjb_ADL", "float8"),
-    ("xstgjb_BDL", "float8"),
-    ("xst_FMKD1", "float8"),
-    ("xst_FMKD2", "float8"),
-    ("yyq_SO2", "float8"),
-    ("jyq_SO2", "float8"),
-    ("yyq_O2", "float8"),
-    ("yyq_LL", "float8"),
-    ("jyq_LL", "float8"),
-    ("xst_YW", "float8"),
-    ("xstjyxhb_ADL", "float8"),
-    ("xstjyxhb_BDL", "float8"),
-    ("xstjyxhb_CDL", "float8"),
-    ("xstjyxhb_DDL", "float8"),
-    ("xstjyxhb_EDL", "float8"),
-    ("xstyhfj_ADL", "float8"),
-    ("xstjy_PH", "float8"),
-    ("xst_ADL_status", "int"),
-    ("xst_BDL_status", "int"),
-    ("xst_CDL_status", "int"),
-    ("xst_DDL_status", "int"),
-    ("xst_EDL_status", "int"),
-    ("xst_pump_status", "varchar(40)"),
-    ("combined_pump_status", "varchar(80)"),
+    ("jym", "int"),
+    ("connection_status", "boolean"),
+    ("combined_pump_status", "varchar(256)"),
     ("liquid_gas_ratio", "float8"),
     ("desulfurization_efficiency", "float8"),
     # 在线目标是运行事实，存在时一起留档；没有时保持 NULL。
@@ -58,26 +44,30 @@ _BASE_FIELDS = OrderedDict([
 
 
 def _append_plant_dynamic_fields(fields: OrderedDict) -> OrderedDict:
-    """保证工况轴、启用塔 pH/阀门/供浆泵字段也能进入基础历史表。"""
+    """按 plant_config 自动生成当前厂基础历史表字段。
+
+    所有在工况轴、实时监控、塔体、阀门、供浆流量、供浆泵、循环泵或
+    persistence_extra_fields 中声明的现场测点默认按 float8 保存。
+    """
     result = OrderedDict(fields)
-    for axis in PLANT_CONFIG.get("condition_axes", []):
-        column = str(axis.get("column", "")).strip()
-        if column:
-            result.setdefault(column, "float8")
-    for tower in PLANT_CONFIG.get("towers", []):
-        if not tower.get("enabled", True):
+
+    for column in configured_persistence_columns(PLANT_CONFIG):
+        result.setdefault(column, "float8")
+
+    # data_preprocessor1 会生成每塔泵组合状态；按启用塔自动留档，不再写死 xst/apt。
+    # 对采用“{tower_id}jyxhb_XXX”命名的循环泵，同时兼容保存其逐泵状态字段。
+    for tower in enabled_towers(PLANT_CONFIG):
+        tower_id = str(tower.get("tower_id", "")).strip()
+        if not tower_id:
             continue
-        ph_column = str(tower.get("ph_column", "")).strip()
-        if ph_column:
-            result.setdefault(ph_column, "float8")
-        for valve in tower.get("valves", []):
-            column = str(valve.get("column", "")).strip()
-            if column:
-                result.setdefault(column, "float8")
-        for pump in tower.get("supply_pumps", []):
-            column = str(pump.get("current_column", "")).strip()
-            if column:
-                result.setdefault(column, "float8")
+        result.setdefault(f"{tower_id}_pump_status", "varchar(128)")
+        prefix = f"{tower_id}jyxhb_"
+        for pump in tower.get("circulation_pumps", []) or []:
+            value_column = str(pump.get("value_column", "")).strip()
+            if value_column.startswith(prefix):
+                suffix = value_column[len(prefix):]
+                if suffix:
+                    result.setdefault(f"{tower_id}_{suffix}_status", "int")
     return result
 
 
