@@ -4,6 +4,7 @@ FAST_CHANGE 的离线版本快照和在线短期运行状态统一放在
 ``slurry_policy_model/slurry_policy_model_output`` 下，但与第二模块正式策略
 ``snapshots/v###`` 分目录保存，避免同版本目录互相冲突。
 """
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional
