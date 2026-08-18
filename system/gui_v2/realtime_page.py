@@ -114,8 +114,8 @@ class DeviceTile(QFrame):
             self.status.set_state("offline", "无数据")
             return
 
-        suffix = f" {self.unit}" if self.unit else ""
-        self.value.setText(f"{number:.{self.digits}f}{suffix}")
+        # 单位只在下方 detail 行显示，避免出现“38.0 A / A”这类重复。
+        self.value.setText(f"{number:.{self.digits}f}")
 
         if self.run_threshold is None:
             self.status.set_state("normal", "在线")
