@@ -5,12 +5,13 @@ from typing import Any, Mapping, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
 )
+
+from system.model.config.plant_config import PLANT_CONFIG
 
 from .widgets import CardFrame, KeyValueRow, StatusPill
 
@@ -43,32 +44,22 @@ class DecisionContextCard(CardFrame):
 
         self.condition = ContextItem("当前工况")
         self.mode = ContextItem("控制模式")
-        self.version = ContextItem("模型版本")
-        self.so2 = ContextItem("净烟气 SO₂ / 目标")
-        for item in (self.condition, self.mode, self.version, self.so2):
+        self.so2 = ContextItem("净烟气 SO₂")
+        self.target = ContextItem("目标 SO₂")
+        for item in (self.condition, self.mode, self.so2, self.target):
             root.addWidget(item, 1)
 
     def update_data(self, data: Mapping[str, Any]) -> None:
         condition = data.get("condition_label")
-        if condition in (None, "", "--"):
-            condition_text = "等待工况"
-        else:
-            condition_text = str(condition)
-            condition_text += " · 稳定" if data.get("condition_stable") else " · 切换中"
-        self.condition.set_value(condition_text)
+        self.condition.set_value(
+            "等待工况" if condition in (None, "", "--") else str(condition)
+        )
         self.mode.set_value(data.get("control_mode", "--"))
-        self.version.set_value(data.get("integrated_version", "--"))
 
         current = _number(data.get("jyq_SO2"))
         target = _number(data.get("target"))
-        if current is None and target is None:
-            self.so2.set_value("--")
-        elif current is None:
-            self.so2.set_value(f"-- / {target:.1f} mg/Nm³")
-        elif target is None:
-            self.so2.set_value(f"{current:.1f} / -- mg/Nm³")
-        else:
-            self.so2.set_value(f"{current:.1f} / {target:.1f} mg/Nm³")
+        self.so2.set_value("--" if current is None else f"{current:.1f} mg/Nm³")
+        self.target.set_value("--" if target is None else f"{target:.1f} mg/Nm³")
 
 
 class DecisionDetailCard(CardFrame):
@@ -120,8 +111,12 @@ class DecisionDetailCard(CardFrame):
 class ExecutionSuggestionCard(CardFrame):
     """执行器无关的建议区域。
 
-    当前第二模块输出仍是阀门 delta/投影值；以后若某厂改为泵频率控制，只需让
-    Adapter 提供新的执行对象/当前值/目标值，不需要重做本页布局。
+    当前第二模块输出仍是 valve_id -> delta / projected opening；GUI 不直接展示
+    ``xst_v1`` 这类机器标识，而是从 plant_config 的 valves[].display_name 动态解析。
+    当前值同样根据 valves[].column 从实时帧读取，因此单塔多阀/双塔多阀无需改页面。
+
+    后续若某厂改为泵频率控制，只需让 Adapter 提供对应执行器结构，不需要重做
+    本页整体布局。
     """
 
     def __init__(self, parent=None):
@@ -146,18 +141,54 @@ class ExecutionSuggestionCard(CardFrame):
         root.addWidget(self.note)
         root.addStretch(1)
 
-    @staticmethod
-    def _format_mapping(mapping: Mapping[str, Any], *, signed: bool = False) -> str:
+        self._valves = _configured_valves()
+
+    def _display_name(self, valve_id: Any) -> str:
+        key = str(valve_id)
+        valve = self._valves.get(key) or {}
+        return str(valve.get("display_name") or key)
+
+    def _format_mapping(
+        self,
+        mapping: Mapping[str, Any],
+        *,
+        signed: bool = False,
+    ) -> str:
         parts = []
         for key, value in mapping.items():
+            name = self._display_name(key)
             number = _number(value)
             if number is None:
-                parts.append(f"{key}: --")
+                parts.append(f"{name}: --")
             elif signed:
-                parts.append(f"{key}: {number:+.1f} %")
+                parts.append(f"{name}: {number:+.1f} %")
             else:
-                parts.append(f"{key}: {number:.1f} %")
+                parts.append(f"{name}: {number:.1f} %")
         return " / ".join(parts) if parts else "--"
+
+    def _current_openings(
+        self,
+        actuator_ids: list[str],
+        data: Mapping[str, Any],
+    ) -> dict[str, Optional[float]]:
+        realtime = data.get("realtime_values")
+        if not isinstance(realtime, Mapping):
+            realtime = {}
+
+        values: dict[str, Optional[float]] = {}
+        for valve_id in actuator_ids:
+            valve = self._valves.get(str(valve_id)) or {}
+            column = str(valve.get("column") or "").strip()
+            raw = None
+            if column:
+                raw = data.get(column)
+                if raw in (None, ""):
+                    raw = realtime.get(column)
+            # 首页兼容字段：当前单阀现场 Adapter 会把 xst_FMKD 提到顶层。
+            if raw in (None, "") and len(actuator_ids) == 1:
+                raw = data.get("xst_FMKD")
+            values[str(valve_id)] = _number(raw)
+        return values
 
     def update_data(self, data: Mapping[str, Any]) -> None:
         deltas = data.get("recommended_valve_deltas")
@@ -167,12 +198,13 @@ class ExecutionSuggestionCard(CardFrame):
         if not isinstance(projected, Mapping):
             projected = {}
 
-        actuator_ids = list(deltas.keys()) or list(projected.keys())
-        self.object.set_value(" / ".join(actuator_ids) if actuator_ids else "--")
+        actuator_ids = [str(item) for item in (list(deltas.keys()) or list(projected.keys()))]
+        actuator_names = [self._display_name(item) for item in actuator_ids]
+        self.object.set_value(" / ".join(actuator_names) if actuator_names else "--")
 
-        current_valve = _number(data.get("xst_FMKD"))
-        if len(actuator_ids) == 1 and current_valve is not None:
-            self.current.set_value(f"{current_valve:.1f} %")
+        current = self._current_openings(actuator_ids, data)
+        if current:
+            self.current.set_value(self._format_mapping(current))
         else:
             self.current.set_value("--")
 
@@ -347,6 +379,19 @@ class SlurryControlPage(QWidget):
         self.experience.update_data(data)
         self.guards.update_data(data)
         self.reasons.update_data(data)
+
+
+def _configured_valves() -> dict[str, dict[str, Any]]:
+    """按 plant_config 建立 valve_id -> 阀门配置映射。"""
+    result: dict[str, dict[str, Any]] = {}
+    for tower in PLANT_CONFIG.get("towers", []) or []:
+        if not tower.get("enabled", True):
+            continue
+        for valve in tower.get("valves", []) or []:
+            valve_id = str(valve.get("valve_id") or "").strip()
+            if valve_id:
+                result[valve_id] = dict(valve)
+    return result
 
 
 def _number(value: Any) -> Optional[float]:
