@@ -1,8 +1,8 @@
 """独立 FAST_CHANGE 风险识别模块。
 
-FAST_CHANGE 的离线版本快照和在线短期运行状态统一放在
-``slurry_policy_model/slurry_policy_model_output`` 下，但与第二模块正式策略
-``snapshots/v###`` 分目录保存，避免同版本目录互相冲突。
+FAST_CHANGE 的离线版本快照和在线短期运行状态统一放在当前
+``fast_change_mode`` 模块目录下，与第二模块 ``slurry_policy_model_output``
+完全分开，避免同版本目录互相冲突，也便于独立维护 FAST_CHANGE 生命周期。
 """
 from __future__ import annotations
 
@@ -23,25 +23,17 @@ from .fast_change_history_manager import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-SLURRY_POLICY_OUTPUT_ROOT = (
-    PROJECT_ROOT
-    / "system"
-    / "model"
-    / "map_control"
-    / "slurry_policy_model"
-    / "slurry_policy_model_output"
-)
-FAST_CHANGE_OUTPUT_ROOT = SLURRY_POLICY_OUTPUT_ROOT / "fast_change"
-FAST_CHANGE_RUNTIME_ROOT = SLURRY_POLICY_OUTPUT_ROOT / "fast_change_runtime"
+FAST_CHANGE_MODULE_ROOT = Path(__file__).resolve().parent
+FAST_CHANGE_OUTPUT_ROOT = FAST_CHANGE_MODULE_ROOT / "fast_change_output"
+FAST_CHANGE_RUNTIME_ROOT = FAST_CHANGE_MODULE_ROOT / "fast_change_runtime"
 
 
 class FastChangeHistoryManager(_BaseFastChangeHistoryManager):
     """项目统一 FAST_CHANGE 历史管理器。
 
     默认目录：
-    - 离线版本：``slurry_policy_model_output/fast_change/snapshots/v###``；
-    - 在线状态：``slurry_policy_model_output/fast_change_runtime``。
+    - 离线版本：``fast_change_mode/fast_change_output/snapshots/v###``；
+    - 在线状态：``fast_change_mode/fast_change_runtime``。
 
     显式传入 ``output_root`` / ``runtime_root`` 时仍尊重调用方路径，便于独立测试。
     """
@@ -72,6 +64,7 @@ __all__ = [
     "FAST_CHANGE",
     "FAST_RECOVERY",
     "FAST_CONTEXT_COLUMNS",
+    "FAST_CHANGE_MODULE_ROOT",
     "FAST_CHANGE_OUTPUT_ROOT",
     "FAST_CHANGE_RUNTIME_ROOT",
     "FastChangeHistoryManager",
