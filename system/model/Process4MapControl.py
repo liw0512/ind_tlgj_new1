@@ -1620,12 +1620,15 @@ class ProcessForMapConsole:
             [str(value) for value in args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='backslashreplace',
             env=env,
             cwd=cwd,
             shell=False,
         )
-        stdout = result.stdout.decode('utf-8', errors='replace')
-        stderr = result.stderr.decode('utf-8', errors='replace')
+        stdout = result.stdout
+        stderr = result.stderr
         if stdout:
             logging.info('%s 标准输出: %s', label, stdout)
         if result.returncode != 0:
@@ -1647,6 +1650,10 @@ class ProcessForMapConsole:
         if env.get('PYTHONPATH'):
             python_paths.append(env['PYTHONPATH'])
         env['PYTHONPATH'] = os.pathsep.join(python_paths)
+        # 子训练脚本的 stdout/stderr 通过 PIPE 返回，显式统一为 UTF-8，避免
+        # Windows 中文环境默认 GBK 与父进程 UTF-8 解码不一致产生替换字符。
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
         return project_root, env
 
     def _condition_paths_for_version(self, version):

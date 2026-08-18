@@ -28,6 +28,8 @@ files/*.csv
 files/*.txt
 files/*.png
 system/model/map_control/cluster/models/
+system/model/map_control/condition_model/condition_merge_statistics.json
+system/model/map_control/condition_model/snapshots/
 system/model/map_control/q_learning/results/
 system/model/map_control/PH_predict/models/
 system/model/map_control/PH_predict/tmp/
