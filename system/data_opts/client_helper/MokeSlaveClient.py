@@ -60,7 +60,7 @@ class MokeSlaveClient:
             self.global_data["connection_status"] = True
 
             with open(
-                r"F:\xiregangchang\ind_optim_serv_xire\files\selected_30s_processed.csv",
+                r"F:/tlgj_new/files/new_data_test.csv",
                 newline="",
                 encoding="utf-8-sig",
             ) as csvfile:

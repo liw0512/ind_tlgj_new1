@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
 POLICY_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "slurry_policy_model"
 MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
-POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
+POLICY_OUTPUT_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "slurry_policy_model" / "slurry_policy_model_output"
 
 SLURRY_CORE_BRIDGE_CONFIG = {
     "target_column": TARGET_SO2_COLUMN,
