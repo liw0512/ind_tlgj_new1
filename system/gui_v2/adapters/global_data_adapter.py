@@ -197,20 +197,20 @@ class GlobalDataAdapter(QObject):
 
     @classmethod
     def _pump_text(cls, data: Mapping[str, Any]) -> str:
-        # 当前现场：供浆泵 2A/2B 频率反馈。
+        # 当前现场：供浆泵 A/B 频率反馈。
         a_freq = cls._pick(data, "xstgjb_APL")
         b_freq = cls._pick(data, "xstgjb_BPL")
         parts = []
         if not cls._is_missing(a_freq):
             try:
-                parts.append(f"2A {float(a_freq):.1f} Hz")
+                parts.append(f"泵A {float(a_freq):.1f} Hz")
             except (TypeError, ValueError):
-                parts.append(f"2A {a_freq}")
+                parts.append(f"泵A {a_freq}")
         if not cls._is_missing(b_freq):
             try:
-                parts.append(f"2B {float(b_freq):.1f} Hz")
+                parts.append(f"泵B {float(b_freq):.1f} Hz")
             except (TypeError, ValueError):
-                parts.append(f"2B {b_freq}")
+                parts.append(f"泵B {b_freq}")
         if parts:
             return " / ".join(parts)
 
@@ -219,14 +219,14 @@ class GlobalDataAdapter(QObject):
         b_current = cls._pick(data, "xstgjb_BDL")
         if not cls._is_missing(a_current):
             try:
-                parts.append(f"A {float(a_current):.1f} A")
+                parts.append(f"泵A {float(a_current):.1f} A")
             except (TypeError, ValueError):
-                parts.append(f"A {a_current}")
+                parts.append(f"泵A {a_current}")
         if not cls._is_missing(b_current):
             try:
-                parts.append(f"B {float(b_current):.1f} A")
+                parts.append(f"泵B {float(b_current):.1f} A")
             except (TypeError, ValueError):
-                parts.append(f"B {b_current}")
+                parts.append(f"泵B {b_current}")
         return " / ".join(parts) if parts else "--"
 
     @staticmethod
