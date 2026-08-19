@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QButtonGroup, QLabel, QPushButton
 
 
@@ -139,7 +139,7 @@ def apply_history_ui_polish(history_page) -> None:
         button = getattr(history_page, button_name, None)
         if button is not None:
             button.setStyleSheet(_MODE_BUTTON_STYLE)
-            button.setCursor(0x0000000D)  # Qt.PointingHandCursor，避免额外依赖 Qt 导入。
+            button.setCursor(Qt.PointingHandCursor)
 
     range_buttons: Dict[int, QPushButton] = getattr(history_page, "_range_buttons", {})
     range_group = QButtonGroup(history_page)
@@ -147,10 +147,14 @@ def apply_history_ui_polish(history_page) -> None:
     for seconds, button in range_buttons.items():
         button.setCheckable(True)
         button.setStyleSheet(_RANGE_BUTTON_STYLE)
-        button.setCursor(0x0000000D)
+        button.setCursor(Qt.PointingHandCursor)
         button.setToolTip("点击切换历史显示时间窗口")
         range_group.addButton(button, int(seconds))
-        button.clicked.connect(lambda checked=False, page=history_page: QTimer.singleShot(0, lambda: _sync_range_checked(page)))
+        button.clicked.connect(
+            lambda checked=False, page=history_page: QTimer.singleShot(
+                0, lambda: _sync_range_checked(page)
+            )
+        )
 
     # 保存引用，防止 QButtonGroup 被 Python 回收。
     history_page._history_range_button_group = range_group
@@ -159,7 +163,7 @@ def apply_history_ui_polish(history_page) -> None:
     query_button = getattr(history_page, "query_button", None)
     if query_button is not None:
         query_button.setStyleSheet(_QUERY_BUTTON_STYLE)
-        query_button.setCursor(0x0000000D)
+        query_button.setCursor(Qt.PointingHandCursor)
         query_button.setToolTip("按当前时间范围读取历史数据")
 
     # 模式切换可能把 3天/7天自动回退到 1小时；切换完成后同步高亮状态。
@@ -167,5 +171,7 @@ def apply_history_ui_polish(history_page) -> None:
         button = getattr(history_page, button_name, None)
         if button is not None:
             button.clicked.connect(
-                lambda checked=False, page=history_page: QTimer.singleShot(0, lambda: _sync_range_checked(page))
+                lambda checked=False, page=history_page: QTimer.singleShot(
+                    0, lambda: _sync_range_checked(page)
+                )
             )
