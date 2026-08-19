@@ -4,20 +4,29 @@ import re
 from types import MethodType
 from typing import Dict
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtWidgets import QButtonGroup, QLabel, QPushButton
+from PyQt5.QtCore import QPoint, Qt, QTimer
+from PyQt5.QtWidgets import (
+    QButtonGroup,
+    QCalendarWidget,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTimeEdit,
+    QVBoxLayout,
+)
 
 
 _SELECTOR_STYLE = """
     QCheckBox {
-        font-size: 15px;
-        spacing: 8px;
-        min-height: 30px;
-        padding: 2px 3px;
+        font-size: 17px;
+        spacing: 9px;
+        min-height: 34px;
+        padding: 2px 4px;
     }
     QCheckBox::indicator {
-        width: 18px;
-        height: 18px;
+        width: 20px;
+        height: 20px;
     }
 """
 
@@ -107,6 +116,70 @@ _QUERY_BUTTON_STYLE = """
     }
 """
 
+_DATETIME_STYLE = """
+    QDateTimeEdit {
+        background-color: #0f1a2b;
+        color: #e8f0ff;
+        border: 1px solid #2a3b56;
+        border-radius: 5px;
+        padding: 5px 30px 5px 8px;
+    }
+    QDateTimeEdit:focus {
+        border: 1px solid #4f8cff;
+    }
+    QDateTimeEdit::up-button,
+    QDateTimeEdit::down-button {
+        width: 0px;
+        height: 0px;
+        border: none;
+        image: none;
+    }
+"""
+
+_DATETIME_POPUP_STYLE = """
+    QFrame#historyDateTimePopup {
+        background-color: #111d30;
+        border: 1px solid #385170;
+        border-radius: 7px;
+    }
+    QCalendarWidget QWidget {
+        background-color: #111d30;
+        color: #dbe8fb;
+    }
+    QCalendarWidget QAbstractItemView:enabled {
+        background-color: #0d1726;
+        color: #dbe8fb;
+        selection-background-color: #235b8d;
+        selection-color: #ffffff;
+    }
+    QCalendarWidget QToolButton {
+        color: #e8f0ff;
+        background-color: #162338;
+        border: none;
+        padding: 5px;
+    }
+    QTimeEdit {
+        background-color: #0d1726;
+        color: #e8f0ff;
+        border: 1px solid #2a3b56;
+        border-radius: 5px;
+        padding: 5px 8px;
+        min-height: 24px;
+    }
+    QPushButton#historyDateTimeConfirm {
+        background-color: #176d75;
+        color: #ffffff;
+        border: 1px solid #28b9b2;
+        border-radius: 6px;
+        padding: 6px 18px;
+        font-weight: 700;
+    }
+    QPushButton#historyDateTimeConfirm:hover {
+        background-color: #1b7f88;
+        border-color: #5ee0d6;
+    }
+"""
+
 
 def _style_section_labels(history_page) -> None:
     for label in history_page.findChildren(QLabel):
@@ -138,8 +211,8 @@ def _live_interval_ms(history_page) -> int:
     if span <= 24 * 3600:
         return base_ms
     if span <= 3 * 86400:
-        return max(base_ms, 120000)  # 3天：至少2分钟刷新一次
-    return max(base_ms, 300000)      # 7天：至少5分钟刷新一次
+        return max(base_ms, 120000)
+    return max(base_ms, 300000)
 
 
 def _install_long_window_live_support(history_page) -> None:
@@ -159,7 +232,6 @@ def _install_long_window_live_support(history_page) -> None:
         self.end_edit.setEnabled(not live)
         self.query_button.setText("刷新" if live else "查询")
 
-        # 3天/7天保持可点击；长窗口由刷新频率自动降级，而不是直接禁用。
         for button in self._range_buttons.values():
             button.setEnabled(True)
 
@@ -187,7 +259,6 @@ def _install_long_window_live_support(history_page) -> None:
     history_page._set_mode = MethodType(set_mode, history_page)
     history_page._apply_result = MethodType(apply_result, history_page)
 
-    # QTimer 初始化时连接的是旧 bound method；重新绑定到新的自适应刷新方法。
     try:
         history_page._live_timer.timeout.disconnect()
     except Exception:
@@ -202,12 +273,73 @@ def _install_long_window_live_support(history_page) -> None:
             )
 
 
+def _install_datetime_dropdown(editor) -> None:
+    """把日期时间控件改成单一 ▼ + 非模态下拉面板。
+
+    主输入框隐藏 QDateTimeEdit 原生上下微调按钮，只保留 DateTimePicker 自绘的 ▼。
+    点击 ▼ 后使用 Qt.Popup 展开日历/时间面板；点击面板外自动关闭，不提供取消/关闭按钮。
+    """
+    editor.setStyleSheet(_DATETIME_STYLE)
+    editor.setToolTip("可直接编辑；点击右侧 ▼ 展开日期和时间选择")
+
+    def open_picker(self) -> None:
+        existing = getattr(self, "_history_datetime_popup", None)
+        if existing is not None and existing.isVisible():
+            existing.close()
+            return
+
+        popup = QFrame(None, Qt.Popup | Qt.FramelessWindowHint)
+        popup.setObjectName("historyDateTimePopup")
+        popup.setStyleSheet(_DATETIME_POPUP_STYLE)
+        popup.setMinimumWidth(max(330, self.width()))
+
+        layout = QVBoxLayout(popup)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        calendar = QCalendarWidget(popup)
+        calendar.setGridVisible(True)
+        calendar.setSelectedDate(self.dateTime().date())
+        layout.addWidget(calendar)
+
+        time_row = QHBoxLayout()
+        time_row.setContentsMargins(0, 0, 0, 0)
+        time_row.addWidget(QLabel("时间", popup))
+        time_edit = QTimeEdit(self.dateTime().time(), popup)
+        time_edit.setDisplayFormat("HH:mm:ss")
+        time_row.addWidget(time_edit, 1)
+        layout.addLayout(time_row)
+
+        confirm = QPushButton("确定", popup)
+        confirm.setObjectName("historyDateTimeConfirm")
+        confirm.setCursor(Qt.PointingHandCursor)
+        layout.addWidget(confirm)
+
+        def apply_value() -> None:
+            self.setDate(calendar.selectedDate())
+            self.setTime(time_edit.time())
+            popup.close()
+
+        confirm.clicked.connect(apply_value)
+        self._history_datetime_popup = popup
+
+        anchor = self.mapToGlobal(QPoint(0, self.height() + 3))
+        popup.move(anchor)
+        popup.show()
+        popup.raise_()
+
+    self_open = MethodType(open_picker, editor)
+    editor._open_picker = self_open
+
+
 def apply_history_ui_polish(history_page) -> None:
-    """强化历史页的视觉层级，并补充长窗口实时跟随的性能保护。"""
+    """强化历史页视觉层级、时间下拉交互，并补充长窗口实时跟随保护。"""
 
     _style_section_labels(history_page)
     _style_series_selectors(history_page)
     _install_long_window_live_support(history_page)
+    _install_datetime_dropdown(history_page.start_edit)
+    _install_datetime_dropdown(history_page.end_edit)
 
     for button_name in ("history_mode_button", "live_mode_button"):
         button = getattr(history_page, button_name, None)
@@ -231,7 +363,6 @@ def apply_history_ui_polish(history_page) -> None:
             )
         )
 
-    # 保存引用，防止 QButtonGroup 被 Python 回收。
     history_page._history_range_button_group = range_group
     _sync_range_checked(history_page)
 
