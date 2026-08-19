@@ -11,6 +11,8 @@ from system.data_opts.DataClientMain import DataClientMain
 from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
 
+from .alarm_page import AlarmPage
+from .alarm_runtime import AlarmRuntime
 from .demo_dashboard import DashboardWindow, build_application
 from .history_gap_display import apply_history_gap_display
 from .history_page import HistoryPage
@@ -93,6 +95,29 @@ def install_history_page(window: DashboardWindow) -> None:
     window.history = history_page
 
 
+def install_alarm_page(window: DashboardWindow, global_data: Dict[str, Any]) -> None:
+    """安装独立报警管理器与第 5 页报警信息界面。"""
+    alarm_index = 4
+    old_page = window.stack.widget(alarm_index)
+    alarm_page = AlarmPage(window)
+    wrapped = window._scroll_wrap(alarm_page)
+    wrapped.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    if old_page is not None:
+        window.stack.removeWidget(old_page)
+        old_page.deleteLater()
+    window.stack.insertWidget(alarm_index, wrapped)
+
+    # AlarmRuntime 自己以 1 秒周期读取 GLOBAL_DATA；报警判断不依赖 GUI Adapter，
+    # PostgreSQL 事件写入由后台线程串行完成，不阻塞 PyQt 主线程。
+    alarm_runtime = AlarmRuntime(global_data, window)
+    alarm_runtime.alarms_updated.connect(alarm_page.update_runtime)
+    alarm_runtime.runtime_error.connect(alarm_page.show_runtime_error)
+
+    window.alarm = alarm_page
+    window.alarm_runtime = alarm_runtime
+
+
 def main() -> int:
     try:
         global_data: Dict[str, Any] = {"data": []}
@@ -102,6 +127,7 @@ def main() -> int:
         window = DashboardWindow(global_data, data_mode="live")
         install_overview_title(window)
         install_history_page(window)
+        install_alarm_page(window, global_data)
         # 防止未来重构时误释放后端对象。
         window._backend_refs = backend_refs
         window.show()
