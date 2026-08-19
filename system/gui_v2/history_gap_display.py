@@ -5,7 +5,7 @@ from typing import Any, Mapping, Sequence
 from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
 
-from .history_page import HistoryLineChart
+from .history_page import HistoryLineChart, _to_datetime
 
 
 def _series_has_value(series: Sequence[Mapping[str, Any]]) -> bool:
@@ -13,14 +13,6 @@ def _series_has_value(series: Sequence[Mapping[str, Any]]) -> bool:
         for value in item.get("values", []):
             if value is not None:
                 return True
-    return False
-
-
-def _series_has_missing_value(series: Sequence[Mapping[str, Any]]) -> bool:
-    for item in series:
-        values = item.get("values", [])
-        if values and any(value is None for value in values):
-            return True
     return False
 
 
@@ -34,10 +26,6 @@ def _draw_partial_gap_regions(chart: HistoryLineChart, painter: QPainter, plot: 
     text_color = QColor("#aebbd0")
 
     for gap in chart._gaps:
-        gap_start = chart._range_start.__class__.fromisoformat(str(gap.get("start"))) if False else None
-        # gap 中可能是 datetime / pandas Timestamp / 字符串，沿用 HistoryLineChart 的时间换算方式：
-        from .history_page import _to_datetime
-
         gap_start = _to_datetime(gap.get("start"))
         gap_end = _to_datetime(gap.get("end"))
         if gap_start is None or gap_end is None:
