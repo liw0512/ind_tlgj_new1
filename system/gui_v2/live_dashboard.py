@@ -11,7 +11,7 @@ from system.data_opts.DataClientMain import DataClientMain
 from system.data_opts.DataHandler import DataHandler
 from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
 
-from .alarm_page import AlarmPage
+from .alarm_page_live import LiveAlarmPage
 from .alarm_runtime import AlarmRuntime
 from .demo_dashboard import DashboardWindow, build_application
 from .history_gap_display import apply_history_gap_display
@@ -99,7 +99,7 @@ def install_alarm_page(window: DashboardWindow, global_data: Dict[str, Any]) -> 
     """安装独立报警管理器与第 5 页报警信息界面。"""
     alarm_index = 4
     old_page = window.stack.widget(alarm_index)
-    alarm_page = AlarmPage(window)
+    alarm_page = LiveAlarmPage(window)
     wrapped = window._scroll_wrap(alarm_page)
     wrapped.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
