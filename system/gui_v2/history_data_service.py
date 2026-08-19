@@ -15,7 +15,9 @@ from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
-MAX_DISPLAY_POINTS = 2500
+# 历史页是可视化而不是训练数据出口。限制显示点数可以显著降低 PyQt 在窗口缩放时的重绘开销，
+# 数据库原始记录不会因此丢失；需要时仍可按原始时间范围重新查询。
+MAX_DISPLAY_POINTS = 1200
 _NICE_BUCKET_SECONDS = (30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400)
 
 
