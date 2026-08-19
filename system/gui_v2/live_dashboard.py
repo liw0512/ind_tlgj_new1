@@ -13,6 +13,7 @@ from system.data_opts.client_helper.MokeSlaveClient import MokeSlaveClient
 
 from .demo_dashboard import DashboardWindow, build_application
 from .history_page import HistoryPage
+from .history_time_link import apply_history_time_link
 from .history_ui_polish import apply_history_ui_polish
 
 
@@ -73,6 +74,7 @@ def install_history_page(window: DashboardWindow) -> None:
     old_page = window.stack.widget(history_index)
     history_page = HistoryPage(window)
     apply_history_ui_polish(history_page)
+    apply_history_time_link(history_page)
     wrapped = window._scroll_wrap(history_page)
     # 历史页已改成响应式布局；禁止外层横向滚动，窗口化时直接按可用宽度缩放。
     wrapped.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
