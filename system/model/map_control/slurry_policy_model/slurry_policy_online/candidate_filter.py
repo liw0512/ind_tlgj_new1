@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+from system.model.config.operator_settings import effective_ph_safe_range
+
 try:
     from _engine.supply_pump import evaluate_supply_pump_availability
 except ImportError:  # pragma: no cover
@@ -76,7 +78,7 @@ class CandidateFilter:
         if delta_ph is None:
             delta_ph = self._number(distribution.get("median"))
 
-        lo, hi = [float(x) for x in tower["ph_safe_range"]]
+        lo, hi = effective_ph_safe_range(tower_id, tower.get("ph_safe_range"))
         if delta_ph is not None:
             predicted_ph = current_ph + delta_ph
             candidate.evaluation.setdefault("tower_ph", {})[tower_id] = {
@@ -192,8 +194,6 @@ class CandidateFilter:
             except (TypeError, ValueError):
                 continue
 
-        # 供浆泵属于实时 process 状态，不再通过 execution_context 维护另一套泵状态。
-        # 定频泵 current > threshold => 1；否则 0。一个阀只要任一服务泵运行即可。
         pump_availability = evaluate_supply_pump_availability(
             self.plant,
             state.process,
@@ -221,7 +221,6 @@ class CandidateFilter:
                 ):
                     reasons.append("NO_AVAILABLE_SUPPLY_PATH:%s" % tower_id)
 
-        # 手动/故障阀仍由 MainControl/DCS 执行上下文显式传入。
         blocked = normalize_blocked_valves(execution.get("manual_valves"), self.plant)
         blocked |= normalize_blocked_valves(execution.get("faulted_valves"), self.plant)
         if blocked.intersection(valve_ids):
@@ -237,7 +236,7 @@ class CandidateFilter:
             except (TypeError, ValueError, KeyError):
                 reasons.append("PH_VALUE_INVALID")
                 continue
-            lo, hi = [float(x) for x in tower["ph_safe_range"]]
+            lo, hi = effective_ph_safe_range(tower_id, tower.get("ph_safe_range"))
             guard = float(tower.get("ph_guard_band", 0.0))
             if direction == "INCREASE" and ph >= hi - guard:
                 reasons.append("PH_HIGH_GUARD_BLOCKS_SLURRY_INCREASE:%s" % tower_id)
