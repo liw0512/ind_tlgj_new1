@@ -16,6 +16,7 @@ from .history_gap_display import apply_history_gap_display
 from .history_page import HistoryPage
 from .history_time_link import apply_history_time_link
 from .history_ui_polish import apply_history_ui_polish
+from .history_wheel_guard import apply_history_wheel_guard
 
 
 def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
@@ -76,6 +77,7 @@ def install_history_page(window: DashboardWindow) -> None:
     history_page = HistoryPage(window)
     apply_history_ui_polish(history_page)
     apply_history_time_link(history_page)
+    apply_history_wheel_guard(history_page)
     # 最后安装缺失数据绘制规则，覆盖前面的基础绘图样式，避免空状态文字重复叠加。
     apply_history_gap_display()
     wrapped = window._scroll_wrap(history_page)
