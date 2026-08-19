@@ -19,6 +19,7 @@ from .history_page import HistoryPage
 from .history_time_link import apply_history_time_link
 from .history_ui_polish import apply_history_ui_polish
 from .history_wheel_guard import apply_history_wheel_guard
+from .system_settings_page import SystemSettingsPage
 
 
 def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
@@ -44,13 +45,10 @@ def start_current_backend(global_data: Dict[str, Any]) -> List[Any]:
         thread.start()
         threads.append(thread)
 
-    # 保留对象引用，便于将来扩展 stop/health-check。
     return [data_client, handler, field_client, *threads]
 
 
 def install_overview_title(window: DashboardWindow) -> None:
-    """在运行总览内容顶部增加厂/机组级标题，并简化当前工况卡片。"""
-
     overview_layout = window.overview.layout()
     if overview_layout is None:
         return
@@ -64,39 +62,29 @@ def install_overview_title(window: DashboardWindow) -> None:
 
     overview_layout.insertWidget(0, title)
     overview_layout.insertSpacing(1, 8)
-
-    # 首页当前工况只展示工况号；稳定/切换状态仍保留在数据中供算法和第三页使用。
     window.overview.condition.unit_label.hide()
-
-    # 保存引用，避免后续页面扩展时标题对象被误认为临时控件。
     window.overview.system_title = title
 
 
 def install_history_page(window: DashboardWindow) -> None:
-    """用数据库历史页替换 DashboardWindow 中第 4 页的占位页面。"""
     history_index = 3
     old_page = window.stack.widget(history_index)
     history_page = HistoryPage(window)
     apply_history_ui_polish(history_page)
     apply_history_time_link(history_page)
     apply_history_wheel_guard(history_page)
-    # 最后安装缺失数据绘制规则，覆盖前面的基础绘图样式，避免空状态文字重复叠加。
     apply_history_gap_display()
     wrapped = window._scroll_wrap(history_page)
-    # 历史页已改成响应式布局；禁止外层横向滚动，窗口化时直接按可用宽度缩放。
     wrapped.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     if old_page is not None:
         window.stack.removeWidget(old_page)
         old_page.deleteLater()
     window.stack.insertWidget(history_index, wrapped)
-
-    # 保存明确引用，后续可用于页面刷新、导出和事件定位扩展。
     window.history = history_page
 
 
 def install_alarm_page(window: DashboardWindow, global_data: Dict[str, Any]) -> None:
-    """安装独立报警管理器与第 5 页报警信息界面。"""
     alarm_index = 4
     old_page = window.stack.widget(alarm_index)
     alarm_page = LiveAlarmPage(window)
@@ -108,14 +96,50 @@ def install_alarm_page(window: DashboardWindow, global_data: Dict[str, Any]) -> 
         old_page.deleteLater()
     window.stack.insertWidget(alarm_index, wrapped)
 
-    # AlarmRuntime 自己以 1 秒周期读取 GLOBAL_DATA；报警判断不依赖 GUI Adapter，
-    # PostgreSQL 事件写入由后台线程串行完成，不阻塞 PyQt 主线程。
     alarm_runtime = AlarmRuntime(global_data, window)
     alarm_runtime.alarms_updated.connect(alarm_page.update_runtime)
     alarm_runtime.runtime_error.connect(alarm_page.show_runtime_error)
 
     window.alarm = alarm_page
     window.alarm_runtime = alarm_runtime
+
+
+def install_system_settings_page(window: DashboardWindow) -> None:
+    """安装第6页操作员系统配置：目标SO2、pH安全范围、系统状态。"""
+    settings_index = 5
+    old_page = window.stack.widget(settings_index)
+    settings_page = SystemSettingsPage(window)
+    wrapped = window._scroll_wrap(settings_page)
+    wrapped.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    if old_page is not None:
+        window.stack.removeWidget(old_page)
+        old_page.deleteLater()
+    window.stack.insertWidget(settings_index, wrapped)
+
+    # 运行状态继续来自现有 GUI Adapter，不重复建立新的实时数据轮询。
+    window.source.data_ready.connect(settings_page.update_runtime)
+
+    # 报警服务状态直接复用已经存在的 AlarmRuntime。
+    if hasattr(window, "alarm_runtime"):
+        window.alarm_runtime.alarms_updated.connect(settings_page.update_alarm_runtime)
+        window.alarm_runtime.runtime_error.connect(settings_page.show_alarm_runtime_error)
+
+    # 保存配置后立即刷新 GUI 与报警有效范围；在线第二模块会在下一决策周期读取覆盖值。
+    def _settings_changed(_snapshot) -> None:
+        try:
+            if hasattr(window.source, "poll"):
+                window.source.poll()
+        except Exception:
+            pass
+        try:
+            if hasattr(window, "alarm_runtime"):
+                window.alarm_runtime._tick()
+        except Exception:
+            pass
+
+    settings_page.settings_changed.connect(_settings_changed)
+    window.settings_page = settings_page
 
 
 def main() -> int:
@@ -128,7 +152,7 @@ def main() -> int:
         install_overview_title(window)
         install_history_page(window)
         install_alarm_page(window, global_data)
-        # 防止未来重构时误释放后端对象。
+        install_system_settings_page(window)
         window._backend_refs = backend_refs
         window.show()
         return app.exec_()
