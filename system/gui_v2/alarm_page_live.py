@@ -1,11 +1,13 @@
 """LIVE 报警页细化：活动报警刷新不打断历史报警详情阅读。"""
 from __future__ import annotations
 
+from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import QTableWidgetItem
 
 from .alarm_page import (
     AlarmPage,
     _CATEGORY_TEXT,
+    _LEVEL_COLOR,
     _LEVEL_TEXT,
     _fmt_duration,
     _fmt_time,
@@ -27,8 +29,9 @@ class LiveAlarmPage(AlarmPage):
             self.current_table.setRowCount(0)
             for row_index, event in enumerate(self._active_events):
                 self.current_table.insertRow(row_index)
+                level_code = str(event.get("level") or "ALARM")
                 values = (
-                    _LEVEL_TEXT.get(str(event.get("level")), str(event.get("level") or "--")),
+                    _LEVEL_TEXT.get(level_code, level_code),
                     _fmt_time(event.get("start_time")),
                     _CATEGORY_TEXT.get(str(event.get("category")), str(event.get("category") or "--")),
                     str(event.get("object_name") or "--"),
@@ -40,6 +43,10 @@ class LiveAlarmPage(AlarmPage):
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     item.setToolTip(str(value))
+                    if column == 0:
+                        item.setForeground(
+                            QBrush(QColor(_LEVEL_COLOR.get(level_code, "#dbe8fb")))
+                        )
                     self.current_table.setItem(row_index, column, item)
         finally:
             self.current_table.setUpdatesEnabled(True)
