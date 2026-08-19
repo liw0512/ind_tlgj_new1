@@ -4,6 +4,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
+from system.model.config.operator_settings import operator_so2_target_override
+
 
 class TargetError(ValueError):
     pass
@@ -16,12 +18,17 @@ class TargetManager:
 
     def _commanded(self, runtime_target: Optional[float]) -> float:
         if runtime_target is None:
-            # 运行过程中目标信号暂时缺失时保持上一次命令值，避免自动回跳默认目标。
-            if self.state.get("commanded_target") is not None:
+            # 操作员现场设置属于“内部默认值的运行覆盖层”。存在覆盖时优先使用；
+            # 没有覆盖时继续保持原有语义：短时目标信号缺失保持上次命令值，首次则回退配置默认。
+            operator_target = operator_so2_target_override()
+            if operator_target is not None:
+                value = float(operator_target)
+            elif self.state.get("commanded_target") is not None:
                 value = float(self.state["commanded_target"])
             else:
                 value = float(self.config["default_target"])
         else:
+            # 显式运行目标（例如上层/DCS明确传入）仍保持最高优先级。
             value = float(runtime_target)
         lo, hi = [float(x) for x in self.config["allowed_target_range"]]
         if not lo <= value <= hi:
