@@ -5,7 +5,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
-from system.model.config.operator_settings import effective_plant_config
+from system.model.config.operator_settings import effective_ph_safe_range
 
 try:
     from _engine.config_loader import enabled_towers
@@ -39,6 +39,20 @@ class RealtimeStateBuilder:
         self.plant = plant
         self.training = training
 
+    def _sync_effective_ph_ranges(self) -> None:
+        """把当前操作员有效 pH 范围同步到在线 plant 对象。
+
+        OnlineSlurryPolicy、CandidateFilter、RealtimeStateBuilder 共用同一个 plant 对象，
+        因此这里同步后，本周期的状态构建、pH reason 和候选动作安全过滤会使用同一范围。
+        当操作员“恢复默认”后，effective_ph_safe_range() 会重新返回中央 plant_config 默认值。
+        """
+        for tower in self.plant.get("towers", []) or []:
+            tower_id = str(tower.get("tower_id", ""))
+            if not tower_id:
+                continue
+            low, high = effective_ph_safe_range(tower_id)
+            tower["ph_safe_range"] = [low, high]
+
     def validate_and_build(
         self,
         timestamp: pd.Timestamp,
@@ -46,9 +60,8 @@ class RealtimeStateBuilder:
         condition: ConditionContext,
         fast_context: Dict[str, Any],
     ) -> RealtimeState:
-        # pH 安全范围允许操作员在运行时覆盖；未覆盖时保持模型/plant_config 内部默认值。
-        # 这里只生成当前周期的有效 plant 副本，不修改模型快照本体。
-        plant = effective_plant_config(self.plant)
+        self._sync_effective_ph_ranges()
+        plant = self.plant
 
         outlet = _number(process, OUTLET_SO2_COLUMN)
         axes = condition_axis_columns(self.training)
