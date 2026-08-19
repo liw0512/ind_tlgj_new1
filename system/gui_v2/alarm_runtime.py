@@ -5,8 +5,9 @@ from typing import Any, Dict, Mapping
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
-from system.model.alarm import AlarmManager, AlarmPersistenceWorker
+from system.model.alarm import AlarmPersistenceWorker
 from system.model.alarm.alarm_config import ALARM_RUNTIME_CONFIG
+from system.model.alarm.arrival_alarm_manager import ArrivalAwareAlarmManager
 
 
 class AlarmRuntime(QObject):
@@ -16,7 +17,7 @@ class AlarmRuntime(QObject):
     def __init__(self, global_data: Mapping[str, Any], parent: QObject = None) -> None:
         super().__init__(parent)
         self.global_data = global_data
-        self.manager = AlarmManager()
+        self.manager = ArrivalAwareAlarmManager()
         self.persistence = AlarmPersistenceWorker()
         self.persistence.start()
 
