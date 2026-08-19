@@ -6,7 +6,11 @@ from typing import Any, Dict, Mapping
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 from system.model.alarm import AlarmPersistenceWorker
-from system.model.alarm.alarm_config import ALARM_RUNTIME_CONFIG
+from system.model.alarm.alarm_config import (
+    ALARM_RUNTIME_CONFIG,
+    outlet_so2_limits,
+    ph_alarm_specs,
+)
 from system.model.alarm.arrival_alarm_manager import ArrivalAwareAlarmManager
 
 
@@ -31,6 +35,11 @@ class AlarmRuntime(QObject):
 
     def _tick(self) -> None:
         try:
+            # pH 安全范围允许系统配置页运行时修改；每次判定前刷新有效范围，
+            # 无需重启 AlarmManager，也不会清空现有活动报警状态。
+            self.manager._so2_limits = outlet_so2_limits()
+            self.manager._ph_specs = ph_alarm_specs()
+
             result: Dict[str, Any] = self.manager.evaluate_global_data(self.global_data)
             for transition in result.get("transitions", []) or []:
                 if not isinstance(transition, dict):
