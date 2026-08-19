@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from system.model.config.plant_config import PLANT_CONFIG, enabled_towers
 
@@ -15,7 +15,7 @@ class ResponsiveHistoryDataService(HistoryDataService):
     xstjyxhb_ADL/.../EDL。
     """
 
-    def __init__(self, db_url: str | None = None) -> None:
+    def __init__(self, db_url: Optional[str] = None) -> None:
         super().__init__(db_url=db_url)
 
         meta: Dict[str, Any] = dict(self.process_meta)
