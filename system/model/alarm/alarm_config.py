@@ -87,6 +87,39 @@ def ph_alarm_specs(plant_config: Mapping = PLANT_CONFIG) -> List[Dict[str, objec
     return result
 
 
+def _configured_display_names(plant_config: Mapping) -> Dict[str, str]:
+    """收集 plant_config 已定义的中文测点名，报警页不直接暴露内部字段名。"""
+    result: Dict[str, str] = {}
+    monitor = plant_config.get("realtime_monitor", {}) or {}
+    for group_name in ("inlet_signals", "outlet_signals", "auxiliary_signals"):
+        for item in monitor.get(group_name, []) or []:
+            column = str(item.get("column", "")).strip()
+            if column:
+                result[column] = str(item.get("display_name") or column)
+
+    for tower in enabled_towers(plant_config):
+        tower_name = str(tower.get("display_name") or "吸收塔")
+        ph_column = str(tower.get("ph_column", "")).strip()
+        if ph_column:
+            result.setdefault(ph_column, f"{tower_name}浆液 pH")
+        for group_name in (
+            "monitor_fields",
+            "valves",
+            "supply_flows",
+            "monitor_supply_pumps",
+            "circulation_pumps",
+        ):
+            for item in tower.get(group_name, []) or []:
+                column = str(
+                    item.get("column")
+                    or item.get("value_column")
+                    or ""
+                ).strip()
+                if column:
+                    result[column] = str(item.get("display_name") or column)
+    return result
+
+
 def required_alarm_fields(plant_config: Mapping = PLANT_CONFIG) -> List[Dict[str, str]]:
     """返回第一版报警需要关注的关键输入字段。
 
@@ -94,27 +127,46 @@ def required_alarm_fields(plant_config: Mapping = PLANT_CONFIG) -> List[Dict[str
     不把所有实时监控测点都视为关键输入，避免报警泛滥。
     """
     items: List[Dict[str, str]] = []
+    display_names = _configured_display_names(plant_config)
 
     for axis in plant_config.get("condition_axes", []) or []:
         column = str(axis.get("column", "")).strip()
         if column:
-            items.append({"column": column, "display_name": column})
+            items.append(
+                {
+                    "column": column,
+                    "display_name": display_names.get(column, column),
+                }
+            )
 
     # 净烟气 SO2 是核心安全与目标字段。
-    items.append({"column": "jyq_SO2", "display_name": "净烟气 SO₂"})
+    items.append(
+        {
+            "column": "jyq_SO2",
+            "display_name": display_names.get("jyq_SO2", "净烟气 SO₂"),
+        }
+    )
 
     for tower in enabled_towers(plant_config):
         tower_name = str(tower.get("display_name") or "吸收塔")
         ph_column = str(tower.get("ph_column", "")).strip()
         if ph_column:
-            items.append({"column": ph_column, "display_name": f"{tower_name}浆液 pH"})
+            items.append(
+                {
+                    "column": ph_column,
+                    "display_name": display_names.get(ph_column, f"{tower_name}浆液 pH"),
+                }
+            )
         for valve in tower.get("valves", []) or []:
             column = str(valve.get("column", "")).strip()
             if column:
                 items.append(
                     {
                         "column": column,
-                        "display_name": str(valve.get("display_name") or column),
+                        "display_name": display_names.get(
+                            column,
+                            str(valve.get("display_name") or column),
+                        ),
                     }
                 )
 
