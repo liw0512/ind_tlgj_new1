@@ -5,6 +5,8 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
+from system.model.config.operator_settings import effective_plant_config
+
 try:
     from _engine.config_loader import enabled_towers
     from _engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
@@ -44,6 +46,10 @@ class RealtimeStateBuilder:
         condition: ConditionContext,
         fast_context: Dict[str, Any],
     ) -> RealtimeState:
+        # pH 安全范围允许操作员在运行时覆盖；未覆盖时保持模型/plant_config 内部默认值。
+        # 这里只生成当前周期的有效 plant 副本，不修改模型快照本体。
+        plant = effective_plant_config(self.plant)
+
         outlet = _number(process, OUTLET_SO2_COLUMN)
         axes = condition_axis_columns(self.training)
         rates = dict(fast_context.get("fast_change_axis_rates") or {})
@@ -60,13 +66,13 @@ class RealtimeStateBuilder:
             "before_outlet_so2_rate": outlet_rate,
             "disturbance_mode": disturbance_mode,
         }
-        for tower in enabled_towers(self.plant):
+        for tower in enabled_towers(plant):
             tower_id = str(tower["tower_id"])
             row["before_ph__%s" % tower_id] = _number(process, str(tower["ph_column"]))
             for valve in tower.get("valves", []):
                 valve_id = str(valve["valve_id"])
                 row["before_valve__%s" % valve_id] = _number(process, str(valve["column"]))
-        policy_state, no_grid = build_policy_state(row, self.plant, self.training)
+        policy_state, no_grid = build_policy_state(row, plant, self.training)
         return RealtimeState(
             timestamp=timestamp.isoformat(),
             condition=condition,
