@@ -18,6 +18,28 @@ from .schema import (
 from .supply_pump import supply_pump_current_columns
 
 
+def supply_flow_columns(plant: dict[str, Any]) -> list[str]:
+    """Return configured actual slurry-flow measurements for enabled towers."""
+    columns: list[str] = []
+    for tower in enabled_towers(plant):
+        for flow in tower.get("supply_flows", []) or []:
+            column = str(flow.get("column", "")).strip()
+            if column:
+                columns.append(column)
+    return list(dict.fromkeys(columns))
+
+
+def circulation_pump_value_columns(plant: dict[str, Any]) -> list[str]:
+    """Return configured circulation-pump feedback fields used as context."""
+    columns: list[str] = []
+    for tower in enabled_towers(plant):
+        for pump in tower.get("circulation_pumps", []) or []:
+            column = str(pump.get("value_column", "")).strip()
+            if column:
+                columns.append(column)
+    return list(dict.fromkeys(columns))
+
+
 def resolve_input_paths(input_specs: Sequence[str] | str) -> list[Path]:
     specs = [input_specs] if isinstance(input_specs, str) else list(input_specs)
     found: list[Path] = []
@@ -55,6 +77,16 @@ def required_columns(
         required.append(tower["ph_column"])
     required.extend(v["column"] for v in all_valves(plant))
     required.extend(supply_pump_current_columns(plant))
+
+    # Supply-flow trajectories are the canonical action signal for the new
+    # slurry policy semantics. Batch 1 only makes these fields available to the
+    # pipeline; the existing valve-based detector remains unchanged for now.
+    required.extend(supply_flow_columns(plant))
+
+    # Circulation-pump feedback is loaded now as process context so later
+    # batches can distinguish clean supply events from coordinated/compound
+    # events without changing the data-ingestion contract again.
+    required.extend(circulation_pump_value_columns(plant))
     return list(dict.fromkeys(required))
 
 
@@ -146,7 +178,8 @@ def load_input_data(
     if missing and training["io"].get("strict_required_columns", True):
         raise InputDataError(
             "输入数据缺少第二模块必要字段: "
-            f"{missing}。工况轴字段来自指定第一模块 snapshot，"
+            f"{missing}。工况轴字段来自指定第一模块 snapshot；"
+            "已配置的供浆流量和循环泵反馈属于第二模块历史上下文字段；"
             "启用供浆泵拓扑后 pump.current_column 也属于必要字段；"
             "其余第一模块 condition/grid/version 字段必须存在于标注后 CSV。"
         )
@@ -174,6 +207,8 @@ def load_input_data(
             *(t["ph_column"] for t in enabled_towers(plant)),
             *(v["column"] for v in all_valves(plant)),
             *supply_pump_current_columns(plant),
+            *supply_flow_columns(plant),
+            *circulation_pump_value_columns(plant),
         ]
         numeric_list = list(
             dict.fromkeys(c for c in numeric_cols if c in df.columns)
