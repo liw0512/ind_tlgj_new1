@@ -60,6 +60,13 @@ class DatabaseProbeThread(QThread):
                     pass
 
 
+class _WheelGuardDoubleSpinBox(QDoubleSpinBox):
+    """Ignore wheel input so page scrolling cannot accidentally change settings."""
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
 class _ValueRow(QWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -131,7 +138,7 @@ class SystemSettingsPage(QWidget):
 
     @staticmethod
     def _spin_box(decimals: int = 2) -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
+        box = _WheelGuardDoubleSpinBox()
         box.setDecimals(decimals)
         box.setSingleStep(0.1)
         box.setMinimumWidth(190)
