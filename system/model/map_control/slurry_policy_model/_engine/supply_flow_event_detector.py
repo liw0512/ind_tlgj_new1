@@ -14,11 +14,11 @@ from .time_index import TimeWindowIndexer
 
 @dataclass(frozen=True)
 class SupplyFlowEvent:
-    """One observed actual-slurry-flow trajectory before shape classification.
+    """Observed actual-slurry-flow trajectory before shape classification.
 
-    Batch 2A intentionally stores continuous physical features only.  ``STEP``,
-    ``PULSE`` and ``BOOST_STEP`` classification is added in the next batch so a
-    classification mistake cannot affect event segmentation itself.
+    Batch 2A stores continuous physical features only. STEP/PULSE/BOOST_STEP
+    classification is deliberately deferred to Batch 2B so segmentation can be
+    reviewed independently from action naming.
     """
 
     tower_id: str
@@ -66,11 +66,9 @@ def _settings(training: dict[str, Any]) -> _DetectionSettings:
         backtrack_minutes=float(episode.get("action_detection_window_minutes", 2.0)),
         stable_minutes=float(episode.get("action_end_stable_minutes", 1.5)),
         max_transition_minutes=max_transition,
-        # Nearby transitions are deliberately chained before shape
-        # classification.  This lets 0->60->0 and 10->50->20 remain one
-        # trajectory instead of two unrelated actions.  The default follows
-        # the existing response horizon and can later be overridden without a
-        # plant-specific parameter.
+        # Nearby elementary transitions are chained before shape classification.
+        # The default uses the existing response horizon rather than introducing
+        # a new plant-specific tuning parameter.
         trajectory_merge_gap_minutes=float(
             override.get(
                 "trajectory_merge_gap_minutes",
@@ -86,9 +84,21 @@ def _settings(training: dict[str, Any]) -> _DetectionSettings:
     )
 
 
+def _numeric(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").dropna()
+
+
+def _numeric_value(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if np.isfinite(result) else None
+
+
 def _robust_noise_sigma(values: pd.Series) -> float:
     """Estimate point noise from first differences without model fitting."""
-    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    numeric = _numeric(values)
     if len(numeric) < 3:
         return 0.0
     diffs = numeric.diff().dropna().to_numpy(dtype=float)
@@ -98,13 +108,13 @@ def _robust_noise_sigma(values: pd.Series) -> float:
     mad = float(np.median(np.abs(diffs - center)))
     if not np.isfinite(mad) or mad <= 0.0:
         return 0.0
-    # Difference noise has sqrt(2) times the standard deviation of the
-    # underlying point noise.  1.4826 converts MAD to Gaussian-equivalent sigma.
+    # First-difference noise is sqrt(2) times point noise; 1.4826 converts
+    # MAD to Gaussian-equivalent sigma.
     return float(1.4826 * mad / np.sqrt(2.0))
 
 
 def _segment_span(values: pd.Series) -> float:
-    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    numeric = _numeric(values)
     if len(numeric) < 2:
         return 0.0
     q05, q95 = np.nanquantile(numeric.to_numpy(dtype=float), [0.05, 0.95])
@@ -125,18 +135,72 @@ def _trigger_deadband(
         settings.level_deadband_ratio * abs(float(baseline_flow)),
     ]
     finite = [float(value) for value in candidates if np.isfinite(value) and value > 0]
-    deadband = max(finite) if finite else 0.0
-    return deadband, noise_sigma
+    return (max(finite) if finite else 0.0), noise_sigma
 
 
 def _is_stable(values: pd.Series, deadband: float, noise_sigma: float) -> bool:
-    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    numeric = _numeric(values)
     if len(numeric) < 2:
         return False
     stable_band = max(0.50 * float(deadband), 2.5 * float(noise_sigma))
+    observed_range = float(numeric.max() - numeric.min())
     if stable_band <= 0.0:
-        return bool(float(numeric.max() - numeric.min()) == 0.0)
-    return bool(float(numeric.max() - numeric.min()) <= stable_band)
+        return observed_range == 0.0
+    return observed_range <= stable_band
+
+
+def _baseline_context(
+    frame: pd.DataFrame,
+    indexer: TimeWindowIndexer,
+    *,
+    row_index: int,
+    timestamp_column: str,
+    flow_column: str,
+    segment_span: float,
+    settings: _DetectionSettings,
+) -> tuple[float, float, float] | None:
+    """Return baseline flow, adaptive deadband and noise before one row.
+
+    The long baseline provides robust statistics, while a recently stable short
+    plateau is preferred as the physical reference level. This prevents a new
+    STEP plateau from being repeatedly detected while still allowing a later
+    PULSE return or BOOST_STEP drop to be seen as a new elementary transition.
+    """
+    if row_index <= 0:
+        return None
+    current_time = pd.Timestamp(frame.iloc[row_index][timestamp_column])
+    long_left = indexer.left(
+        current_time - pd.Timedelta(minutes=settings.baseline_minutes)
+    )
+    long_values = _numeric(frame.iloc[long_left:row_index][flow_column])
+    if len(long_values) < 3:
+        return None
+
+    baseline_flow = float(long_values.median())
+    deadband, noise_sigma = _trigger_deadband(
+        long_values, baseline_flow, segment_span, settings
+    )
+
+    recent_left = indexer.left(
+        current_time - pd.Timedelta(minutes=settings.stable_minutes)
+    )
+    recent_values = _numeric(frame.iloc[recent_left:row_index][flow_column])
+    if (
+        len(recent_values) >= 3
+        and deadband > 0.0
+        and _is_stable(recent_values, deadband, noise_sigma)
+    ):
+        recent_flow = float(recent_values.median())
+        recent_deadband, recent_noise = _trigger_deadband(
+            recent_values, recent_flow, segment_span, settings
+        )
+        baseline_flow = recent_flow
+        deadband = recent_deadband
+        noise_sigma = recent_noise
+
+    if deadband <= 0.0:
+        return None
+    return baseline_flow, deadband, noise_sigma
 
 
 def _integrate_delta_volume(
@@ -145,19 +209,19 @@ def _integrate_delta_volume(
     baseline_flow: float,
 ) -> tuple[float, float, float]:
     """Integrate m3/h flow deviation over real timestamps, returning m3."""
-    frame = pd.DataFrame(
+    work = pd.DataFrame(
         {
             "time": pd.to_datetime(timestamps, errors="coerce"),
             "flow": pd.to_numeric(values, errors="coerce"),
         }
     ).dropna()
-    if len(frame) < 2:
+    if len(work) < 2:
         return 0.0, 0.0, 0.0
 
-    frame.sort_values("time", inplace=True, kind="stable")
-    t_ns = pd.DatetimeIndex(frame["time"]).asi8.astype(np.float64)
+    work.sort_values("time", inplace=True, kind="stable")
+    t_ns = pd.DatetimeIndex(work["time"]).asi8.astype(np.float64)
     dt_hours = np.diff(t_ns) / 3.6e12
-    delta = frame["flow"].to_numpy(dtype=float) - float(baseline_flow)
+    delta = work["flow"].to_numpy(dtype=float) - float(baseline_flow)
     if len(delta) < 2 or len(dt_hours) != len(delta) - 1:
         return 0.0, 0.0, 0.0
 
@@ -189,13 +253,12 @@ def _build_event(
     if event_window.empty:
         return None
 
-    values = pd.to_numeric(event_window[flow_column], errors="coerce")
-    valid = values.dropna()
-    if valid.empty:
+    values = _numeric(event_window[flow_column])
+    if values.empty:
         return None
 
-    peak_flow = float(valid.max())
-    trough_flow = float(valid.min())
+    peak_flow = float(values.max())
+    trough_flow = float(values.min())
     positive_delta = peak_flow - float(baseline_flow)
     negative_delta = trough_flow - float(baseline_flow)
     if abs(positive_delta) >= abs(negative_delta):
@@ -205,12 +268,12 @@ def _build_event(
         peak_delta = float(negative_delta)
         extreme_value = trough_flow
 
-    extreme_mask = np.isclose(
-        pd.to_numeric(event_window[flow_column], errors="coerce").to_numpy(dtype=float),
-        extreme_value,
-        equal_nan=False,
+    raw_values = pd.to_numeric(event_window[flow_column], errors="coerce").to_numpy(
+        dtype=float
     )
-    extreme_positions = np.flatnonzero(extreme_mask)
+    extreme_positions = np.flatnonzero(
+        np.isclose(raw_values, extreme_value, equal_nan=False)
+    )
     extreme_time = (
         pd.Timestamp(event_window.iloc[int(extreme_positions[0])][timestamp_column])
         if len(extreme_positions)
@@ -218,19 +281,13 @@ def _build_event(
     )
 
     final_start = pd.Timestamp(end_time) - pd.Timedelta(minutes=stable_minutes)
-    final_window = indexer.slice(final_start, end_time)
-    final_values = pd.to_numeric(final_window[flow_column], errors="coerce").dropna()
-    if final_values.empty:
-        final_flow = float(valid.iloc[-1])
-    else:
-        final_flow = float(final_values.median())
+    final_values = _numeric(indexer.slice(final_start, end_time)[flow_column])
+    final_flow = float(final_values.median()) if not final_values.empty else float(values.iloc[-1])
 
     extra, deficit, signed = _integrate_delta_volume(
-        event_window[timestamp_column],
-        event_window[flow_column],
-        baseline_flow,
+        event_window[timestamp_column], event_window[flow_column], baseline_flow
     )
-    duration_minutes = max(
+    duration = max(
         0.0,
         (pd.Timestamp(end_time) - pd.Timestamp(start_time)).total_seconds() / 60.0,
     )
@@ -257,7 +314,7 @@ def _build_event(
         extra_slurry_volume=extra,
         deficit_slurry_volume=deficit,
         signed_slurry_volume=signed,
-        active_duration_minutes=duration_minutes,
+        active_duration_minutes=duration,
         time_to_extreme_minutes=to_extreme,
         time_from_extreme_to_end_minutes=from_extreme,
         baseline_noise_sigma=float(baseline_noise_sigma),
@@ -286,128 +343,105 @@ def _detect_tower_transitions(
     i = 0
 
     while i < n:
-        current_time = timestamps[i]
-        baseline_left = indexer.left(
-            current_time - pd.Timedelta(minutes=settings.baseline_minutes)
+        context = _baseline_context(
+            frame,
+            indexer,
+            row_index=i,
+            timestamp_column=timestamp_column,
+            flow_column=flow_column,
+            segment_span=segment_span,
+            settings=settings,
         )
-        baseline_window = frame.iloc[baseline_left:i]
-        baseline_values = pd.to_numeric(
-            baseline_window[flow_column], errors="coerce"
-        ).dropna()
-        if len(baseline_values) < 3:
+        if context is None:
             i += 1
             continue
+        baseline_flow, deadband, noise_sigma = context
 
-        baseline_flow = float(baseline_values.median())
-        deadband, noise_sigma = _trigger_deadband(
-            baseline_values,
-            baseline_flow,
-            segment_span,
-            settings,
-        )
-        current_flow = pd.to_numeric(
-            pd.Series([frame.iloc[i][flow_column]]), errors="coerce"
-        ).iloc[0]
-        if pd.isna(current_flow) or deadband <= 0.0:
+        current_flow = _numeric_value(frame.iloc[i][flow_column])
+        if current_flow is None:
             i += 1
             continue
-
-        current_delta = float(current_flow) - baseline_flow
+        current_delta = current_flow - baseline_flow
         if abs(current_delta) < deadband:
             i += 1
             continue
 
-        # Reject isolated meter spikes.  Confirmation is point-based rather than
-        # second-based so the same code works for different plant historian
-        # sampling intervals without a per-plant timing parameter.
+        # Reject isolated meter spikes. Point-based confirmation keeps the logic
+        # independent of historian sampling frequency.
         sign = 1.0 if current_delta > 0 else -1.0
         confirmed = 0
         confirmation_end = min(n, i + settings.trigger_confirmation_points)
         for k in range(i, confirmation_end):
-            value = pd.to_numeric(
-                pd.Series([frame.iloc[k][flow_column]]), errors="coerce"
-            ).iloc[0]
-            if pd.isna(value):
-                continue
-            delta = float(value) - baseline_flow
-            if sign * delta >= 0.75 * deadband:
+            value = _numeric_value(frame.iloc[k][flow_column])
+            if value is not None and sign * (value - baseline_flow) >= 0.75 * deadband:
                 confirmed += 1
         if confirmed < settings.trigger_confirmation_points:
             i += 1
             continue
 
-        # Backtrack within the existing detection horizon to recover the first
-        # meaningful departure from the old baseline.
+        current_time = timestamps[i]
         start_idx = i
         earliest = indexer.left(
             current_time - pd.Timedelta(minutes=settings.backtrack_minutes)
         )
         for k in range(i - 1, earliest - 1, -1):
-            value = pd.to_numeric(
-                pd.Series([frame.iloc[k][flow_column]]), errors="coerce"
-            ).iloc[0]
-            if pd.isna(value):
+            value = _numeric_value(frame.iloc[k][flow_column])
+            if value is None:
                 break
-            if abs(float(value) - baseline_flow) > 0.25 * deadband:
+            if abs(value - baseline_flow) > 0.25 * deadband:
                 start_idx = k
             else:
                 break
 
         start_time = timestamps[start_idx]
-        # Recompute the event baseline before the recovered start time.
-        baseline_left = indexer.left(
-            start_time - pd.Timedelta(minutes=settings.baseline_minutes)
+        start_context = _baseline_context(
+            frame,
+            indexer,
+            row_index=start_idx,
+            timestamp_column=timestamp_column,
+            flow_column=flow_column,
+            segment_span=segment_span,
+            settings=settings,
         )
-        baseline_window = frame.iloc[baseline_left:start_idx]
-        baseline_values = pd.to_numeric(
-            baseline_window[flow_column], errors="coerce"
-        ).dropna()
-        if len(baseline_values) >= 3:
-            baseline_flow = float(baseline_values.median())
-            deadband, noise_sigma = _trigger_deadband(
-                baseline_values,
-                baseline_flow,
-                segment_span,
-                settings,
-            )
+        if start_context is not None:
+            baseline_flow, deadband, noise_sigma = start_context
 
         max_end = start_time + pd.Timedelta(minutes=settings.max_transition_minutes)
         j = max(i, start_idx + 1)
         found_end = False
-        end_idx = j
+        last_scanned = start_idx
         while j < n and timestamps[j] <= max_end:
+            last_scanned = j
             t = timestamps[j]
             if t - start_time < pd.Timedelta(minutes=settings.stable_minutes):
                 j += 1
                 continue
+
             stable_start = t - pd.Timedelta(minutes=settings.stable_minutes)
             stable_window = indexer.slice(stable_start, t)
             if _is_stable(stable_window[flow_column], deadband, noise_sigma):
-                plateau_values = pd.to_numeric(
-                    stable_window[flow_column], errors="coerce"
-                ).dropna()
-                if not plateau_values.empty:
+                plateau_values = _numeric(stable_window[flow_column])
+                excursion_values = _numeric(indexer.slice(start_time, t)[flow_column])
+                if not plateau_values.empty and not excursion_values.empty:
                     plateau = float(plateau_values.median())
-                    excursion = pd.to_numeric(
-                        indexer.slice(start_time, t)[flow_column], errors="coerce"
-                    ).dropna()
-                    if not excursion.empty:
-                        max_excursion = float(
-                            np.max(np.abs(excursion.to_numpy(dtype=float) - baseline_flow))
+                    max_excursion = float(
+                        np.max(
+                            np.abs(
+                                excursion_values.to_numpy(dtype=float) - baseline_flow
+                            )
                         )
-                        # A stable new plateau or a stable return after a real
-                        # excursion closes this elementary transition.
-                        if max_excursion >= deadband and (
-                            abs(plateau - baseline_flow) >= deadband
-                            or abs(plateau - baseline_flow) <= 0.75 * deadband
-                        ):
-                            found_end = True
-                            end_idx = j
-                            break
-            end_idx = j
+                    )
+                    # Close an elementary transition at a stable new plateau, or
+                    # after a real excursion has stably returned near baseline.
+                    if max_excursion >= deadband and (
+                        abs(plateau - baseline_flow) >= deadband
+                        or abs(plateau - baseline_flow) <= 0.75 * deadband
+                    ):
+                        found_end = True
+                        break
             j += 1
 
-        if end_idx <= start_idx:
+        if last_scanned <= start_idx:
             i += 1
             continue
 
@@ -417,7 +451,7 @@ def _detect_tower_transitions(
             flow_column=flow_column,
             tower_id=tower_id,
             start_time=start_time,
-            end_time=timestamps[end_idx],
+            end_time=timestamps[last_scanned],
             baseline_flow=baseline_flow,
             baseline_noise_sigma=noise_sigma,
             trigger_deadband=deadband,
@@ -427,7 +461,7 @@ def _detect_tower_transitions(
         )
         if event is not None and event.max_abs_delta_flow >= deadband:
             transitions.append(event)
-            i = end_idx + 1
+            i = last_scanned + 1
         else:
             i += 1
 
@@ -472,8 +506,7 @@ def _merge_nearby_transitions(
 
     for transition in ordered[1:]:
         previous = current_group[-1]
-        gap = transition.start_time - previous.end_time
-        if pd.Timedelta(0) <= gap <= merge_gap:
+        if transition.start_time - previous.end_time <= merge_gap:
             current_group.append(transition)
         else:
             flush(current_group)
@@ -488,11 +521,11 @@ def detect_supply_flow_events(
     training: dict[str, Any],
     progress: Callable[[float, str], None] | None = None,
 ) -> list[SupplyFlowEvent]:
-    """Detect actual slurry-flow trajectory events without classifying shape.
+    """Detect actual slurry-flow trajectories without classifying their shape.
 
-    The function is intentionally not wired into ``episode_extractor`` in Batch
-    2A.  It runs alongside the legacy valve detector so historical segmentation
-    can be reviewed before the policy semantics are switched.
+    Batch 2A intentionally leaves this function disconnected from the legacy
+    ``episode_extractor``. It can therefore be audited against historical flow
+    curves without changing the currently active valve-based policy semantics.
     """
     if df.empty:
         if progress:
@@ -502,7 +535,11 @@ def detect_supply_flow_events(
     settings = _settings(training)
     ts_col = time_column(plant)
     segment_key = "continuous_segment_id"
-    segments = list(df.groupby(segment_key, sort=False)) if segment_key in df.columns else [(0, df)]
+    segments = (
+        list(df.groupby(segment_key, sort=False))
+        if segment_key in df.columns
+        else [(0, df)]
+    )
     towers = enabled_towers(plant)
     total_jobs = max(1, len(segments) * len(towers))
     completed_jobs = 0
@@ -513,25 +550,23 @@ def detect_supply_flow_events(
         for tower in towers:
             tower_id = str(tower["tower_id"])
             flow_col = clean_supply_flow_column(tower_id)
-            if flow_col not in segment.columns:
-                completed_jobs += 1
-                continue
-            transitions = _detect_tower_transitions(
-                segment,
-                timestamp_column=ts_col,
-                flow_column=flow_col,
-                tower_id=tower_id,
-                settings=settings,
-            )
-            events.extend(
-                _merge_nearby_transitions(
+            if flow_col in segment.columns:
+                transitions = _detect_tower_transitions(
                     segment,
                     timestamp_column=ts_col,
                     flow_column=flow_col,
-                    transitions=transitions,
+                    tower_id=tower_id,
                     settings=settings,
                 )
-            )
+                events.extend(
+                    _merge_nearby_transitions(
+                        segment,
+                        timestamp_column=ts_col,
+                        flow_column=flow_col,
+                        transitions=transitions,
+                        settings=settings,
+                    )
+                )
             completed_jobs += 1
             if progress:
                 progress(
