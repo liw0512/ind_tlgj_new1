@@ -15,7 +15,10 @@ from .calibration import (
 from .data_loader import assign_continuous_segments, load_input_data
 from .episode_extractor import extract_decision_episodes
 from .schema import freeze_condition_axes
-from .signal_processing import add_clean_valve_columns
+from .signal_processing import (
+    add_clean_supply_flow_columns,
+    add_clean_valve_columns,
+)
 from .tower_policy_projection import project_tower_policy_deltas
 
 
@@ -91,8 +94,9 @@ def prepare_raw_data(input_specs: list[str] | str, plant: dict[str, Any], traini
     if progress:
         segment_count = int(df["continuous_segment_id"].nunique()) if not df.empty else 0
         progress(0.86, f"连续运行段划分完成，共 {segment_count} 段")
-        progress(0.90, "执行阀位短窗口中位数去抖")
+        progress(0.90, "执行阀位与供浆流量短窗口中位数去抖")
     df = add_clean_valve_columns(df, plant, training)
+    df = add_clean_supply_flow_columns(df, plant, training)
     if progress:
         progress(1.0, f"原始数据预处理完成，共 {len(df)} 行")
     return df, warnings
