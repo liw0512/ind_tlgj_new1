@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
+import math
 from typing import Any, Callable
 
 import pandas as pd
@@ -25,6 +27,24 @@ from .supply_flow_event_detector import detect_supply_flow_events
 from .utils import bool_value, hash_text, normalize_condition_label
 
 
+FAST_ANCHOR_FIELDS = (
+    "fast_change_mode",
+    "fast_change_direction",
+    "fast_change_severity",
+    "fast_change_exact_trend_mode",
+    "fast_change_raw_exact_trend_mode",
+    "fast_change_trend_risk_level",
+    "fast_change_effect_risk_level",
+    "fast_change_effect_state",
+    "fast_change_overall_risk_level",
+    "fast_change_axis_rates",
+    "fast_change_axis_levels",
+    "fast_change_axis_direction_ratios",
+    "fast_change_outlet_so2_rate",
+    "fast_change_outlet_so2_trend",
+)
+
+
 def _circulation_thresholds(plant: dict[str, Any]) -> dict[str, float]:
     result: dict[str, float] = {}
     for tower in plant.get("towers", []) or []:
@@ -38,6 +58,51 @@ def _circulation_thresholds(plant: dict[str, Any]) -> dict[str, float]:
             if column and threshold is not None:
                 result[column] = float(threshold)
     return result
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except Exception:
+            return {}
+        return dict(decoded) if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _sequence(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except Exception:
+            decoded = None
+        if isinstance(decoded, list):
+            return [str(item) for item in decoded]
+    return []
+
+
+def _primary_fast_axis_rate(anchor: pd.Series) -> float | None:
+    """Return the first configured FAST axis rate visible at action start.
+
+    The current steel-plant deployment has one axis (yyq_SO2), but keeping the
+    axis-column order makes the episode schema compatible with future two-axis
+    plants without looking at any value after action_start_time.
+    """
+    rates = _mapping(anchor.get("fast_change_axis_rates"))
+    columns = _sequence(anchor.get("fast_change_axis_columns"))
+    candidates = columns + [key for key in rates if key not in columns]
+    for column in candidates:
+        try:
+            value = float(rates.get(column))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            return value
+    return None
 
 
 def _flow_event_anchor_fields(
@@ -82,7 +147,14 @@ def _flow_event_anchor_fields(
         ),
         "continuous_segment_id": anchor.get("continuous_segment_id"),
         "event_date": pd.Timestamp(event_start).date().isoformat(),
+        # Strictly causal FAST anchor: every field below is copied from the
+        # row at/before action_start_time. Future disturbance endpoint is never
+        # used as an online matching key.
+        "fast_change_primary_axis_rate": _primary_fast_axis_rate(anchor),
     }
+    for field in FAST_ANCHOR_FIELDS:
+        if field in frame.columns:
+            result[field] = anchor.get(field)
     if "__source_file" in frame.columns:
         result["source_files"] = str(anchor.get("__source_file", ""))
     return result
