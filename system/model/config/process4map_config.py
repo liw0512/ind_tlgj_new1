@@ -59,6 +59,31 @@ class UnitStopConfig:
 
 
 @dataclass(frozen=True)
+class SnapshotAggregationConfig:
+    """10秒模型/写库快照的聚合语义。
+
+    实时 ``clean_data`` 仍按1秒处理和发布；这里只控制低频快照如何从最近若干个
+    已预处理实时帧中形成。默认数值过程量取均值，离散语义字段严格取末帧。
+    """
+
+    window_size: int = 3  # 最近3个1秒预处理帧求均值，例如10秒时使用8/9/10秒。
+    latest_value_fields: Tuple[str, ...] = (
+        'date',
+        'id',
+        'jym',
+        'connection_status',
+        'outlet_so2_target',
+    )
+    latest_value_prefixes: Tuple[str, ...] = ('_',)
+    latest_value_suffixes: Tuple[str, ...] = (
+        '_status',
+        '_id',
+        '_code',
+        '_seq',
+    )
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     """线程、队列、快照与通讯运行参数。"""
 
@@ -155,6 +180,7 @@ class Process4MapControlConfig:
 
     data_validation: DataValidationConfig = field(default_factory=DataValidationConfig)
     unit_stop: UnitStopConfig = field(default_factory=UnitStopConfig)
+    snapshot_aggregation: SnapshotAggregationConfig = field(default_factory=SnapshotAggregationConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     persistence: PersistenceConfig = field(default_factory=PersistenceConfig)

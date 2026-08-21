@@ -44,6 +44,10 @@ import logging
 import shutil
 from system.model.map_control.MapControPre import MapControPre  #推荐泵以及PH建议
 from system.model.map_control.data_preprocessor1 import DataPreprocessor    #数据预处理
+from system.model.map_control.snapshot_aggregation import (
+    average_snapshot_window,
+    is_latest_value_field,
+)
 from system.model.map_control.SO2_processor import SO2Processor  # SO2计算
 from system.model.map_control.yhfj_and_jzgj_model import ProcessControl as YHFJProcessControl  # 氧化风机和基准供浆计算
 from system.model.map_control.tower_power_consumption import TowerPowerCalculator  # 塔电耗计算
@@ -146,7 +150,7 @@ class DataValidator:
     
     def validate_data(self, data):
         """
-        验证数据是否有效（针对每10秒生成的最近3帧均值快照）
+        验证数据是否有效（针对每10秒按配置聚合生成的快照）
         Returns:
             tuple: (is_valid, reason)
         """
@@ -258,10 +262,15 @@ class ProcessForMapConsole:
 
         self.training_event=threading.Event()
         self.snapshot_interval = float(self.process_config.runtime.snapshot_interval_seconds)
+        self.snapshot_aggregation_config = self.process_config.snapshot_aggregation
+        self.snapshot_window_size = max(
+            1,
+            int(self.snapshot_aggregation_config.window_size),
+        )
         self.snapshot_lock = threading.Lock()
         self._latest_processed_snapshot = None
-        # 实时链路仍按1秒处理；模型/状态判断每10秒使用最近3帧（如8、9、10秒）。
-        self._processed_snapshot_window = deque(maxlen=3)
+        # 实时链路仍按1秒处理；模型/状态判断每10秒使用配置的最近实时帧窗口。
+        self._processed_snapshot_window = deque(maxlen=self.snapshot_window_size)
         self._latest_processed_snapshot_seq = 0
         self._last_snapshot_emit_ts = time.monotonic()
         self._last_filter_emitted_seq = -1
@@ -593,43 +602,20 @@ class ProcessForMapConsole:
             self._processed_snapshot_window.append(snapshot.copy())
             return snapshot_seq
 
-    @staticmethod
-    def _is_snapshot_state_field(field_name, value):
-        """状态、标识和内部字段按窗口末帧取值，不参与均值。"""
-        name = str(field_name)
-        return (
-            name == "date"
-            or name == "jym"
-            or name == "connection_status"
-            or name.startswith("_")
-            or name.endswith("_status")
-            or isinstance(value, bool)
+    def _is_snapshot_state_field(self, field_name, value):
+        """状态、标识、控制目标和内部字段按窗口末帧取值，不参与均值。"""
+        return is_latest_value_field(
+            field_name,
+            value,
+            self.snapshot_aggregation_config,
         )
 
-    @classmethod
-    def _average_snapshot_window(cls, snapshots):
-        """连续数值取最近3帧均值；0/1状态及字符串取第3帧当前值。"""
-        if not snapshots:
-            return None
-        latest = dict(snapshots[-1])
-        averaged = dict(latest)
-        for field_name, latest_value in latest.items():
-            if cls._is_snapshot_state_field(field_name, latest_value):
-                continue
-            values = []
-            for frame in snapshots:
-                value = frame.get(field_name)
-                if isinstance(value, bool):
-                    continue
-                try:
-                    numeric = float(value)
-                except (TypeError, ValueError):
-                    continue
-                if math.isfinite(numeric):
-                    values.append(numeric)
-            if values:
-                averaged[field_name] = sum(values) / len(values)
-        return averaged
+    def _average_snapshot_window(self, snapshots):
+        """按配置聚合最近实时帧；连续数值均值，离散语义取末帧。"""
+        return average_snapshot_window(
+            snapshots,
+            self.snapshot_aggregation_config,
+        )
 
     def _snapshot_scheduler_loop(self):
         while True:
@@ -643,7 +629,7 @@ class ProcessForMapConsole:
                         frame.copy() for frame in self._processed_snapshot_window
                     ]
                     snapshot_seq = self._latest_processed_snapshot_seq
-                if len(snapshot_window) < 3:
+                if len(snapshot_window) < self.snapshot_window_size:
                     time.sleep(float(self.process_config.runtime.snapshot_poll_interval_seconds))
                     continue
                 snapshot = self._average_snapshot_window(snapshot_window)
