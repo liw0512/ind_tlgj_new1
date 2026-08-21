@@ -6,7 +6,7 @@
 3. 执行增量训练；
 4. 维护版本化快照及上一版继承关系。
 
-实际动作检测、HOLD 提取、响应统计、聚合及快照写入位于 _engine，
+实际流量动作检测、响应统计、原型聚合及快照写入位于 _engine，
 厂级部署时通常只修改 slurry_policy_config.py，并调用两个训练入口文件。
 """
 from __future__ import annotations
@@ -23,7 +23,6 @@ import pandas as pd
 
 from system.model.map_control.fast_change_mode import FastChangeHistoryManager
 
-from _engine.aggregator import aggregate_all_levels
 from _engine.config_loader import (
     deep_merge,
     enabled_towers,
@@ -36,7 +35,7 @@ from _engine.pipeline import prepare_raw_data, run_episode_pipeline
 from _engine.progress import TrainingProgress
 from _engine.performance import PerformanceRecorder
 from _engine.schema import time_column
-from _engine.signal_processing import add_clean_valve_columns
+from _engine.signal_processing import add_clean_supply_flow_columns
 from _engine.snapshot_store import (
     latest_snapshot_path,
     load_previous_episodes,
@@ -149,15 +148,12 @@ def _plant_structure_signature(plant: dict[str, Any]) -> dict[str, Any]:
                 "ph_column": tower["ph_column"],
                 "ph_safe_range": [float(x) for x in tower["ph_safe_range"]],
                 "ph_guard_band": float(tower.get("ph_guard_band", 0.0)),
-                "valves": [
+                "supply_flows": [
                     {
-                        "valve_id": valve["valve_id"],
-                        "column": valve["column"],
-                        "min_opening": float(valve["min_opening"]),
-                        "max_opening": float(valve["max_opening"]),
-                        "action_threshold": float(valve["action_threshold"]),
+                        "flow_id": str(flow.get("flow_id", "")),
+                        "column": str(flow.get("column", "")),
                     }
-                    for valve in tower["valves"]
+                    for flow in tower.get("supply_flows", []) or []
                 ],
             }
         )
@@ -165,9 +161,6 @@ def _plant_structure_signature(plant: dict[str, Any]) -> dict[str, Any]:
         "time_column": time_column(plant),
         "outlet_so2_safe_range": [
             float(x) for x in plant["outlet_so2_safe_range"]
-        ],
-        "supply_pump_state_columns": [
-            str(x) for x in (plant.get("supply_pump_state_columns", []) or [])
         ],
         "towers": towers,
     }
@@ -190,11 +183,6 @@ def _event_definition_signature(training: dict[str, Any]) -> dict[str, Any]:
             "allow_out_of_range_clipped": bool(
                 training.get("validity", {}).get("allow_out_of_range_clipped", True)
             ),
-            "invalidate_supply_pump_state_change": bool(
-                training.get("validity", {}).get(
-                    "invalidate_supply_pump_state_change", True
-                )
-            ),
         },
     }
 
@@ -215,8 +203,7 @@ def _validate_incremental_compatibility(
         previous_text = json.dumps(previous_signature, ensure_ascii=False, sort_keys=True)
         raise ConfigurationError(
             "增量训练检测到厂级固定结构发生变化。时间列、SO2安全范围、"
-            "供浆泵状态字段、塔数量、pH字段/安全范围、阀门数量/字段/开度范围/"
-            "动作阈值变化时，应重新执行初次训练。\n"
+            "塔数量、pH字段/安全范围或供浆流量测点变化时，应重新执行初次训练。\n"
             f"当前结构: {current_text}\n上一版结构: {previous_text}"
         )
     current_event = _event_definition_signature(current_training)
@@ -253,10 +240,12 @@ def _combine_tail_and_new(
         combined.drop_duplicates(subset=[ts_col], keep="last", inplace=True)
 
     # 上一版尾部可能带内部中间列，必须删掉后按新拼接数据重新计算。
-    internal_cols = [c for c in combined.columns if c.startswith("__clean_valve__")]
+    internal_cols = [
+        c for c in combined.columns if c.startswith("__clean_supply_flow")
+    ]
     combined.drop(columns=internal_cols, inplace=True, errors="ignore")
     combined = assign_continuous_segments(combined, plant, training)
-    combined = add_clean_valve_columns(combined, plant, training)
+    combined = add_clean_supply_flow_columns(combined, plant, training)
     return combined.reset_index(drop=True)
 
 
@@ -424,15 +413,10 @@ def run_initial_training(
             )
         recorder.add_counter("valid_episode_count", len(valid))
         recorder.add_counter("invalid_episode_count", len(invalid))
-        with recorder.measure("initial_aggregate_all_levels"):
-            aggregated = aggregate_all_levels(
-                valid,
-                plant,
-                training,
-                progress=progress.child(70.0, 82.0),
-                condition_members=condition_index.condition_members,
-                performance_recorder=recorder,
-            )
+        aggregated = {
+            "conditions": {},
+        }
+        progress.update(82.0, "供浆流量动作证据整理完成")
         remap_report = _build_remap_report(
             source_policy_version=None,
             target_version=version,
@@ -627,15 +611,10 @@ def run_incremental_training(
         recorder.add_counter("new_valid_episode_count", len(new_valid))
         recorder.add_counter("final_valid_episode_count", len(valid))
         recorder.add_counter("final_invalid_episode_count", len(invalid))
-        with recorder.measure("incremental_aggregate_all_levels"):
-            aggregated = aggregate_all_levels(
-                valid,
-                plant,
-                training,
-                progress=progress.child(72.0, 84.0),
-                condition_members=condition_index.condition_members,
-                performance_recorder=recorder,
-            )
+        aggregated = {
+            "conditions": {},
+        }
+        progress.update(84.0, "累计供浆流量动作证据整理完成")
         remap_report = _build_remap_report(
             source_policy_version=source_version,
             target_version=target_version,
@@ -661,7 +640,7 @@ def run_incremental_training(
         )
         if unresolved_invalid_count:
             warnings.append(
-                f"INVALID episode 共出现 {unresolved_invalid_count} 条无法映射记录，未用于策略聚合。"
+                f"无效供浆流量动作共出现 {unresolved_invalid_count} 条无法映射记录，已保留审计。"
             )
 
         snapshot = write_snapshot(

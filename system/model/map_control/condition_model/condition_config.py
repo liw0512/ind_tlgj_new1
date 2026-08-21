@@ -42,15 +42,16 @@ DEFAULT_EMISSION_LIMIT = float(SITE_PLANT_CONFIG["outlet_so2_safe_range"][1])
 DEFAULT_MERGE_CONFIG = {
     "enabled": True,
     "mode": "evidence_only",
-    "min_observed_samples": 10,
-    "min_mature_samples": 30,
-    "min_auto_merge_samples": 100,
-    "min_auto_confirm_samples": 300,
-    "min_common_state_samples": 10,
-    "min_risk_samples": 30,
+    # 原始训练行已从30秒一条调整为10秒一条；样本门槛乘3以保持原观察时长。
+    "min_observed_samples": 30,
+    "min_mature_samples": 90,
+    "min_auto_merge_samples": 300,
+    "min_auto_confirm_samples": 900,
+    "min_common_state_samples": 30,
+    "min_risk_samples": 90,
     "min_metric_coverage_ratio": 0.80,
     "min_consecutive_pass_snapshots": 3,
-    "min_new_samples_per_member_for_confirmation": 10,
+    "min_new_samples_per_member_for_confirmation": 30,
     "max_auto_region_cells": 8,
     "max_liquid_gas_relative_difference": 0.15,
     "max_pump_distribution_distance": 0.25,
@@ -60,7 +61,8 @@ DEFAULT_MERGE_CONFIG = {
 
 DEFAULT_ONLINE_CONFIG = {
     "stability_mode": "MAJORITY",
-    "stability_window_size": 6,
+    # 18个10秒决策帧仍对应原来的3分钟多数窗口。
+    "stability_window_size": 18,
     "majority_tie_policy": "KEEP_LAST_STABLE",
     "allow_provisional_region_fallback": True,
 }
@@ -191,21 +193,21 @@ class ConditionAxisConfig:
 class MergeConfig:
     """Automatic region merge policy."""
 
-    enabled: bool = True
-    mode: str = "evidence_only"
-    min_observed_samples: int = 10
-    min_mature_samples: int = 30
-    min_auto_merge_samples: int = 100
-    min_auto_confirm_samples: int = 300
-    min_common_state_samples: int = 10
-    min_risk_samples: int = 30
-    min_metric_coverage_ratio: float = 0.80
-    min_consecutive_pass_snapshots: int = 3
-    min_new_samples_per_member_for_confirmation: int = 10
-    max_auto_region_cells: int = 8
-    max_liquid_gas_relative_difference: float = 0.15
-    max_pump_distribution_distance: float = 0.25
-    max_risk_rate_difference: float = 0.10
+    enabled: bool = bool(DEFAULT_MERGE_CONFIG["enabled"])
+    mode: str = str(DEFAULT_MERGE_CONFIG["mode"])
+    min_observed_samples: int = int(DEFAULT_MERGE_CONFIG["min_observed_samples"])
+    min_mature_samples: int = int(DEFAULT_MERGE_CONFIG["min_mature_samples"])
+    min_auto_merge_samples: int = int(DEFAULT_MERGE_CONFIG["min_auto_merge_samples"])
+    min_auto_confirm_samples: int = int(DEFAULT_MERGE_CONFIG["min_auto_confirm_samples"])
+    min_common_state_samples: int = int(DEFAULT_MERGE_CONFIG["min_common_state_samples"])
+    min_risk_samples: int = int(DEFAULT_MERGE_CONFIG["min_risk_samples"])
+    min_metric_coverage_ratio: float = float(DEFAULT_MERGE_CONFIG["min_metric_coverage_ratio"])
+    min_consecutive_pass_snapshots: int = int(DEFAULT_MERGE_CONFIG["min_consecutive_pass_snapshots"])
+    min_new_samples_per_member_for_confirmation: int = int(DEFAULT_MERGE_CONFIG["min_new_samples_per_member_for_confirmation"])
+    max_auto_region_cells: int = int(DEFAULT_MERGE_CONFIG["max_auto_region_cells"])
+    max_liquid_gas_relative_difference: float = float(DEFAULT_MERGE_CONFIG["max_liquid_gas_relative_difference"])
+    max_pump_distribution_distance: float = float(DEFAULT_MERGE_CONFIG["max_pump_distribution_distance"])
+    max_risk_rate_difference: float = float(DEFAULT_MERGE_CONFIG["max_risk_rate_difference"])
 
     @property
     def auto_publication_sample_threshold(self) -> int:
@@ -216,10 +218,12 @@ class MergeConfig:
 
 @dataclass(frozen=True)
 class OnlineConfig:
-    stability_mode: str = "MAJORITY"
-    stability_window_size: int = 6
-    majority_tie_policy: str = "KEEP_LAST_STABLE"
-    allow_provisional_region_fallback: bool = True
+    stability_mode: str = str(DEFAULT_ONLINE_CONFIG["stability_mode"])
+    stability_window_size: int = int(DEFAULT_ONLINE_CONFIG["stability_window_size"])
+    majority_tie_policy: str = str(DEFAULT_ONLINE_CONFIG["majority_tie_policy"])
+    allow_provisional_region_fallback: bool = bool(
+        DEFAULT_ONLINE_CONFIG["allow_provisional_region_fallback"]
+    )
 
 
 _SINGLE_AXIS_PADDING = ConditionAxisConfig(

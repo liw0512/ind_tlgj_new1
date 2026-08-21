@@ -1,16 +1,7 @@
-import sys
-import traceback
+"""兼容入口：系统配置已经并入正式主界面。"""
 
-from PyQt5.QtWidgets import QApplication
+from system.gui.live_dashboard import main
 
-from system.gui.ExtSystemInitWindow import SystemInitWindow
 
-if __name__ == '__main__':
-    try:
-        app = QApplication(sys.argv)
-        window = SystemInitWindow()
-        window.show()
-        sys.exit(app.exec_())
-
-    except Exception as e:
-            traceback.print_exc()
+if __name__ == "__main__":
+    raise SystemExit(main())

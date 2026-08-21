@@ -18,10 +18,10 @@ from typing import Dict, Tuple
 class DataValidationConfig:
     """实时数据有效性与校验态识别参数。"""
 
-    buffer_size: int = 60  # 变化率缓存最大样本数；当前按约 1 秒/帧理解为 1 分钟。
+    buffer_size: int = 60  # 变化率缓存容量；当前10秒快照下最多约10分钟，实际回看仍由秒数控制。
     change_rate_window_seconds: float = 60.0  # 计算字段变化量时默认回看窗口，单位：秒。
-    calibration_detection_window: int = 600  # 校验波动识别缓存长度/检测窗口，当前约 10 分钟。
-    calibration_min_samples: int = 10  # 开始判断校验波动前要求的最少样本数。
+    calibration_detection_window: int = 600  # 校验缓存容量；实际检测仍按最近600秒过滤。
+    calibration_min_samples: int = 30  # 30个10秒快照保持原来的约5分钟预热门槛。
     calibration_cooldown_seconds: float = 600.0  # 检出校验后保持校验态的时间，单位：秒。
     calibration_event_count_threshold: int = 2  # 检测窗口内至少出现多少次大幅波动才判校验。
     ph_change_threshold: float = 0.2  # pH 变化阈值，保留供扩展验证规则使用。
@@ -68,7 +68,7 @@ class RuntimeConfig:
     db_queue_size: int = 200  # 过滤数据和模型结果待写库队列容量。
     filter_writer_workers: int = 1  # 过滤数据写库线程数；建议保持 1 保证顺序。
     model_writer_workers: int = 1  # 模型结果写库线程数；建议保持 1 保证顺序。
-    snapshot_interval_seconds: float = 30.0  # 过滤数据/模型结果快照输出周期，单位：秒。
+    snapshot_interval_seconds: float = 10.0  # 过滤数据/模型结果快照输出周期，单位：秒。
     snapshot_poll_interval_seconds: float = 0.2  # 快照调度线程空轮询间隔，单位：秒。
     snapshot_error_retry_seconds: float = 1.0  # 快照调度异常后的重试等待，单位：秒。
     consume_min_interval_seconds: float = 1.0  # consume_data 两次成功入队的最小间隔，单位：秒。
@@ -101,8 +101,8 @@ class TrainingConfig:
     initial_data_source: str = 'csv'  # database=从数据库读取；csv=读取 initial_source_csv。
     initial_source_csv: str = 'F:/tlgj_new/files/new_data_train_30s.csv'  # 初次训练测试 CSV；仅 initial_data_source='csv' 时使用。
     initial_training_days: int = 7  # 数据库模式下初次训练回看的天数。
-    initial_minimum_records: int = 2880*7*0.9  # 初次训练最终允许启动的最少记录数；测试时可调小。
-    initial_database_record_limit: int = 2880*7  # 数据库最多读取条数；0 表示按 initial_training_days 自动计算。
+    initial_minimum_records: int = 54_432  # 10秒数据连续7天、完整率90%时的最少记录数；测试时可调小。
+    initial_database_record_limit: int = 60_480  # 10秒数据连续7天的记录数；0 表示按 initial_training_days 自动计算。
     initial_database_use_model_result_table: bool = False  # False=过滤数据表t_data1_filter_，True=模型结果表t_model_result_。
     initial_work_csv: str = 'system/model/map_control/model_csv/Initial_train.csv'  # 初次训练统一工作 CSV；database/csv 均先落盘到这里，再交给 condition_model。
 
@@ -111,13 +111,13 @@ class TrainingConfig:
     incremental_data_source: str = 'database'  # database=从数据库读取；csv=读取 incremental_source_csv。
     incremental_source_csv: str = ''  # 增量训练测试 CSV；仅 incremental_data_source='csv' 时使用。
     incremental_training_days: int = 3  # 增量周期期望数据量对应天数；正式增量实际从 active watermark 之后读取全部新数据。
-    incremental_minimum_records: int = 3*2880*0.9  # 增量训练最终允许启动的最少记录数。
+    incremental_minimum_records: int = 23_328  # 10秒数据连续3天、完整率90%时的最少记录数。
     incremental_database_record_limit: int = 0  # 无 watermark/兼容取数时的条数上限；正式增量有 watermark 时不会截断未学习的新数据。
     incremental_database_use_model_result_table: bool = False  # False=过滤数据表，True=模型结果表。
     incremental_work_csv: str = 'system/model/map_control/model_csv/Update_train.csv'  # 增量训练统一工作 CSV；database/csv 均先落盘到这里，再交给 condition_model。
 
     # 数据库取数换算与完整率。
-    database_records_per_day: int = 2880  # 30 秒一条时每天 2880 条；用于 record_limit=0 的自动计算。
+    database_records_per_day: int = 8_640  # 10秒一条时每天8640条；用于 record_limit=0 的自动计算。
     database_minimum_data_ratio: float = 0.90  # 数据库模式要求至少取得目标条数的比例。
 
 

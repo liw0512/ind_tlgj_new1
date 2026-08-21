@@ -42,8 +42,8 @@ class RealtimeStateBuilder:
     def _sync_effective_ph_ranges(self) -> None:
         """把当前操作员有效 pH 范围同步到在线 plant 对象。
 
-        OnlineSlurryPolicy、CandidateFilter、RealtimeStateBuilder 共用同一个 plant 对象，
-        因此这里同步后，本周期的状态构建、pH reason 和候选动作安全过滤会使用同一范围。
+        OnlineSlurryPolicy 与 RealtimeStateBuilder 共用同一个 plant 对象，
+        因此这里同步后，本周期的状态构建和供浆流量原型安全过滤会使用同一范围。
         当操作员“恢复默认”后，effective_ph_safe_range() 会重新返回中央 plant_config 默认值。
         """
         for tower in self.plant.get("towers", []) or []:
@@ -82,9 +82,6 @@ class RealtimeStateBuilder:
         for tower in enabled_towers(plant):
             tower_id = str(tower["tower_id"])
             row["before_ph__%s" % tower_id] = _number(process, str(tower["ph_column"]))
-            for valve in tower.get("valves", []):
-                valve_id = str(valve["valve_id"])
-                row["before_valve__%s" % valve_id] = _number(process, str(valve["column"]))
         policy_state, no_grid = build_policy_state(row, plant, self.training)
         return RealtimeState(
             timestamp=timestamp.isoformat(),

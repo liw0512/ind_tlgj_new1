@@ -30,8 +30,6 @@ decision = policy.evaluate(
     target=20.0,
     execution_context={
         "automatic_control_allowed": True,
-        "manual_valves": [],
-        "faulted_valves": [],
         "supply_pump_state_changing": False,
     },
 )

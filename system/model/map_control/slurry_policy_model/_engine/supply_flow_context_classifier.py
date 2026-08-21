@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import pandas as pd
 
@@ -31,6 +31,7 @@ def classify_supply_flow_context(
     *,
     timestamp_column: str = "timestamp",
     circulation_columns: Iterable[str] = (),
+    circulation_thresholds: Mapping[str, float] | None = None,
     process_transition_columns: Iterable[str] = (),
 ) -> SupplyFlowContextClassification:
     """Classify event attribution without attempting system identification.
@@ -55,19 +56,27 @@ def classify_supply_flow_context(
         ts = pd.to_datetime(frame[timestamp_column], errors="coerce")
         window = frame.loc[(ts >= start) & (ts <= end)]
 
+    thresholds = circulation_thresholds or {}
     circulation_change = False
     for column in circulation_columns:
         if column in window.columns:
             values = pd.to_numeric(window[column], errors="coerce").dropna()
-            if not values.empty and float(values.max() - values.min()) > 0:
+            threshold = thresholds.get(column)
+            if threshold is not None:
+                changed = bool((values > float(threshold)).nunique() > 1)
+            else:
+                changed = bool(
+                    not values.empty and float(values.max() - values.min()) > 0
+                )
+            if changed:
                 circulation_change = True
                 break
 
     major_transition = False
     for column in process_transition_columns:
         if column in window.columns:
-            values = pd.to_numeric(window[column], errors="coerce").dropna()
-            if not values.empty and float(values.max() - values.min()) > 0:
+            values = window[column].dropna()
+            if len(values) > 1 and values.astype(str).nunique() > 1:
                 major_transition = True
                 break
 

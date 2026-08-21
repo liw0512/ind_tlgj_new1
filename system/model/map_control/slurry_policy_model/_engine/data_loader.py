@@ -6,7 +6,7 @@ from typing import Any, Callable, Sequence
 
 import pandas as pd
 
-from .config_loader import all_valves, enabled_towers
+from .config_loader import enabled_towers
 from .exceptions import InputDataError
 from .schema import (
     ALL_CONDITION_COLUMNS,
@@ -15,7 +15,6 @@ from .schema import (
     condition_axis_columns,
     time_column,
 )
-from .supply_pump import supply_pump_current_columns
 
 
 def supply_flow_columns(plant: dict[str, Any]) -> list[str]:
@@ -75,12 +74,7 @@ def required_columns(
     ]
     for tower in enabled_towers(plant):
         required.append(tower["ph_column"])
-    required.extend(v["column"] for v in all_valves(plant))
-    required.extend(supply_pump_current_columns(plant))
-
-    # Supply-flow trajectories are the canonical action signal for the new
-    # slurry policy semantics. Batch 1 only makes these fields available to the
-    # pipeline; the existing valve-based detector remains unchanged for now.
+    # Supply-flow trajectories are the canonical action signal.
     required.extend(supply_flow_columns(plant))
 
     # Circulation-pump feedback is loaded now as process context so later
@@ -205,8 +199,6 @@ def load_input_data(
             *condition_axis_columns(training),
             OUTLET_SO2_COLUMN,
             *(t["ph_column"] for t in enabled_towers(plant)),
-            *(v["column"] for v in all_valves(plant)),
-            *supply_pump_current_columns(plant),
             *supply_flow_columns(plant),
             *circulation_pump_value_columns(plant),
         ]

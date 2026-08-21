@@ -138,6 +138,49 @@ def median_or_nan(series: pd.Series) -> float:
     return float(clean.median()) if not clean.empty else float("nan")
 
 
+def window_coverage_ratio(
+    window: pd.DataFrame,
+    timestamp_column: str,
+    expected_minutes: float,
+) -> float:
+    """Return real timestamp coverage for an inclusive observation window."""
+    if len(window) < 2 or expected_minutes <= 0:
+        return 0.0
+    span = (
+        pd.Timestamp(window[timestamp_column].max())
+        - pd.Timestamp(window[timestamp_column].min())
+    ).total_seconds() / 60.0
+    return min(1.0, max(0.0, span / expected_minutes))
+
+
+def sign_change_count(series: pd.Series, deadband: float) -> int:
+    """Count effective direction reversals after suppressing small diffs."""
+    values = pd.to_numeric(series, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    ).dropna().to_numpy(dtype=float)
+    if len(values) < 3:
+        return 0
+    differences = np.diff(values)
+    signs = np.where(
+        differences > deadband,
+        1,
+        np.where(differences < -deadband, -1, 0),
+    )
+    signs = signs[signs != 0]
+    return int(np.sum(signs[1:] != signs[:-1])) if len(signs) > 1 else 0
+
+
+def direction_from_delta(delta: float, deadband: float) -> str:
+    """Map a signed physical delta to INCREASE/DECREASE/NEUTRAL/UNKNOWN."""
+    if not np.isfinite(delta):
+        return "UNKNOWN"
+    if delta > deadband:
+        return "INCREASE"
+    if delta < -deadband:
+        return "DECREASE"
+    return "NEUTRAL"
+
+
 def bool_value(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value

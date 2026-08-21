@@ -71,7 +71,7 @@ class PolicySnapshotLoader:
         self._condition_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._transient_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._transient_direction_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-        self._plant_prior: Optional[Dict[str, Any]] = None
+        self._supply_flow_prototypes: Optional[Dict[str, Any]] = None
 
     @property
     def plant_config(self) -> dict:
@@ -275,41 +275,15 @@ class PolicySnapshotLoader:
                         float(value)
                         for value in tower.get("ph_safe_range", [])
                     ],
-                    "valves": [
-                        {
-                            "valve_id": str(valve.get("valve_id")),
-                            "column": str(valve.get("column")),
-                            "min_opening": float(valve.get("min_opening")),
-                            "max_opening": float(valve.get("max_opening")),
-                            "action_threshold": float(
-                                valve.get("action_threshold")
-                            ),
-                        }
-                        for valve in tower.get("valves", [])
-                    ],
-                    "supply_pumps": sorted(
+                    "supply_flows": sorted(
                         [
                             {
-                                "pump_id": str(pump.get("pump_id")),
-                                "current_column": str(
-                                    pump.get("current_column")
-                                ),
-                                "run_current_threshold": float(
-                                    pump.get("run_current_threshold")
-                                ),
-                                "served_valve_ids": sorted(
-                                    str(value)
-                                    for value in (
-                                        pump.get("served_valve_ids", []) or []
-                                    )
-                                ),
+                                "flow_id": str(flow.get("flow_id")),
+                                "column": str(flow.get("column")),
                             }
-                            for pump in (tower.get("supply_pumps", []) or [])
+                            for flow in (tower.get("supply_flows", []) or [])
                         ],
-                        key=lambda item: (
-                            item["pump_id"],
-                            item["current_column"],
-                        ),
+                        key=lambda item: (item["flow_id"], item["column"]),
                     ),
                 }
             )
@@ -353,7 +327,7 @@ class PolicySnapshotLoader:
             snapshot / "training_summary.json",
             snapshot / "condition_alignment.json",
             snapshot / "grid_condition_mapping.csv",
-            snapshot / "global" / "plant_action_prior.pkl",
+            snapshot / "global" / "supply_flow_prototypes.pkl",
         ]
         for path in required:
             self._verify_path(snapshot, listed, path)
@@ -430,7 +404,7 @@ class PolicySnapshotLoader:
             self._configured_plant
         ):
             raise PolicySnapshotError(
-                "当前配置的塔/阀门/供浆泵/pH/SO2安全结构与离线快照不一致"
+                "当前配置的塔/供浆流量测点/pH/SO2安全结构与离线快照不一致"
             )
 
         return {
@@ -475,7 +449,7 @@ class PolicySnapshotLoader:
         self._condition_cache.clear()
         self._transient_cache.clear()
         self._transient_direction_cache.clear()
-        self._plant_prior = None
+        self._supply_flow_prototypes = None
         self._active_mtime = (
             self.active_file.stat().st_mtime
             if self.active_file.exists()
@@ -605,14 +579,17 @@ class PolicySnapshotLoader:
         self._put_lru(self._transient_direction_cache, direction, states)
         return states
 
-    def load_plant_prior(self) -> Dict[str, Any]:
-        if self._plant_prior is not None:
-            return self._plant_prior
+    def load_supply_flow_prototypes(self) -> Dict[str, Any]:
+        """Load the canonical actual-supply-flow policy from the active snapshot."""
+        if self._supply_flow_prototypes is not None:
+            return self._supply_flow_prototypes
         if self.snapshot_dir is None:
             self.load_active()
-        path = self.snapshot_dir / "global" / "plant_action_prior.pkl"
-        self._plant_prior = self._read_pickle(path).get(
-            "state_action_profiles",
+        path = self.snapshot_dir / "global" / "supply_flow_prototypes.pkl"
+        if not path.exists():
+            raise PolicySnapshotError("激活版本缺少 supply_flow_prototypes.pkl")
+        self._supply_flow_prototypes = self._read_pickle(path).get(
+            "profiles",
             {},
         )
-        return self._plant_prior
+        return self._supply_flow_prototypes

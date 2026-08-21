@@ -1,14 +1,14 @@
 """湿法脱硫供浆历史动作响应模型——算法配置。
 
 厂级物理/信号参数不再在本文件重复维护。工况轴、SO2安全范围、
-单塔/双塔、pH、阀门、供浆泵及 pump->valve 拓扑统一来自：
+单塔/双塔、pH、供浆流量、供浆泵及监测设备拓扑统一来自：
 ``system/model/config/plant_config.py``。
 
 本文件只负责第二模块自身的：
 - 离线训练与历史动作事件提取；
 - 工况归属、邻域经验、全厂先验与扰动识别；
 - 动作强度/响应效果/可靠性统计；
-- 在线目标控制、动作筛选、动作节流和阀门执行限幅；
+- 在线目标流量控制、动作筛选、动作节流和执行反馈；
 - 模型版本加载、运行日志和训练产物保存。
 
 注释约定：
@@ -76,6 +76,7 @@ _OUTLET_SO2_STATE_EDGES = [
 # 离线训练参数
 # ============================================================================
 TRAINING_CONFIG = {
+    "policy_semantics_version": "ACTUAL_SUPPLY_FLOW_V1",
     # ------------------------------------------------------------------------
     # 训练进度显示。只影响终端输出，不影响算法结果。
     # ------------------------------------------------------------------------
@@ -102,11 +103,6 @@ TRAINING_CONFIG = {
         "categorical_groupby_keys": True,
         # 是否记录各训练阶段耗时，便于定位性能瓶颈。
         "record_stage_timings": True,
-        # 邻近工况经验映射时，每批处理的目标工况数量。
-        # 调大通常更快但更占内存；数据量大时可适当调小。
-        "neighbor_target_condition_batch_size": 64,
-        # 邻近映射单批最多允许展开的行数，用于限制极端工况下的内存峰值。
-        "neighbor_max_expanded_rows_per_batch": 500000,
     },
 
     # ------------------------------------------------------------------------
@@ -127,9 +123,9 @@ TRAINING_CONFIG = {
     # 原始历史数据预处理。
     # ------------------------------------------------------------------------
     "preprocessing": {
-        # 阀门开度滚动中值滤波点数。用于抑制单点毛刺，不改变长期趋势。
-        # 点数过大可能把真实短动作抹平；当前 3 点属于轻滤波。
-        "valve_rolling_median_points": 3,
+        # 实际供浆流量的短窗口中值滤波点数，用于抑制单点毛刺。
+        # 9个10秒点保持原3个30秒点的90秒中位数窗口，不改变长期趋势。
+        "supply_flow_rolling_median_points": 9,
         # 连续时间序列允许的最大断点，单位：秒。
         # 相邻样本间隔超过该值时切断事件段，避免跨长缺口拼接动作/响应。
         "max_continuous_gap_seconds": 180,
@@ -138,17 +134,17 @@ TRAINING_CONFIG = {
     },
 
     # ------------------------------------------------------------------------
-    # 动作事件 / HOLD 事件切片参数。
+    # 供浆流量动作事件切片参数。
     # 一次历史动作最终会被切成：基线段 → 动作段 → 响应延迟 → 响应观察段。
     # ------------------------------------------------------------------------
     "episode": {
         # 动作发生前用于计算基线状态的历史窗口，单位：分钟。
         "baseline_minutes": 5.0,
-        # 用于确认一次阀门动作的检测窗口，单位：分钟。
+        # 用于确认一次供浆流量动作的检测窗口，单位：分钟。
         "action_detection_window_minutes": 2.0,
         # 单个动作事件允许持续的最大时间，单位：分钟；超过后不再无限扩展动作段。
         "max_action_duration_minutes": 20.0,
-        # 阀门停止明显变化并持续稳定多久后认为动作结束，单位：分钟。
+        # 供浆流量停止明显变化并持续稳定多久后认为动作结束，单位：分钟。
         "action_end_stable_minutes": 1.5,
         # 两次同方向/连续动作之间小于该间隔时可合并成一个事件，单位：分钟。
         "action_merge_gap_minutes": 1.0,
@@ -156,16 +152,8 @@ TRAINING_CONFIG = {
         "response_delay_minutes": 3.0,
         # 延迟之后观察 SO2/pH 等实际效果的窗口长度，单位：分钟。
         "response_window_minutes": 10.0,
-        # True：响应观察期内又出现新的阀门动作，则原动作响应被判为受干扰，避免错误归因。
+        # True：响应观察期内又出现新的供浆流量动作，则原动作响应被判为受干扰。
         "invalidate_followup_action_in_response": True,
-        # HOLD 样本前后保护时间，单位：分钟；附近出现动作时不把该段当稳定保持经验。
-        "hold_action_guard_minutes": 3.0,
-        # 一个 HOLD episode 的持续时间，单位：分钟。
-        "hold_episode_minutes": 15.0,
-        # 连续稳定段中相邻 HOLD episode 的起点间隔，单位：分钟。
-        "hold_stride_minutes": 15.0,
-        # 每一个连续稳定数据段最多抽取多少个 HOLD episode，防止 HOLD 数量压倒动作样本。
-        "max_hold_episodes_per_segment": 48,
         # 一个基线/响应窗口实际有效数据覆盖率下限，0~1。
         # 低于该值说明缺测过多，不宜用于评价动作效果。
         "minimum_window_coverage_ratio": 0.70,
@@ -184,8 +172,6 @@ TRAINING_CONFIG = {
         "enabled": True,
         # 动作事件以动作开始时所在工况作为锚点。
         "action_anchor_mode": "ACTION_START",
-        # HOLD 事件以窗口内出现次数最多的工况作为锚点。
-        "hold_anchor_mode": "MAJORITY_CONDITION",
         # 以下两个键名是历史兼容名称，实际含义分别是“第1工况轴”和“第2工况轴”
         # 允许 episode 在窗口内偏离锚点多少个基础网格，并不再固定代表负荷/SO2。
         "max_load_grid_offset": 2,
@@ -201,44 +187,6 @@ TRAINING_CONFIG = {
     },
 
     # ------------------------------------------------------------------------
-    # 邻近工况经验：本工况样本不足时，从空间邻近工况借经验。
-    # ------------------------------------------------------------------------
-    "neighbor_policy": {
-        # 是否构建邻近工况策略。
-        "enabled": True,
-        # 构建邻域时是否把目标工况自身已有经验也放入候选证据。
-        "include_same_condition": True,
-        # False：只在全厂层出现、没有明确源工况的事件不进入邻近工况映射。
-        "include_global_only": False,
-        # 距离权重模式：按各工况轴网格距离线性衰减。
-        "distance_weight_mode": "LINEAR_AXIS",
-        # 邻域映射后的最小权重；再远的有效邻居也不会低于该下限。
-        "minimum_mapping_weight": 0.10,
-    },
-
-    # ------------------------------------------------------------------------
-    # 全厂动作先验：当局部/邻近工况都缺经验时，使用跨工况稳定共识做兜底。
-    # ------------------------------------------------------------------------
-    "plant_action_prior": {
-        # 是否训练全厂动作先验。
-        "enabled": True,
-        # 没有明确局部工况归属、只能作为全厂证据的 episode 权重折减系数，0~1。
-        "global_only_evidence_weight": 0.50,
-        # 同一动作至少需要覆盖多少个不同 condition_label 才能形成全厂先验。
-        "minimum_source_conditions": 3,
-        # 同一动作至少需要覆盖多少个不同基础 grid。
-        "minimum_source_grids": 3,
-        # 每一个源 grid 至少需要多少个动作事件，避免一个偶然动作就代表该网格。
-        "minimum_events_per_source_grid": 2,
-        # 单一 condition 对某动作全厂证据的最大占比，0~1；防止“一个工况冒充全厂经验”。
-        "maximum_single_condition_share": 0.60,
-        # 单一 grid 对某动作全厂证据的最大占比，0~1。
-        "maximum_single_grid_share": 0.50,
-        # 跨网格动作效果方向一致性下限，0~1；越高越保守。
-        "minimum_cross_grid_direction_consistency": 0.70,
-    },
-
-    # ------------------------------------------------------------------------
     # 离线状态离散化。用于把连续过程状态转成可统计的状态键。
     # ------------------------------------------------------------------------
     "state": {
@@ -248,41 +196,13 @@ TRAINING_CONFIG = {
         "outlet_so2_trend_slow_rate": 0.20,
         # 净烟气 SO2 快趋势阈值；绝对变化率达到该值时进入更强趋势状态。
         "outlet_so2_trend_fast_rate": 0.80,
-        # 阀门开度归一化后的离散边界：0%、25%、50%、75%、100%。
-        "valve_opening_edges": [0.0, 0.25, 0.50, 0.75, 1.0],
-        # 同塔多阀之间归一化开度差超过该值时，可认为存在明显不平衡。
-        "valve_balance_threshold": 0.10,
         # 状态键中是否包含第一模块工况状态信息。
         "include_condition_state_key": True,
         # 状态键中是否包含 NORMAL/SLOW/FAST 等扰动模式。
         "include_disturbance_mode": True,
     },
 
-    # ------------------------------------------------------------------------
-    # 历史动作幅度分级。幅度使用“塔级归一化等效动作”，不是多阀开度简单求和。
-    # ------------------------------------------------------------------------
-    "action_magnitude": {
-        # auto：按每个动作 family 的历史幅度分布自动定 SMALL/MEDIUM/STRONG；
-        # fixed：使用 default_fixed_bins / family_fixed_bins。
-        "mode": "auto",
-        # 绝对归一化等效动作 <= 该值时划为 MICRO，用于识别非常小的微调。
-        "micro_max": 0.006,
-        # auto 模式：除 MICRO 外，动作幅度的 40% 分位作为 SMALL 上界候选。
-        "small_quantile": 0.40,
-        # auto 模式：75% 分位作为 MEDIUM 上界候选，其上为 STRONG。
-        "medium_quantile": 0.75,
-        # 一个动作 family 至少有多少事件才允许独立按分位数自动标定。
-        "minimum_events_per_family": 8,
-        # fixed 模式或自动标定样本不足时的默认归一化幅度边界。
-        "default_fixed_bins": {
-            # <= 0.025 视为 SMALL；对 0~100 阀门可粗略理解为约 2.5% 等效幅度。
-            "small_max": 0.025,
-            # > SMALL 且 <= 0.060 视为 MEDIUM；更大为 STRONG。
-            "medium_max": 0.060,
-        },
-        # 可针对特定动作 family 单独覆盖 fixed bins；空字典表示全部使用默认/自动规则。
-        "family_fixed_bins": {},
-    },
+    "action_magnitude": {"semantics": "ACTUAL_SUPPLY_FLOW_V1"},
 
     # ------------------------------------------------------------------------
     # 动作后的 SO2 / pH 响应方向、强度和稳定性评价。
@@ -324,8 +244,6 @@ TRAINING_CONFIG = {
         # True：工况轴越界后被第一模块 clip 到边界格的数据仍允许学习；
         # 若希望完全排除越界经验可设 False。
         "allow_out_of_range_clipped": True,
-        # True：供浆泵正在启停切换期间的 episode 失效，避免泵状态变化干扰阀门效果归因。
-        "invalidate_supply_pump_state_change": True,
         # True：发生 pH/SO2 安全违规的 episode 仍保留用于“安全历史负样本”；
         # 保留不代表允许在线采用该动作。
         "keep_safety_violation_episodes": True,
@@ -410,6 +328,17 @@ TRAINING_CONFIG = {
 # ============================================================================
 ONLINE_POLICY_CONFIG = {
     # ------------------------------------------------------------------------
+    # 第二模块唯一规范输出。阀位只是监测测点，不再是推荐动作或回退输出。
+    # ------------------------------------------------------------------------
+    "control_output": {
+        "type": "TARGET_SUPPLY_FLOW",
+    },
+    "target_flow_execution": {
+        # 内置适配器当前只生成并校验执行预览，不包含任何DCS写操作。
+        "adapter_mode": "DRY_RUN",
+    },
+
+    # ------------------------------------------------------------------------
     # 正式模型加载、热切换和缓存。
     # ------------------------------------------------------------------------
     "model_loading": {
@@ -453,8 +382,8 @@ ONLINE_POLICY_CONFIG = {
         "target_transition_enabled": True,
         # 有效控制目标每分钟最多变化多少，单位：mg/Nm3/min；调小更平滑、更保守。
         "maximum_effective_target_change_per_minute": 1.0,
-        # 目标变化后额外 HOLD 多少个决策周期，避免目标切换瞬间立即追调阀门。
-        "hold_cycles_after_target_change": 1,
+        # 目标变化后额外 HOLD 多少个10秒决策周期；3次保持原来的30秒保护时间。
+        "hold_cycles_after_target_change": 3,
         # True：减浆动作比加浆动作采用更保守的准入逻辑，降低 SO2 上冲风险。
         "decrease_slurry_more_conservative": True,
         # 只有 SO2 比目标低至少这么多时才允许考虑经济性减浆，单位：mg/Nm3。
@@ -504,12 +433,6 @@ ONLINE_POLICY_CONFIG = {
     "profile_acceptance": {
         # 本工况局部经验允许使用的可靠性状态。
         "local_allowed_status": ["SUPPORTED"],
-        # 邻近工况借来的经验允许使用的可靠性状态。
-        "neighbor_allowed_status": ["SUPPORTED"],
-        # 快变/transient 经验允许使用的可靠性状态。
-        "transient_allowed_status": ["SUPPORTED"],
-        # 全厂先验允许使用的可靠性状态。
-        "plant_prior_allowed_status": ["SUPPORTED"],
         # 历史动作效果方向一致性下限，0~1；调高更保守但可用动作更少。
         "minimum_direction_consistency": 0.55,
         # 历史安全评分下限，百分制；低于该值的动作不进入在线候选。
@@ -518,10 +441,6 @@ ONLINE_POLICY_CONFIG = {
         "minimum_reliability_total_score": 45.0,
         # 历史响应被判为“稳定”的比例下限，0~1。
         "minimum_stable_response_ratio": 0.50,
-        # False：不允许方向混合/不明确的历史动作 profile 进入正式控制。
-        "allow_mixed_action": False,
-        # False：不把单纯多阀再平衡类动作作为正常 SO2 供浆控制候选。
-        "allow_rebalance_action": False,
     },
 
     # ------------------------------------------------------------------------
@@ -544,10 +463,10 @@ ONLINE_POLICY_CONFIG = {
         "response_window_minutes": None,
         # True：处于 WAITING_EFFECT 时阻止普通 NORMAL 再发新动作，避免动作效果相互叠加难以归因。
         "block_normal_actions_while_waiting_effect": True,
-        # 稳定工况发生切换后额外 HOLD 的在线周期数。
-        "condition_switch_hold_cycles": 1,
-        # 热加载新模型后额外 HOLD 的在线周期数，避免模型切换瞬间直接动作。
-        "model_reload_hold_cycles": 1,
+        # 稳定工况发生切换后额外 HOLD 的10秒在线周期数；3次仍为30秒。
+        "condition_switch_hold_cycles": 3,
+        # 热加载新模型后额外 HOLD 的10秒在线周期数；3次仍为30秒。
+        "model_reload_hold_cycles": 3,
     },
 
     # ------------------------------------------------------------------------
@@ -570,35 +489,6 @@ ONLINE_POLICY_CONFIG = {
         # 反向锁和每小时动作次数等硬节流。
         "allow_waiting_effect_risk_escalation": True,
         "risk_escalation_minimum_action_interval_minutes": 1.0,
-    },
-
-    # ------------------------------------------------------------------------
-    # 塔级动作最终转换为实际阀门指令时的硬限幅。
-    # 这些是“执行安全上限”，不是离线历史动作强度定义本身。
-    # ------------------------------------------------------------------------
-    "execution_limits": {
-        # 阀门距离 min/max opening 小于该余量时视为接近机械边界，单位：阀门开度百分点。
-        "valve_limit_margin": 0.5,
-        # 不同动作等级下，单个阀一次允许改变的最大开度百分点。
-        "maximum_single_valve_delta_by_magnitude": {
-            "MICRO": 1.0,
-            "SMALL": 2.0,
-            "MEDIUM": 4.0,
-            "STRONG": 6.0,
-        },
-        # 当没有足够历史 profile、进入规则兜底时，各动作等级使用的默认阀门步长，单位：百分点。
-        "rule_step_by_magnitude": {
-            "MICRO": 0.6,
-            "SMALL": 1.2,
-            "MEDIUM": 2.5,
-            "STRONG": 4.0,
-        },
-        # 最终计算出的单阀开度变化小于该值时不发有效动作，避免细碎指令，单位：百分点。
-        "minimum_command_delta": 0.5,
-        # 增浆时优先考虑的动作 family 顺序；空列表表示不人为指定，按策略评分排序。
-        "preferred_increase_action_families": [],
-        # 减浆时优先考虑的动作 family 顺序；空列表表示不人为指定。
-        "preferred_decrease_action_families": [],
     },
 
     # ------------------------------------------------------------------------

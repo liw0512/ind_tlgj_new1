@@ -38,14 +38,32 @@ _POLICY_BLOCKED_TEMPLATE = {
     "action_family": "HOLD",
     "action_direction": "HOLD",
     "action_magnitude": "HOLD",
-    "recommended_valve_deltas": {},
-    "projected_valve_openings": {},
     "historical_reliability": None,
     "historical_safety_score": None,
     "historical_direction_consistency": None,
     "decision_status": "BLOCKED",
     "reason_codes": ["SLURRY_POLICY_INTEGRATION_ERROR"],
     "debug": {},
+    "target_supply_flow": {
+        "mode": "TARGET_SUPPLY_FLOW",
+        "available": False,
+        "reason_codes": ["SLURRY_POLICY_INTEGRATION_ERROR"],
+    },
+    "control_recommendation": {
+        "requested_mode": "TARGET_SUPPLY_FLOW",
+        "effective_mode": "TARGET_SUPPLY_FLOW",
+        "primary": {"recommendation_type": "HOLD", "actionable": False},
+        "legacy_compatibility_fields_preserved": False,
+        "automatic_mode_switch": False,
+    },
+    "target_flow_execution_preview": {
+        "adapter_mode": "DRY_RUN",
+        "status": "BLOCKED",
+        "command_issued": False,
+        "dcs_write_attempted": False,
+        "reason_codes": ["SLURRY_POLICY_INTEGRATION_ERROR"],
+        "phases": [],
+    },
 }
 
 

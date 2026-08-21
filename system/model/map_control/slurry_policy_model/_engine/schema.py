@@ -171,6 +171,7 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
         "condition_reason",
         "condition_valid",
         "episode_type",
+        "action_semantics",
         "action_start_time",
         "action_end_time",
         "response_end_time",
@@ -179,8 +180,61 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
         "action_magnitude_value",
         "action_magnitude",
         "action_id",
-        "active_valve_ids",
         "active_tower_ids",
+        "flow_event_tower_id",
+        "flow_event_start_time",
+        "flow_event_end_time",
+        "flow_event_baseline_flow",
+        "flow_event_final_flow",
+        "flow_event_peak_flow",
+        "flow_event_trough_flow",
+        "flow_event_peak_delta_flow",
+        "flow_event_final_delta_flow",
+        "flow_event_max_abs_delta_flow",
+        "flow_event_extra_slurry_volume",
+        "flow_event_deficit_slurry_volume",
+        "flow_event_signed_slurry_volume",
+        "flow_event_active_duration_minutes",
+        "flow_event_time_to_extreme_minutes",
+        "flow_event_time_from_extreme_to_end_minutes",
+        "flow_event_baseline_noise_sigma",
+        "flow_event_trigger_deadband",
+        "flow_event_transition_count",
+        "flow_event_complete",
+        "flow_shape",
+        "flow_direction",
+        "flow_persistent_ratio",
+        "flow_return_ratio",
+        "flow_overshoot_delta_flow",
+        "flow_overshoot_ratio",
+        "flow_return_tolerance",
+        "flow_crosses_baseline",
+        "flow_temporary_plateau",
+        "flow_temporary_plateau_count",
+        "flow_execution_profile",
+        "flow_classification_reason",
+        "flow_context",
+        "flow_learning_eligible",
+        "flow_circulation_change",
+        "flow_major_process_transition",
+        "flow_context_reason",
+        "flow_effect_baseline_start_time",
+        "flow_effect_response_start_time",
+        "flow_effect_outlet_so2_direction",
+        "flow_effect_response_outlet_so2_min",
+        "flow_effect_response_outlet_so2_max",
+        "flow_effect_tower_ph_direction",
+        "flow_effect_response_tower_ph_min",
+        "flow_effect_response_tower_ph_max",
+        "flow_effect_complete",
+        "flow_effect_reason",
+        "flow_timing_first_effect_time",
+        "flow_timing_observed_response_delay_minutes",
+        "flow_timing_extreme_effect_time",
+        "flow_timing_time_to_extreme_minutes",
+        "flow_timing_stable_time",
+        "flow_timing_time_to_stable_minutes",
+        "flow_timing_settled",
     ]
 
     for tower in plant.get("towers", []):
@@ -199,17 +253,6 @@ def episode_output_columns(plant: dict[str, Any]) -> list[str]:
                 f"ph_out_of_range__{tower_id}",
             ]
         )
-        for valve in tower.get("valves", []):
-            valve_id = str(valve["valve_id"])
-            columns.extend(
-                [
-                    f"before_valve__{valve_id}",
-                    f"after_valve__{valve_id}",
-                    f"delta_valve__{valve_id}",
-                    f"normalized_delta_valve__{valve_id}",
-                ]
-            )
-
     columns.extend(
         [
             "before_condition_axis_1",

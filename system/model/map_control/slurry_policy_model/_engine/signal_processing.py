@@ -4,24 +4,7 @@ from typing import Any
 
 import pandas as pd
 
-from .config_loader import all_valves, enabled_towers
-
-
-def add_clean_valve_columns(
-    df: pd.DataFrame, plant: dict[str, Any], training: dict[str, Any]
-) -> pd.DataFrame:
-    result = df.copy()
-    window = int(training["preprocessing"].get("valve_rolling_median_points", 3))
-    window = max(1, window)
-    for valve in all_valves(plant):
-        source = valve["column"]
-        clean = f"__clean_valve__{valve['valve_id']}"
-        result[clean] = (
-            pd.to_numeric(result[source], errors="coerce")
-            .rolling(window=window, center=True, min_periods=1)
-            .median()
-        )
-    return result
+from .config_loader import enabled_towers
 
 
 def clean_supply_flow_column(tower_id: str) -> str:
@@ -42,12 +25,7 @@ def add_clean_supply_flow_columns(
     """
     result = df.copy()
     preprocessing = training.get("preprocessing", {})
-    window = int(
-        preprocessing.get(
-            "supply_flow_rolling_median_points",
-            preprocessing.get("valve_rolling_median_points", 3),
-        )
-    )
+    window = int(preprocessing["supply_flow_rolling_median_points"])
     window = max(1, window)
 
     for tower in enabled_towers(plant):

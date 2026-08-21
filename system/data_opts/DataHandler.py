@@ -14,6 +14,7 @@ from system.model.config.database_schema import (
     ensure_filter_table,
     ensure_model_result_table,
     latest_monthly_table,
+    monthly_table_name,
 )
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 
@@ -63,8 +64,14 @@ class DataHandler:
         self.GLOBAL_DATA = GLOBAL_DATA
         self.engine = create_engine(config["dbconnetion"])
         self.lock = threading.Lock()
-        self.filter_table_name = ""
-        self.contro_table_name = ""
+        persistence = PROCESS4MAP_CONFIG.persistence
+        self.filter_table_name = monthly_table_name(
+            persistence.filter_table_prefix
+        )
+        self.contro_table_name = monthly_table_name(
+            persistence.model_result_table_prefix
+        )
+        self._schema_ready = False
         self.send_obj = {"chart": [], "data": {}}
         self.mark = {
             "start_time": (
@@ -75,26 +82,41 @@ class DataHandler:
             "is_send": False,
             "update_end_time": 1,
         }
-        self.getNewDataTableName()
         self.table_update()
 
     def getNewDataTableName(self):
-        self.filter_table_name = latest_monthly_table(
-            self.engine, PROCESS4MAP_CONFIG.persistence.filter_table_prefix
-        ) or ""
-        self.contro_table_name = latest_monthly_table(
-            self.engine, PROCESS4MAP_CONFIG.persistence.model_result_table_prefix
-        ) or ""
-        return self.filter_table_name, self.contro_table_name
+        persistence = PROCESS4MAP_CONFIG.persistence
+        try:
+            self.filter_table_name = latest_monthly_table(
+                self.engine, persistence.filter_table_prefix
+            ) or monthly_table_name(persistence.filter_table_prefix)
+            self.contro_table_name = latest_monthly_table(
+                self.engine, persistence.model_result_table_prefix
+            ) or monthly_table_name(persistence.model_result_table_prefix)
+            return self.filter_table_name, self.contro_table_name
+        except Exception as exc:
+            logging.warning("刷新历史月表名称失败，保留当前表名: %s", exc)
+            return self.filter_table_name, self.contro_table_name
 
     def table_update(self):
         # 与 P4PC 共用同一 schema，调用是幂等的，不再由 DataHandler 定义第二套 CREATE TABLE。
-        self.filter_table_name = ensure_filter_table(
-            self.engine, PROCESS4MAP_CONFIG.persistence.filter_table_prefix
-        )
-        self.contro_table_name = ensure_model_result_table(
-            self.engine, PROCESS4MAP_CONFIG.persistence.model_result_table_prefix
-        )
+        persistence = PROCESS4MAP_CONFIG.persistence
+        try:
+            self.filter_table_name = ensure_filter_table(
+                self.engine, persistence.filter_table_prefix
+            )
+            self.contro_table_name = ensure_model_result_table(
+                self.engine, persistence.model_result_table_prefix
+            )
+            self._schema_ready = True
+            return True
+        except Exception as exc:
+            self._schema_ready = False
+            logging.warning(
+                "历史数据处理器启动建表失败，页面继续并等待后续刷新: %s",
+                exc,
+            )
+            return False
 
     @staticmethod
     def _parse_time(value, fallback):
@@ -131,7 +153,10 @@ class DataHandler:
             end = self._parse_time(self.mark.get("end_time"), now)
             args = list(self.mark.get("args") or [])
 
-        self.getNewDataTableName()
+        if not getattr(self, "_schema_ready", False):
+            self.table_update()
+        else:
+            self.getNewDataTableName()
         charts = []
         for key in args:
             key = str(key)
@@ -160,7 +185,10 @@ class DataHandler:
     def miniotor(self):
         while True:
             try:
-                self.getNewDataTableName()
+                if not getattr(self, "_schema_ready", False):
+                    self.table_update()
+                else:
+                    self.getNewDataTableName()
             except Exception as exc:
                 logging.warning("DataHandler 表名刷新失败: %s", exc)
             time.sleep(60)

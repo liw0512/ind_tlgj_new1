@@ -99,6 +99,21 @@ def validate_online_config(plant: dict, training: dict, online: dict) -> None:
         if not str(paths.get(key, "")).strip():
             raise OnlineConfigurationError("PLANT_CONFIG.paths.%s 不能为空" % key)
 
+    output_type = str(
+        (online.get("control_output") or {}).get("type", "")
+    ).upper()
+    if output_type != "TARGET_SUPPLY_FLOW":
+        raise OnlineConfigurationError(
+            "control_output.type 必须为 TARGET_SUPPLY_FLOW"
+        )
+    adapter_mode = str(
+        (online.get("target_flow_execution") or {}).get("adapter_mode", "")
+    ).upper()
+    if adapter_mode != "DRY_RUN":
+        raise OnlineConfigurationError(
+            "target_flow_execution.adapter_mode 当前只允许 DRY_RUN"
+        )
+
     target = online.get("so2_control", {})
     allowed = target.get("allowed_target_range")
     if not isinstance(allowed, (list, tuple)) or len(allowed) != 2:
@@ -151,12 +166,3 @@ def validate_online_config(plant: dict, training: dict, online: dict) -> None:
         fast.get("minimum_transient_safe_ratio", 0.0)
     ) > 1:
         raise OnlineConfigurationError("fast_policy.minimum_transient_safe_ratio 必须位于 [0,1]")
-
-    execution = online.get("execution_limits", {})
-    caps = execution.get("maximum_single_valve_delta_by_magnitude", {})
-    steps = execution.get("rule_step_by_magnitude", {})
-    for magnitude in ("MICRO", "SMALL", "MEDIUM", "STRONG"):
-        if float(caps.get(magnitude, 0)) <= 0:
-            raise OnlineConfigurationError("缺少正值动作上限: %s" % magnitude)
-        if float(steps.get(magnitude, 0)) <= 0:
-            raise OnlineConfigurationError("缺少正规则步长: %s" % magnitude)

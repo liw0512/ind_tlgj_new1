@@ -25,8 +25,8 @@ condition_label / grid_id / state_key ...
     ↓
 第二模块 slurry_policy_model 在线策略
     ↓
-动作族 / 动作方向 / 动作强度
-推荐阀门增量 / 投影阀位 / 原因码
+供浆塔 / 流量方向 / STEP、PULSE、BOOST_STEP
+目标峰值流量 / 目标最终流量 / 原因码
 ```
 
 第一模块本身不直接定义供浆动作；供浆动作由第二模块决定。但正式在线入口统一放在第一模块 `online_condition_classifier.py` 中。
@@ -296,8 +296,8 @@ CSV 会按文件中的现有行顺序逐行进入同一个长期 Pipeline。因�
    slurry_policy_action_family
    slurry_policy_action_direction
    slurry_policy_action_magnitude
-   slurry_policy_recommended_valve_deltas
-   slurry_policy_projected_valve_openings
+   slurry_policy_target_supply_flow
+   slurry_policy_target_flow_execution_preview
    slurry_policy_reason_codes
    ...
 ```

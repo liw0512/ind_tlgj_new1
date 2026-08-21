@@ -33,6 +33,9 @@ class SupplyFlowEventClassification:
     overshoot_ratio: float
     return_tolerance: float
     crosses_baseline: bool
+    temporary_plateau: bool
+    temporary_plateau_count: int
+    flow_execution_profile: str
     classification_reason: str
 
 
@@ -52,6 +55,16 @@ def _return_tolerance(event: SupplyFlowEvent) -> float:
     )
 
 
+def _temporary_plateau_count(event: SupplyFlowEvent) -> int:
+    """Count stable intermediate plateaus already proven by segmentation.
+
+    Every elementary transition is closed only after ``stable_minutes`` of a
+    stable platform.  Once nearby transitions are merged, all but the last
+    platform are therefore temporary plateaus of the complete trajectory.
+    """
+    return max(0, int(event.transition_count) - 1)
+
+
 def classify_supply_flow_event(
     event: SupplyFlowEvent,
 ) -> SupplyFlowEventClassification:
@@ -65,6 +78,8 @@ def classify_supply_flow_event(
     5. ambiguous geometry remains COMPLEX instead of being forced into a class.
     """
     tolerance = _return_tolerance(event)
+    temporary_plateau_count = _temporary_plateau_count(event)
+    temporary_plateau = temporary_plateau_count > 0
     baseline = float(event.baseline_flow)
     positive_excursion = float(event.peak_flow) - baseline
     negative_excursion = float(event.trough_flow) - baseline
@@ -83,6 +98,9 @@ def classify_supply_flow_event(
             overshoot_ratio=0.0,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=False,
+            temporary_plateau_count=0,
+            flow_execution_profile="NO_EFFECTIVE_FLOW_CHANGE",
             classification_reason="BELOW_EFFECTIVE_DEADBAND",
         )
 
@@ -122,6 +140,9 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=crosses_baseline,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile="INCOMPLETE_TRAJECTORY",
             classification_reason="INCOMPLETE_EVENT",
         )
 
@@ -135,6 +156,9 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=True,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile="CROSSED_BASELINE",
             classification_reason="SIGNIFICANT_EXCURSION_ON_BOTH_SIDES",
         )
 
@@ -148,6 +172,9 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile="MULTI_STAGE_TRAJECTORY",
             classification_reason="TOO_MANY_INTERNAL_TRANSITIONS",
         )
 
@@ -163,6 +190,13 @@ def classify_supply_flow_event(
             overshoot_ratio=1.0,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile=(
+                "TEMPORARY_PLATEAU_THEN_BASELINE"
+                if temporary_plateau
+                else "EXCURSION_THEN_BASELINE"
+            ),
             classification_reason="RETURNED_TO_BASELINE",
         )
 
@@ -177,6 +211,9 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile="EXCURSION_THEN_OPPOSITE_PLATEAU",
             classification_reason="FINAL_PLATEAU_OPPOSES_MAIN_DIRECTION",
         )
 
@@ -192,6 +229,13 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile=(
+                "TEMPORARY_PLATEAU_THEN_FINAL_PLATEAU"
+                if temporary_plateau
+                else "DIRECT_TO_FINAL_PLATEAU"
+            ),
             classification_reason="FINAL_PLATEAU_CLOSE_TO_MAIN_EXTREME",
         )
 
@@ -207,6 +251,13 @@ def classify_supply_flow_event(
             overshoot_ratio=overshoot_ratio,
             return_tolerance=tolerance,
             crosses_baseline=False,
+            temporary_plateau=temporary_plateau,
+            temporary_plateau_count=temporary_plateau_count,
+            flow_execution_profile=(
+                "BOOST_PLATEAU_THEN_FINAL_PLATEAU"
+                if temporary_plateau
+                else "BOOST_EXCURSION_THEN_FINAL_PLATEAU"
+            ),
             classification_reason="SUSTAINED_PLATEAU_WITH_MATERIAL_TRANSIENT_BOOST",
         )
 
@@ -219,6 +270,9 @@ def classify_supply_flow_event(
         overshoot_ratio=overshoot_ratio,
         return_tolerance=tolerance,
         crosses_baseline=False,
+        temporary_plateau=temporary_plateau,
+        temporary_plateau_count=temporary_plateau_count,
+        flow_execution_profile="AMBIGUOUS_TRAJECTORY",
         classification_reason="AMBIGUOUS_TRAJECTORY_GEOMETRY",
     )
 

@@ -31,12 +31,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
+from system.model.config.persistence_health import PersistenceHealthTracker
 from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
 from system.model.config.database_schema import (
     ensure_filter_table,
     ensure_model_result_table,
     insert_filter_row,
     insert_model_result_row,
+    monthly_table_name,
 )
 import logging
 import shutil
@@ -144,7 +146,7 @@ class DataValidator:
     
     def validate_data(self, data):
         """
-        验证数据是否有效（针对降采样后的30帧均值数据）
+        验证数据是否有效（针对每10秒生成的最近3帧均值快照）
         Returns:
             tuple: (is_valid, reason)
         """
@@ -212,6 +214,9 @@ class ProcessForMapConsole:
         ##end
 
         self.GLOBAL_DATA = GLOBAL_DATA
+        self.map_control_lock = threading.Lock()
+        self.persistence_health = PersistenceHealthTracker()
+        self._publish_persistence_health()
         self.training_lock = threading.Lock()  # 添加训练锁
         self.limit = pd.DataFrame.from_dict(self.limit)  # 把limit转为dataframe数据类型
         self.engine = create_engine(config["dbconnetion"])
@@ -223,8 +228,13 @@ class ProcessForMapConsole:
         self.filter_write_pool = ThreadPoolExecutor(max_workers=int(self.process_config.runtime.filter_writer_workers), thread_name_prefix='filter_writer')
         self.model_result_pool = ThreadPoolExecutor(max_workers=int(self.process_config.runtime.model_writer_workers), thread_name_prefix='model_writer')
         self.filter_data = pd.DataFrame(columns=self.titles)
-        self.filter_table_name = self.process_config.persistence.filter_table_prefix + str(datetime.datetime.now().year) + "_" + str(
-            datetime.datetime.now().month)
+        self.filter_table_name = monthly_table_name(
+            self.process_config.persistence.filter_table_prefix
+        )
+        self.mod_pre_table_name = monthly_table_name(
+            self.process_config.persistence.model_result_table_prefix
+        )
+        self.pump_name_def = {}
         self.so2_processor=SO2Processor()   # 初始化SO2处理器
         self.i = 0  # data_clean()
         self.tower_power_calculator = TowerPowerCalculator()  # 塔电耗计算
@@ -239,9 +249,6 @@ class ProcessForMapConsole:
         self.getNewDataTableName()
         self.result = None
         self.send_data = None
-        self.pump_name_def = {}
-        self.mod_pre_table_name = self.process_config.persistence.model_result_table_prefix + str(datetime.datetime.now().year) + "_" + str(
-            datetime.datetime.now().month)
         self.get_pump_name()
         # 确保titles包含date列
         if "date" not in self.titles:
@@ -251,11 +258,12 @@ class ProcessForMapConsole:
 
         self.training_event=threading.Event()
         self.snapshot_interval = float(self.process_config.runtime.snapshot_interval_seconds)
-        self.map_control_lock = threading.Lock()
         self.snapshot_lock = threading.Lock()
         self._latest_processed_snapshot = None
+        # 实时链路仍按1秒处理；模型/状态判断每10秒使用最近3帧（如8、9、10秒）。
+        self._processed_snapshot_window = deque(maxlen=3)
         self._latest_processed_snapshot_seq = 0
-        self._last_snapshot_emit_ts = 0.0
+        self._last_snapshot_emit_ts = time.monotonic()
         self._last_filter_emitted_seq = -1
         self._last_model_emitted_seq = -1
         self._last_realtime_published_seq = -1
@@ -288,7 +296,7 @@ class ProcessForMapConsole:
         # db_writer_loop 串行从 db_queue 消费，保证写库顺序
         self.db_writer_thread = threading.Thread(target=self._db_writer_loop, daemon=True)
         self.db_writer_thread.start()
-        # 模型判定周期由 runtime.snapshot_interval_seconds 配置，默认30秒。
+        # 模型判定及过滤数据/模型结果写库周期统一由 snapshot_interval_seconds 配置，默认10秒。
         self.snapshot_scheduler_thread = threading.Thread(target=self._snapshot_scheduler_loop, daemon=True)
         self.snapshot_scheduler_thread.start()
         self.maintenance_thread = threading.Thread(target=self._maintenance_loop, daemon=True)
@@ -582,21 +590,63 @@ class ProcessForMapConsole:
             snapshot["_snapshot_seq"] = snapshot_seq
             snapshot["_snapshot_time"] = datetime.datetime.now().isoformat()
             self._latest_processed_snapshot = snapshot
+            self._processed_snapshot_window.append(snapshot.copy())
             return snapshot_seq
+
+    @staticmethod
+    def _is_snapshot_state_field(field_name, value):
+        """状态、标识和内部字段按窗口末帧取值，不参与均值。"""
+        name = str(field_name)
+        return (
+            name == "date"
+            or name == "jym"
+            or name == "connection_status"
+            or name.startswith("_")
+            or name.endswith("_status")
+            or isinstance(value, bool)
+        )
+
+    @classmethod
+    def _average_snapshot_window(cls, snapshots):
+        """连续数值取最近3帧均值；0/1状态及字符串取第3帧当前值。"""
+        if not snapshots:
+            return None
+        latest = dict(snapshots[-1])
+        averaged = dict(latest)
+        for field_name, latest_value in latest.items():
+            if cls._is_snapshot_state_field(field_name, latest_value):
+                continue
+            values = []
+            for frame in snapshots:
+                value = frame.get(field_name)
+                if isinstance(value, bool):
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(numeric):
+                    values.append(numeric)
+            if values:
+                averaged[field_name] = sum(values) / len(values)
+        return averaged
 
     def _snapshot_scheduler_loop(self):
         while True:
             try:
-                now_ts = time.time()
+                now_ts = time.monotonic()
                 if now_ts - self._last_snapshot_emit_ts < self.snapshot_interval:
                     time.sleep(float(self.process_config.runtime.snapshot_poll_interval_seconds))
                     continue
                 with self.snapshot_lock:
-                    snapshot = self._latest_processed_snapshot.copy() if self._latest_processed_snapshot else None
+                    snapshot_window = [
+                        frame.copy() for frame in self._processed_snapshot_window
+                    ]
                     snapshot_seq = self._latest_processed_snapshot_seq
-                if snapshot is None:
+                if len(snapshot_window) < 3:
                     time.sleep(float(self.process_config.runtime.snapshot_poll_interval_seconds))
                     continue
+                snapshot = self._average_snapshot_window(snapshot_window)
                 if snapshot_seq == self._last_filter_emitted_seq and snapshot_seq == self._last_model_emitted_seq:
                     self._last_snapshot_emit_ts = now_ts
                     time.sleep(float(self.process_config.runtime.snapshot_poll_interval_seconds))
@@ -670,8 +720,9 @@ class ProcessForMapConsole:
 
     def _db_writer_loop(self):
         """串行消费 db_queue，按写入目标分发到两张表：
-        - _write_target='filter'       -> t_data1_filter_rt_（当前按30秒节流）
-        - _write_target='model_result' -> t_model_result_（30秒1条）
+        - _write_target='filter'       -> t_data1_filter_rt_；
+        - _write_target='model_result' -> t_model_result_。
+        两者频率统一由 snapshot_interval_seconds 配置（当前默认10秒）。
         两张表分别走独立线程池，避免互相阻塞。
         """
         while True:
@@ -701,6 +752,9 @@ class ProcessForMapConsole:
                             self._last_model_written_key = write_key
                             self.model_result_pool.submit(self.add_data_to_databases, [data])
                         except Exception as e:
+                            self._record_persistence_write(
+                                "model_result", False, error=e
+                            )
                             logging.error(f"_db_writer_loop 写 t_model_result_1 失败: {str(e)}")
                     else:
                         # 实时数据 -> t_data1_filter_rt_
@@ -711,6 +765,9 @@ class ProcessForMapConsole:
                             self._last_filter_written_key = write_key
                             self.filter_write_pool.submit(self.insert_data, data)
                         except Exception as e:
+                            self._record_persistence_write(
+                                "filter", False, error=e
+                            )
                             logging.error(f"_db_writer_loop 写 t_data1_filter_rt_ 失败: {str(e)}")
             except Exception as e:
                 logging.error(f"_db_writer_loop 异常: {str(e)}")
@@ -721,25 +778,76 @@ class ProcessForMapConsole:
             self.map_pre = MapControPre()
         return self.map_pre
     def get_pump_name(self):
-        result = self.engine.execute("select name,layer from t_pump_def order by layer asc").fetchall()
-        for i in result:
-            self.pump_name_def[str(i[1])] = i[0]
+        try:
+            result = self.engine.execute(
+                "select name,layer from t_pump_def order by layer asc"
+            ).fetchall()
+            self.pump_name_def = {
+                str(item[1]): item[0]
+                for item in result
+            }
+            return True
+        except Exception as exc:
+            # 泵显示名不是模型推理前置条件；数据库恢复后可再次调用本方法刷新。
+            if not hasattr(self, "pump_name_def"):
+                self.pump_name_def = {}
+            logging.warning("读取泵定义失败，暂用空显示名映射继续运行: %s", exc)
+            return False
 
     def getNewDataTableName(self):
         """初始化当前两类月表；不再创建/查找旧 t_data1_rt_*。"""
-        self.filter_table_name = ensure_filter_table(
-            self.engine,
-            self.process_config.persistence.filter_table_prefix,
+        persistence = self.process_config.persistence
+        self.filter_table_name = monthly_table_name(
+            persistence.filter_table_prefix
         )
-        self.mod_pre_table_name = ensure_model_result_table(
-            self.engine,
-            self.process_config.persistence.model_result_table_prefix,
+        self.mod_pre_table_name = monthly_table_name(
+            persistence.model_result_table_prefix
         )
-        logging.info(
-            "当前数据库月表: filter=%s, model_result=%s",
-            self.filter_table_name,
-            self.mod_pre_table_name,
-        )
+        filter_ok = False
+        model_ok = False
+        try:
+            self.filter_table_name = ensure_filter_table(
+                self.engine,
+                persistence.filter_table_prefix,
+            )
+            filter_ok = True
+            self._record_persistence_schema(
+                "filter", True, table=self.filter_table_name
+            )
+        except Exception as exc:
+            self._record_persistence_schema(
+                "filter", False, table=self.filter_table_name, error=exc
+            )
+            logging.warning("启动时过滤数据月表初始化失败: %s", exc)
+
+        try:
+            self.mod_pre_table_name = ensure_model_result_table(
+                self.engine,
+                persistence.model_result_table_prefix,
+            )
+            model_ok = True
+            self._record_persistence_schema(
+                "model_result", True, table=self.mod_pre_table_name
+            )
+        except Exception as exc:
+            self._record_persistence_schema(
+                "model_result",
+                False,
+                table=self.mod_pre_table_name,
+                error=exc,
+            )
+            logging.warning("启动时模型结果月表初始化失败: %s", exc)
+
+        if filter_ok and model_ok:
+            logging.info(
+                "当前数据库月表: filter=%s, model_result=%s",
+                self.filter_table_name,
+                self.mod_pre_table_name,
+            )
+            return True
+        # 实时计算和GUI不依赖启动时数据库可用；每次实际写入都会再次确保月表。
+        logging.warning("数据库月表未全部就绪，实时计算继续并等待后续写入恢复")
+        return False
 
     def _project_root(self):
         return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -1245,7 +1353,13 @@ class ProcessForMapConsole:
                 self.process_config.persistence.filter_table_prefix,
             )
             insert_filter_row(self.engine, self.filter_table_name, dict(data))
+            self._record_persistence_write(
+                "filter", True, table=self.filter_table_name
+            )
         except Exception as exc:
+            self._record_persistence_write(
+                "filter", False, table=self.filter_table_name, error=exc
+            )
             traceback.print_exc()
             logging.error("写入 t_data1_filter_rt_ 失败: %s", exc)
 
@@ -1297,6 +1411,18 @@ class ProcessForMapConsole:
         return None
 
     @staticmethod
+    def _runtime_execution_context(data):
+        value = data.get("target_flow_execution_adapter_ready", False)
+        ready = (
+            value
+            if isinstance(value, bool)
+            else str(value).strip().lower() in {
+                "1", "true", "yes", "y", "on", "是"
+            }
+        )
+        return {"target_flow_execution_adapter_ready": bool(ready)}
+
+    @staticmethod
     def _safe_online_hold(data, error):
         result = dict(data)
         result.update({
@@ -1309,8 +1435,28 @@ class ProcessForMapConsole:
             "slurry_policy_action_family": "HOLD",
             "slurry_policy_action_direction": "HOLD",
             "slurry_policy_action_magnitude": "HOLD",
-            "slurry_policy_recommended_valve_deltas": {},
-            "slurry_policy_projected_valve_openings": {},
+            "slurry_policy_target_supply_flow": {
+                "mode": "TARGET_SUPPLY_FLOW",
+                "available": False,
+                "reason_codes": ["INTEGRATED_SLURRY_MODEL_UNAVAILABLE"],
+            },
+            "slurry_policy_control_recommendation": {
+                "requested_mode": "TARGET_SUPPLY_FLOW",
+                "effective_mode": "TARGET_SUPPLY_FLOW",
+                "primary": {
+                    "recommendation_type": "HOLD",
+                    "actionable": False,
+                },
+                "automatic_mode_switch": False,
+            },
+            "slurry_policy_target_flow_execution_preview": {
+                "adapter_mode": "DRY_RUN",
+                "status": "BLOCKED",
+                "command_issued": False,
+                "dcs_write_attempted": False,
+                "reason_codes": ["INTEGRATED_SLURRY_MODEL_UNAVAILABLE"],
+                "phases": [],
+            },
             "slurry_policy_reason_codes": [
                 "INTEGRATED_SLURRY_MODEL_UNAVAILABLE", error or "UNKNOWN"
             ],
@@ -1326,7 +1472,7 @@ class ProcessForMapConsole:
                     result = dict(self._slurry_pipeline.process(
                         dict(data),
                         target=self._runtime_target(data, target_so2),
-                        execution_context={},
+                        execution_context=self._runtime_execution_context(data),
                     ))
                 except Exception as exc:
                     logging.error("供浆集成在线推理失败: %s", exc)
@@ -1351,7 +1497,7 @@ class ProcessForMapConsole:
             send_copy = {k: v for k, v in result.items() if not str(k).startswith('_')}
             self.send_data = send_copy
             self.result = send_copy
-            # 新核心完整输出先放到 GLOBAL_DATA；数据库/前端字段后续再单独适配。
+            # 完整模型输出是实时页面的唯一模型事实源；写库由返回值异步完成。
             self._publish_map_control(send_copy)
             self.send()
             logging.info(
@@ -1405,13 +1551,47 @@ class ProcessForMapConsole:
             merged.update(payload)
             self.GLOBAL_DATA["map_control"] = merged
 
-    def send_realtime_to_dcs(self, realtime_data, realtime_seq=None):
-        """
-        实时发送数据到DCS系统，使用update方式更新GLOBAL_DATA
-        
-        Args:
-            realtime_data: 包含实时计算结果的字典
-        """
+    def _publish_persistence_health(self):
+        snapshot = self.persistence_health.snapshot()
+        self._publish_map_control({"persistence_health": snapshot})
+        return snapshot
+
+    def _record_persistence_schema(
+        self,
+        target,
+        success,
+        *,
+        table="",
+        error="",
+    ):
+        snapshot = self.persistence_health.record_schema(
+            target,
+            success,
+            table=table,
+            error=error,
+        )
+        self._publish_map_control({"persistence_health": snapshot})
+        return snapshot
+
+    def _record_persistence_write(
+        self,
+        target,
+        success,
+        *,
+        table="",
+        error="",
+    ):
+        snapshot = self.persistence_health.record_write(
+            target,
+            success,
+            table=table,
+            error=error,
+        )
+        self._publish_map_control({"persistence_health": snapshot})
+        return snapshot
+
+    def _publish_realtime_map_control(self, realtime_data, realtime_seq=None):
+        """把1秒实时计算结果发布到 GLOBAL_DATA；本方法不执行任何 DCS I/O。"""
         try:
             # 添加时间戳标记
             realtime_data_with_marks = realtime_data.copy()
@@ -1426,37 +1606,10 @@ class ProcessForMapConsole:
                 self._last_realtime_published_seq = realtime_seq
             self._publish_map_control(realtime_data_with_marks)
             
-            logging.debug("已发送实时数据到DCS系统，使用update方式")
+            logging.debug("已发布实时计算结果到 GLOBAL_DATA")
         except Exception as e:
-            logging.error(f"发送实时数据到DCS失败: {str(e)}")
+            logging.error(f"发布实时计算结果到 GLOBAL_DATA 失败: {str(e)}")
             traceback.print_exc()
-    def send_to_ws(self):
-        """发布当前 condition + slurry policy 的关键字段，不再发布旧 cluster 结果。"""
-        try:
-            if not self.send_data:
-                return
-            model_key_fields = {
-                "condition_label": self.send_data.get("condition_label"),
-                "condition_stable": self.send_data.get("condition_stable", False),
-                "condition_switch_state": self.send_data.get("condition_switch_state"),
-                "integrated_active_version": self.send_data.get("integrated_active_version"),
-                "slurry_policy_control_mode": self.send_data.get("slurry_policy_control_mode"),
-                "slurry_policy_action_family": self.send_data.get("slurry_policy_action_family", "HOLD"),
-                "slurry_policy_action_direction": self.send_data.get("slurry_policy_action_direction", "HOLD"),
-                "slurry_policy_action_magnitude": self.send_data.get("slurry_policy_action_magnitude", "HOLD"),
-                "slurry_policy_recommended_valve_deltas": self.send_data.get(
-                    "slurry_policy_recommended_valve_deltas", {}
-                ),
-                "slurry_policy_projected_valve_openings": self.send_data.get(
-                    "slurry_policy_projected_valve_openings", {}
-                ),
-                "model_seq": self.send_data.get("model_seq", -1),
-                "last_model_update": datetime.datetime.now().isoformat(),
-            }
-            self._publish_map_control(model_key_fields)
-        except Exception as exc:
-            traceback.print_exc()
-            logging.error("send_to_ws 方法产生异常: %s", exc)
 
     def send(self):
         try:
@@ -1476,7 +1629,16 @@ class ProcessForMapConsole:
                 self.process_config.persistence.model_result_table_prefix,
             )
             insert_model_result_row(self.engine, self.mod_pre_table_name, row)
+            self._record_persistence_write(
+                "model_result", True, table=self.mod_pre_table_name
+            )
         except Exception as exc:
+            self._record_persistence_write(
+                "model_result",
+                False,
+                table=self.mod_pre_table_name,
+                error=exc,
+            )
             traceback.print_exc()
             logging.error("写入 t_model_result_ 失败: %s", exc)
 
@@ -1613,9 +1775,12 @@ class ProcessForMapConsole:
                 else:
                     realtime_data["date"] = str(rt_date)
                 realtime_seq = self._update_latest_snapshot(realtime_data)
-                self.send_realtime_to_dcs(realtime_data, realtime_seq=realtime_seq)
+                self._publish_realtime_map_control(
+                    realtime_data,
+                    realtime_seq=realtime_seq,
+                )
             except Exception as e:
-                logging.error(f"实时发送DCS数据失败: {str(e)}")
+                logging.error(f"实时结果发布失败: {str(e)}")
             return None
         except Exception as e:
             logging.error(f"clean_data 方法出现了异常: {str(e)}")

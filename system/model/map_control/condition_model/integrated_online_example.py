@@ -48,6 +48,9 @@ print("在线决策:", final_output)
 # MainControl 真正执行动作后再回传；没有执行时 actual_action_executed=False。
 # feedback = pipeline.record_execution({
 #     "decision_id": final_output["slurry_policy_decision_id"],
+#     "recommendation_type": final_output[
+#         "slurry_policy_control_recommendation"
+#     ]["primary"]["recommendation_type"],
 #     "recommendation_accepted": True,
 #     "actual_action_executed": True,
 #     "actual_execution_time": realtime_row["date"],
@@ -66,3 +69,7 @@ print("在线决策:", final_output)
 #         "apt_v1": 25.0,
 #     },
 # })
+#
+# FLOW_PRIMARY 时仍使用同一个入口，但回传 recommendation_type=
+# TARGET_SUPPLY_FLOW；可选回传 actual_tower_flow_after，后续每个10秒过程帧
+# 会继续用现场供浆流量推进 WAITING_FLOW_START/PEAK/FINAL/EFFECT 状态。

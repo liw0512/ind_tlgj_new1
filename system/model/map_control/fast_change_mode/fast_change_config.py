@@ -43,8 +43,8 @@ FAST_CHANGE_CONFIG = {
         "window_minutes": 5.0,
         # DEMA 半衰期，单位：秒。越大越平滑，但响应也越慢。
         "dema_halflife_seconds": 150.0,
-        # 至少多少个有效点后才正式判趋势。
-        "minimum_points": 4,
+        # 至少多少个有效点后才正式判趋势；12个10秒点保持原来的约2分钟观察量。
+        "minimum_points": 12,
         # 上升/下降方向一致性阈值，0~1。0.70 表示至少 70% 有效差分同方向。
         "direction_ratio_threshold": 0.70,
         # 小于 grid step 的该比例时，认为只是微小噪声，不计入方向占比。
@@ -92,8 +92,8 @@ FAST_CHANGE_CONFIG = {
     "state_machine": {
         # 一旦进入 FAST_CHANGE，至少保持多久，单位：分钟。
         "minimum_fast_hold_minutes": 4.0,
-        # 原始趋势不再是 FAST 后，连续多少个周期稳定才进入 FAST_RECOVERY。
-        "exit_stable_cycles": 4,
+        # 原始趋势不再是 FAST 后，连续多少个周期稳定才进入 FAST_RECOVERY；12次仍约2分钟。
+        "exit_stable_cycles": 12,
         # FAST_RECOVERY 最少持续时间，单位：分钟。
         "recovery_hold_minutes": 2.0,
     },
@@ -105,8 +105,8 @@ FAST_CHANGE_CONFIG = {
     "lifecycle": {
         # 离线 FAST 快照最多保留多少个版本；与第一/第二模块一样滚动清理旧版。
         "max_versions_to_keep": 5,
-        # 在线每处理多少条数据覆盖写一次 runtime checkpoint；事件闭合时会立即落盘。
-        "runtime_checkpoint_every_samples": 20,
+        # 在线每处理多少条10秒数据覆盖写一次 runtime checkpoint；60条仍约10分钟。
+        "runtime_checkpoint_every_samples": 60,
         # 在线是否持久化闭合 FAST 事件的月度 JSONL 摘要。
         "persist_compact_events": True,
         # 在线 FAST 事件月度 JSONL 最多保留多少个月；<=0 表示不自动清理。

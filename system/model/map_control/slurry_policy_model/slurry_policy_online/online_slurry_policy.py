@@ -5,24 +5,21 @@ from system.model.config.standard_fields import TIME_COLUMN
 import copy
 import threading
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 try:
-    from _engine.config_loader import all_valves, enabled_towers
+    from _engine.config_loader import enabled_towers
     from _engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from _engine.utils import normalize_condition_label
 except ImportError:  # pragma: no cover
-    from .._engine.config_loader import all_valves, enabled_towers
+    from .._engine.config_loader import enabled_towers
     from .._engine.schema import OUTLET_SO2_COLUMN, condition_axis_columns
     from .._engine.utils import normalize_condition_label
 
-from .action_utils import profile_action
-from .candidate_filter import CandidateFilter
-from .candidate_ranker import CandidateRanker
-from .candidate_retriever import CandidateRetriever
 from .config_loader import load_online_config
+from .control_output_selector import ControlOutputSelector
 from .decision_state_machine import DecisionStateMachine
 from .demand_analyzer import analyze_demand
 from .fast_action_envelope import apply_fast_action_envelope, build_fast_action_envelope
@@ -30,9 +27,14 @@ from .fast_context_adapter import FastContextError, extract_fast_context
 from .policy_snapshot_loader import PolicySnapshotError, PolicySnapshotLoader
 from .realtime_state_builder import RealtimeDataError, RealtimeStateBuilder
 from .runtime_store import RuntimeStore
+from .supply_flow_advisor import (
+    SupplyFlowAdvisor,
+    unavailable_flow_recommendation,
+)
+from .supply_flow_state_machine import SupplyFlowStateMachine
 from .target_control import TargetError, TargetManager
-from .types import Candidate, ConditionContext, ControlDemand, Decision, RealtimeState
-from .valve_action_resolver import ActionResolutionError, ValveActionResolver
+from .target_flow_execution_adapter import DryRunTargetFlowExecutionAdapter
+from .types import ConditionContext, ControlDemand, Decision, RealtimeState
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -55,8 +57,8 @@ def _timestamp(value: Any) -> pd.Timestamp:
 class OnlineSlurryPolicy:
     """第二模块在线推理统一入口。
 
-    本类不直接写 DCS 阀位。evaluate() 只生成推荐；MainControl 完成最终联锁、
-    限幅和实际执行后，必须调用 record_execution() 回传真实执行结果。
+    本类不直接写 DCS。evaluate() 只生成目标供浆流量推荐；现场执行适配器
+    完成最终联锁、限幅和实际执行后，必须调用 record_execution() 回传结果。
     """
 
     def __init__(
@@ -104,10 +106,17 @@ class OnlineSlurryPolicy:
         self.state_machine = DecisionStateMachine(
             self.online, training, self.store.state
         )
-        self.retriever = CandidateRetriever(self.loader, plant, self.online)
-        self.filter = CandidateFilter(plant, self.online)
-        self.ranker = CandidateRanker()
-        self.resolver = ValveActionResolver(plant, self.online)
+        self.output_selector = ControlOutputSelector(self.online)
+        self.target_flow_executor = DryRunTargetFlowExecutionAdapter(plant)
+        self.flow_advisor = SupplyFlowAdvisor(
+            self.loader, plant, self.online
+        )
+        self.flow_state = SupplyFlowStateMachine(
+            plant,
+            training,
+            self.online,
+            self.store.state,
+        )
         self._components_ready = True
 
     def _refresh_model(self) -> List[str]:
@@ -217,23 +226,6 @@ class OnlineSlurryPolicy:
             ),
         )
 
-    def _zero_deltas(self) -> Dict[str, float]:
-        return {
-            str(valve["valve_id"]): 0.0
-            for valve in all_valves(self.plant)
-        }
-
-    def _current_openings(self, process: Dict[str, Any]) -> Dict[str, float]:
-        values: Dict[str, float] = {}
-        for valve in all_valves(self.plant):
-            try:
-                values[str(valve["valve_id"])] = float(
-                    process[str(valve["column"])]
-                )
-            except Exception:
-                values[str(valve["valve_id"])] = float("nan")
-        return values
-
     def _make_hold(
         self,
         timestamp: pd.Timestamp,
@@ -245,6 +237,7 @@ class OnlineSlurryPolicy:
         reasons: List[str],
         demand: Optional[ControlDemand] = None,
         debug: Optional[Dict[str, Any]] = None,
+        target_supply_flow: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         decision = Decision(
             decision_id="D-%s" % uuid.uuid4().hex[:16],
@@ -272,8 +265,6 @@ class OnlineSlurryPolicy:
             action_family="HOLD",
             action_direction="HOLD",
             action_magnitude="HOLD",
-            recommended_valve_deltas=self._zero_deltas(),
-            projected_valve_openings=self._current_openings(process),
             historical_reliability=None,
             historical_safety_score=None,
             historical_direction_consistency=None,
@@ -281,6 +272,23 @@ class OnlineSlurryPolicy:
             reason_codes=list(dict.fromkeys(reasons)),
             debug=debug or {},
         ).to_dict()
+        decision["target_supply_flow"] = (
+            target_supply_flow
+            if target_supply_flow is not None
+            else unavailable_flow_recommendation("FLOW_CONTEXT_UNAVAILABLE")
+        )
+        decision["control_recommendation"] = self.output_selector.select(
+            decision,
+            decision["target_supply_flow"],
+            {},
+        )
+        decision["target_flow_execution_preview"] = (
+            self.target_flow_executor.prepare(
+                decision["decision_id"],
+                decision["target_supply_flow"],
+                process,
+            )
+        )
         self.store.append_decision(decision)
         self.store.save()
         return decision
@@ -295,40 +303,6 @@ class OnlineSlurryPolicy:
             elif ph > hi:
                 reasons.append("PH_ABOVE_SAFE_RANGE:%s" % tower["tower_id"])
         return reasons
-
-    def _candidate_sources(
-        self, state: RealtimeState
-    ) -> List[Tuple[str, Any]]:
-        fast_cfg = self.online.get("fast_policy", {})
-        if state.control_mode == "FAST_CHANGE":
-            # condition 尚未稳定时仍允许 FAST 安全保护，但只使用规则基线，避免
-            # 在工况归属尚未稳定时读取局部/历史精细策略。
-            if not state.condition.condition_stable:
-                return [("FAST_RULE_BASELINE", None)]
-            sources: List[Tuple[str, Any]] = []
-            if bool(fast_cfg.get("transient_exact_enabled", True)):
-                sources.append(("TRANSIENT_EXACT", lambda: self.retriever.transient(state)))
-            if bool(fast_cfg.get("transient_direction_pool_enabled", True)):
-                sources.append(("TRANSIENT_DIRECTION_POOL", lambda: self.retriever.transient_direction(state)))
-            if bool(fast_cfg.get("allow_regular_policy_fallback", False)):
-                sources.extend([
-                    ("LOCAL_CONDITION", lambda: self.retriever.local(state)),
-                    ("NEIGHBOR_STATE", lambda: self.retriever.neighbor(state)),
-                    ("PLANT_ACTION_PRIOR", self.retriever.plant_prior),
-                ])
-            sources.append(("FAST_RULE_BASELINE", None))
-            return sources
-        if state.control_mode == "FAST_RECOVERY":
-            return [
-                ("TRANSIENT_DIRECTION_POOL", lambda: self.retriever.transient_direction(state)),
-                ("FAST_RULE_BASELINE", None),
-            ]
-        return [
-            ("LOCAL_CONDITION", lambda: self.retriever.local(state)),
-            ("NEIGHBOR_STATE", lambda: self.retriever.neighbor(state)),
-            ("PLANT_ACTION_PRIOR", self.retriever.plant_prior),
-            ("RULE_BASELINE", None),
-        ]
 
     def evaluate(
         self,
@@ -432,6 +406,13 @@ class OnlineSlurryPolicy:
                 + progressive_reasons
                 + self._ph_reasons(state)
             )
+            flow_tracking = self.flow_state.advance(timestamp, process)
+            target_supply_flow = self.flow_advisor.recommend(
+                condition.condition_label,
+                demand.acceptable_effect_directions,
+                process,
+            )
+            target_supply_flow["tracking"] = flow_tracking
 
             if (
                 not condition.condition_stable
@@ -447,6 +428,7 @@ class OnlineSlurryPolicy:
                     state.disturbance_mode,
                     common_reasons + ["CONDITION_NOT_STABLE"],
                     demand,
+                    target_supply_flow=target_supply_flow,
                 )
             if not condition.condition_stable and state.control_mode == "FAST_CHANGE":
                 common_reasons.append("FAST_PROTECTION_DURING_CONDITION_WARMUP")
@@ -470,6 +452,7 @@ class OnlineSlurryPolicy:
                     state.disturbance_mode,
                     common_reasons + ["MODEL_RELOAD_HOLD"],
                     demand,
+                    target_supply_flow=target_supply_flow,
                 )
 
             if target_hold and demand.safety_level != "EMERGENCY":
@@ -484,6 +467,7 @@ class OnlineSlurryPolicy:
                         state.disturbance_mode,
                         common_reasons + ["TARGET_TRANSITION_HOLD"],
                         demand,
+                        target_supply_flow=target_supply_flow,
                     )
                 common_reasons.append("TARGET_TRANSITION_HOLD_BYPASSED_BY_FAST")
             if (
@@ -501,6 +485,7 @@ class OnlineSlurryPolicy:
                         state.disturbance_mode,
                         common_reasons + ["CONDITION_JUST_SWITCHED"],
                         demand,
+                        target_supply_flow=target_supply_flow,
                     )
                 common_reasons.append("CONDITION_TRANSITION_HOLD_BYPASSED_BY_FAST")
             blocking_fast_context = dict(fast_context)
@@ -518,6 +503,7 @@ class OnlineSlurryPolicy:
             blocking = self.state_machine.blocking_reasons(
                 timestamp, demand.safety_level, blocking_fast_context
             )
+            blocking.extend(self.flow_state.blocking_reasons())
             if blocking:
                 return self._make_hold(
                     timestamp,
@@ -528,77 +514,10 @@ class OnlineSlurryPolicy:
                     state.disturbance_mode,
                     common_reasons + blocking,
                     demand,
+                    target_supply_flow=target_supply_flow,
                 )
 
-            stability_context = self.state_machine.stability_context(timestamp)
-            rejected_debug: Dict[str, Any] = {}
-            selected: Optional[Candidate] = None
-            resolved = None
-            for effect_direction in demand.acceptable_effect_directions:
-                effect_demand = ControlDemand(
-                    commanded_target=demand.commanded_target,
-                    effective_target=demand.effective_target,
-                    current_so2=demand.current_so2,
-                    error=demand.error,
-                    demand_level=demand.demand_level,
-                    desired_so2_response=demand.desired_so2_response,
-                    acceptable_effect_directions=[effect_direction],
-                    maximum_action_magnitude=demand.maximum_action_magnitude,
-                    safety_level=demand.safety_level,
-                    target_changed=demand.target_changed,
-                    reason_codes=list(demand.reason_codes),
-                )
-                for source_name, provider in self._candidate_sources(state):
-                    candidates = (
-                        [
-                            self.retriever.rule(
-                                effect_demand,
-                                state,
-                                effect_direction,
-                                source=(
-                                    "FAST_RULE_BASELINE"
-                                    if source_name == "FAST_RULE_BASELINE"
-                                    else "RULE_BASELINE"
-                                ),
-                            )
-                        ]
-                        if provider is None
-                        else provider()
-                    )
-                    accepted, rejected = self.filter.filter(
-                        candidates,
-                        state,
-                        effect_demand,
-                        execution,
-                        stability_context,
-                        fast_envelope,
-                    )
-                    debug_key = "%s:%s" % (effect_direction, source_name)
-                    rejected_debug[debug_key] = rejected
-                    while accepted:
-                        candidate = self.ranker.rank(
-                            accepted, effect_demand
-                        )
-                        if candidate is None:
-                            break
-                        try:
-                            action = self.resolver.resolve(candidate, state)
-                            selected = candidate
-                            resolved = action
-                            break
-                        except ActionResolutionError as exc:
-                            rejected_debug[debug_key].setdefault(
-                                candidate.action_id, []
-                            ).append(
-                                "ACTION_RESOLUTION_FAILED:%s" % exc
-                            )
-                            accepted.remove(candidate)
-                    if selected is not None:
-                        break
-                if selected is not None:
-                    break
-
-            if selected is None or resolved is None:
+            if not bool(target_supply_flow.get("available")):
                 return self._make_hold(
                     timestamp,
                     condition,
@@ -606,16 +525,22 @@ class OnlineSlurryPolicy:
                     "HOLD",
                     state.control_mode,
                     state.disturbance_mode,
-                    common_reasons + ["NO_EXECUTABLE_CANDIDATE"],
+                    common_reasons
+                    + list(target_supply_flow.get("reason_codes") or [])
+                    + ["NO_ACCEPTED_FLOW_PROTOTYPE"],
                     demand,
                     debug={
-                        "rejected_candidates": rejected_debug,
                         "policy_state_key": state.policy_state_key_no_grid,
                     },
+                    target_supply_flow=target_supply_flow,
                 )
 
-            profile = selected.profile
-            reliability = profile.get("reliability", {})
+            evidence = target_supply_flow.get("evidence", {}) or {}
+            reliability = evidence.get("reliability", {}) or {}
+            expected_effect = target_supply_flow.get("expected_effect", {}) or {}
+            tower_id = str(target_supply_flow.get("tower_id") or "UNKNOWN")
+            flow_shape = str(target_supply_flow.get("flow_shape") or "UNKNOWN")
+            prototype_id = str(target_supply_flow.get("prototype_id") or "")
             decision = Decision(
                 decision_id="D-%s" % uuid.uuid4().hex[:16],
                 timestamp=timestamp.isoformat(),
@@ -629,44 +554,26 @@ class OnlineSlurryPolicy:
                 commanded_target=demand.commanded_target,
                 effective_target=demand.effective_target,
                 desired_so2_response=demand.desired_so2_response,
-                experience_source=selected.source,
-                action_id=resolved.action_id,
-                action_family=resolved.action_family,
-                action_direction=resolved.action_direction,
-                action_magnitude=resolved.action_magnitude,
-                recommended_valve_deltas=resolved.recommended_valve_deltas,
-                projected_valve_openings=resolved.projected_valve_openings,
-                historical_reliability=(
-                    None
-                    if selected.synthetic
-                    else float(reliability.get("total_score", 0.0))
+                experience_source="SUPPLY_FLOW_PROTOTYPE",
+                action_id=prototype_id,
+                action_family="TOWER:%s|SUPPLY_FLOW" % tower_id,
+                action_direction=str(target_supply_flow.get("action_direction")),
+                action_magnitude=flow_shape,
+                historical_reliability=float(reliability.get("total_score", 0.0)),
+                historical_safety_score=float(
+                    reliability.get("safety_history_score", 0.0)
                 ),
-                historical_safety_score=(
-                    None
-                    if selected.synthetic
-                    else float(
-                        reliability.get("safety_history_score", 0.0)
-                    )
+                historical_direction_consistency=float(
+                    expected_effect.get("outlet_so2_direction_consistency", 0.0)
                 ),
-                historical_direction_consistency=(
-                    None
-                    if selected.synthetic
-                    else float(
-                        profile.get("so2_effect", {}).get(
-                            "direction_consistency", 0.0
-                        )
-                    )
-                ),
-                decision_status=(
-                    "HOLD"
-                    if resolved.action_family == "HOLD"
-                    else "RECOMMENDED"
-                ),
+                decision_status="RECOMMENDED",
                 reason_codes=list(
                     dict.fromkeys(
                         common_reasons
-                        + ["EXPERIENCE_SOURCE:%s" % selected.source]
-                        + resolved.reason_codes
+                        + [
+                            "EXPERIENCE_SOURCE:SUPPLY_FLOW_PROTOTYPE",
+                            "FLOW_PROTOTYPE_SELECTED",
+                        ]
                     )
                 ),
                 debug={
@@ -678,22 +585,53 @@ class OnlineSlurryPolicy:
                     "outlet_so2_rate": state.outlet_so2_rate,
                     "demand_level": demand.demand_level,
                     "fast_action_envelope": fast_envelope.to_dict(),
-                    "candidate_rank_key": selected.rank_key,
-                    "rejected_candidates": rejected_debug,
+                    "flow_prototype_id": prototype_id,
+                    "flow_shape": flow_shape,
                     "automatic_control_allowed": _as_bool(
                         execution.get("automatic_control_allowed"), False
                     ),
                     "model_reload_error": self._last_reload_error,
                 },
             ).to_dict()
-            self.state_machine.record_recommendation(decision)
+            decision["target_supply_flow"] = target_supply_flow
+            decision["control_recommendation"] = self.output_selector.select(
+                decision,
+                target_supply_flow,
+                execution,
+            )
+            decision["target_flow_execution_preview"] = (
+                self.target_flow_executor.prepare(
+                    decision["decision_id"],
+                    target_supply_flow,
+                    process,
+                )
+            )
+            primary_type = str(
+                ((decision["control_recommendation"].get("primary") or {}).get(
+                    "recommendation_type", "HOLD"
+                ))
+            )
+            if primary_type == "TARGET_SUPPLY_FLOW":
+                self.flow_state.record_recommendation(decision)
             self.store.append_decision(decision)
             self.store.save()
             return decision
 
     def record_execution(self, feedback: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            record = self.state_machine.record_execution(feedback)
+            explicit_type = str(
+                feedback.get("recommendation_type") or "TARGET_SUPPLY_FLOW"
+            ).upper()
+            if explicit_type != "TARGET_SUPPLY_FLOW":
+                raise ValueError(
+                    "第二模块只接受 TARGET_SUPPLY_FLOW 执行反馈，收到: %s"
+                    % explicit_type
+                )
+            record = self.flow_state.record_execution(feedback)
+            record["target_supply_flow_tracking"] = record.get(
+                "target_flow_tracking",
+                self.flow_state.public_state(),
+            )
             record["model_version"] = self.loader.policy_version
             self.store.append_execution(record)
             self.store.save()
@@ -710,6 +648,13 @@ class OnlineSlurryPolicy:
                     else None
                 ),
                 "decision_state": dict(self.state_machine.state),
+                "supply_flow_state": dict(
+                    self.flow_state.public_state()
+                ),
+                "requested_output_mode": self.output_selector.requested_mode,
+                "target_flow_execution_adapter": (
+                    self.target_flow_executor.capabilities()
+                ),
                 "last_reload_error": self._last_reload_error,
                 "external_version_management": self.external_version_management,
                 "condition_axis_columns": list(

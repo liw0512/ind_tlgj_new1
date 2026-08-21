@@ -48,34 +48,6 @@ class ControlDemand:
 
 
 @dataclass
-class Candidate:
-    source: str
-    owner_id: str
-    state_key: str
-    action_id: str
-    profile: Dict[str, Any]
-    source_priority: int
-    synthetic: bool = False
-    reject_reasons: List[str] = field(default_factory=list)
-    rank_key: Optional[tuple] = None
-    # 在线目标匹配、预计SO2/pH等可解释诊断；不写回离线模型事实源。
-    evaluation: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class ResolvedAction:
-    action_id: str
-    action_family: str
-    action_direction: str
-    action_magnitude: str
-    recommended_valve_deltas: Dict[str, float]
-    projected_valve_openings: Dict[str, float]
-    active_valve_ids: List[str]
-    active_tower_ids: List[str]
-    reason_codes: List[str] = field(default_factory=list)
-
-
-@dataclass
 class Decision:
     decision_id: str
     timestamp: str
@@ -94,8 +66,6 @@ class Decision:
     action_family: str
     action_direction: str
     action_magnitude: str
-    recommended_valve_deltas: Dict[str, float]
-    projected_valve_openings: Dict[str, float]
     historical_reliability: Optional[float]
     historical_safety_score: Optional[float]
     historical_direction_consistency: Optional[float]

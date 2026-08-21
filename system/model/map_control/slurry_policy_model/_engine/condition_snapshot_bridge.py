@@ -17,10 +17,18 @@ from typing import Any, Iterable
 import pandas as pd
 
 from .exceptions import ConfigurationError, SnapshotError
-from .spatial_policy import parse_grid_id
 from .utils import normalize_condition_label, sha256_file
 
 _VERSION_RE = re.compile(r"^v(?P<n>\d+)$", re.IGNORECASE)
+_GRID_RE = re.compile(r"^P(?P<p>\d+)-S(?P<s>\d+)$", re.IGNORECASE)
+
+
+def parse_grid_id(value: Any) -> tuple[int, int] | None:
+    """Parse stable internal grid slots P(first axis)-S(second axis)."""
+    match = _GRID_RE.match(str(value).strip())
+    if not match:
+        return None
+    return int(match.group("p")), int(match.group("s"))
 
 
 def version_number(value: str) -> int:

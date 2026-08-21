@@ -13,6 +13,7 @@ from .exceptions import SnapshotError
 from .performance import PerformanceRecorder
 from .reliability import profile_status
 from .schema import episode_output_columns, time_column
+from .supply_flow_prototype import build_supply_flow_prototypes
 from .utils import (
     normalize_condition_label,
     read_json,
@@ -23,9 +24,9 @@ from .utils import (
 )
 
 
-# V1.8B 保持 V1.7 策略含义，增加等价性能优化和 pickle 内部事实源。
+# V1.6 stores actual-slurry-flow prototypes as the second module policy source.
 EFFECTIVE_CONFIG_SCHEMA_VERSION = "1.4"
-SNAPSHOT_SCHEMA_VERSION = "1.5"
+SNAPSHOT_SCHEMA_VERSION = "1.6"
 REQUIRED_INCREMENTAL_FILES = (
     "effective_config.json",
     "manifest.json",
@@ -928,49 +929,30 @@ def write_snapshot(
 
     global_dir = snapshot_dir / "global"
     global_dir.mkdir(parents=True, exist_ok=True)
-    plant_prior = {
+    all_episodes = pd.concat(
+        [valid_episodes, invalid_episodes],
+        ignore_index=True,
+        sort=False,
+    )
+    supply_flow_profiles = build_supply_flow_prototypes(
+        all_episodes,
+        training,
+    )
+    supply_flow_payload = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "policy_snapshot_version": snapshot_version,
         "condition_snapshot_version": condition_version,
-        "level": "PLANT_ACTION_PRIOR",
+        "level": "SUPPLY_FLOW_PROTOTYPE",
         "usage_constraint": (
-            "仅提供全厂动作方向、稳定性、安全性和空间推广性先验；"
-            "不得直接输出精确阀位增量"
+            "用于生成目标供浆流量建议；现场执行仍必须经过独立联锁和执行适配器。"
         ),
-        "state_action_profiles": aggregated.get("plant_action_prior", {}),
+        "profiles": supply_flow_profiles,
     }
-    write_pickle(global_dir / "plant_action_prior.pkl", plant_prior)
-    write_json(global_dir / "plant_action_prior_info.json", plant_prior)
+    write_pickle(global_dir / "supply_flow_prototypes.pkl", supply_flow_payload)
+    write_json(global_dir / "supply_flow_prototypes.json", supply_flow_payload)
     if progress:
-        progress(0.68, "写入全厂动作方向与安全先验")
+        progress(0.78, "写入供浆流量动作原型")
 
-    transient_progress = (
-        (lambda value, message: progress(0.68 + 0.10 * value, message))
-        if progress
-        else None
-    )
-    _write_owner_collection(
-        snapshot_dir,
-        "transients",
-        aggregated["transients"],
-        snapshot_version,
-        condition_version,
-        write_pickle_only,
-        transient_progress,
-    )
-    _write_owner_collection(
-        snapshot_dir,
-        "transient_direction",
-        aggregated.get("transient_direction", {}),
-        snapshot_version,
-        condition_version,
-        write_pickle_only,
-        None,
-    )
-
-    member_grid_count = sum(
-        len(items) for items in aggregated.get("condition_grids", {}).values()
-    )
     summary = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "policy_snapshot_version": snapshot_version,
@@ -983,37 +965,13 @@ def write_snapshot(
         "source_paths": source_paths,
         "time_column": ts_col,
         "raw_row_count": len(raw_df),
+        "flow_action_episode_count": int(
+            (all_episodes["episode_type"] == "FLOW_ACTION").sum()
+        ),
         "valid_episode_count": len(valid_episodes),
         "invalid_episode_count": len(invalid_episodes),
-        "action_episode_count": int(
-            (valid_episodes["episode_type"] == "ACTION").sum()
-        ),
-        "hold_episode_count": int(
-            (valid_episodes["episode_type"] == "HOLD").sum()
-        ),
-        "local_regular_episode_count": int(
-            (valid_episodes["training_route"] == "LOCAL_REGULAR").sum()
-        ),
-        "global_only_episode_count": int(
-            (valid_episodes["training_route"] == "GLOBAL_ONLY").sum()
-        ),
-        "transient_episode_count": int(
-            (valid_episodes["training_route"] == "TRANSIENT").sum()
-        ),
-        "exact_local_episode_count": int(
-            (valid_episodes["attribution_source"] == "EXACT_LOCAL").sum()
-        ),
-        "nearby_accepted_episode_count": int(
-            (valid_episodes["attribution_source"] == "NEARBY_ACCEPTED").sum()
-        ),
         "condition_label_count": len(catalog),
-        "condition_label_count_with_profiles": len(aggregated["conditions"]),
-        "member_grid_count_with_profiles": member_grid_count,
-        "neighbor_condition_count_with_profiles": len(aggregated.get("neighbor_state", {})),
-        "plant_action_prior_state_count": len(aggregated.get("plant_action_prior", {})),
-        # 兼容旧审计字段名称。
-        "grid_count_with_profiles": member_grid_count,
-        "region_count_with_profiles": len(aggregated["conditions"]),
+        "supply_flow_prototype_count": len(supply_flow_profiles),
         "condition_snapshot_versions_in_episode_files": condition_versions,
         "condition_snapshot_versions": [condition_version],
         "remap_report": remap_report or {},
@@ -1136,7 +1094,18 @@ def _validate_previous_snapshot(snapshot: Path) -> None:
 
 def _coerce_episode_types(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
-    for col in ["action_start_time", "action_end_time", "response_end_time"]:
+    for col in [
+        "action_start_time",
+        "action_end_time",
+        "response_end_time",
+        "flow_event_start_time",
+        "flow_event_end_time",
+        "flow_effect_baseline_start_time",
+        "flow_effect_response_start_time",
+        "flow_timing_first_effect_time",
+        "flow_timing_extreme_effect_time",
+        "flow_timing_stable_time",
+    ]:
         if col in result:
             result[col] = pd.to_datetime(result[col], errors="coerce")
     if "valid" in result:
@@ -1158,6 +1127,14 @@ def _coerce_episode_types(frame: pd.DataFrame) -> pd.DataFrame:
             "condition_valid",
             "supply_pump_state_changed",
             "condition_remapped",
+            "flow_event_complete",
+            "flow_crosses_baseline",
+            "flow_temporary_plateau",
+            "flow_learning_eligible",
+            "flow_circulation_change",
+            "flow_major_process_transition",
+            "flow_effect_complete",
+            "flow_timing_settled",
         }
     ]
     for bool_col in bool_columns:

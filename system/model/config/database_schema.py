@@ -126,7 +126,7 @@ _CONDITION_RESULT_FIELDS = OrderedDict([
     ("version_switch_error", "text"),
 ])
 
-# 第二模块正式在线输出。复杂阀门结构使用 jsonb，不把 xst_v1/v2/v3 写死进数据库列。
+# 第二模块正式在线输出。目标流量、规范推荐和执行预览使用 jsonb。
 _POLICY_RESULT_FIELDS = OrderedDict([
     ("slurry_policy_decision_id", "varchar(64)"),
     ("slurry_policy_timestamp", "timestamp(6)"),
@@ -141,8 +141,9 @@ _POLICY_RESULT_FIELDS = OrderedDict([
     ("slurry_policy_action_family", "varchar(128)"),
     ("slurry_policy_action_direction", "varchar(32)"),
     ("slurry_policy_action_magnitude", "varchar(32)"),
-    ("slurry_policy_recommended_valve_deltas", "jsonb"),
-    ("slurry_policy_projected_valve_openings", "jsonb"),
+    ("slurry_policy_target_supply_flow", "jsonb"),
+    ("slurry_policy_control_recommendation", "jsonb"),
+    ("slurry_policy_target_flow_execution_preview", "jsonb"),
     ("slurry_policy_historical_reliability", "float8"),
     ("slurry_policy_historical_safety_score", "float8"),
     ("slurry_policy_historical_direction_consistency", "float8"),
@@ -160,6 +161,12 @@ MODEL_RESULT_FIELD_TYPES.update(_POLICY_RESULT_FIELDS)
 _JSONB_FIELDS = {
     name for name, type_name in MODEL_RESULT_FIELD_TYPES.items()
     if type_name.lower() == "jsonb"
+}
+_JSONB_OBJECT_FIELDS = {
+    "fast_change_axis_rates",
+    "slurry_policy_target_supply_flow",
+    "slurry_policy_control_recommendation",
+    "slurry_policy_target_flow_execution_preview",
 }
 _BOOLEAN_FIELDS = {
     name for name, type_name in MODEL_RESULT_FIELD_TYPES.items()
@@ -214,10 +221,10 @@ def _as_bool(value: Any) -> Optional[bool]:
     return None
 
 
-def _json_value(value: Any) -> str:
+def _json_value(value: Any, *, default_object: bool = False) -> str:
     value = _normalize_scalar(value)
     if value is None:
-        value = []
+        value = {} if default_object else []
     if isinstance(value, str):
         try:
             json.loads(value)
@@ -347,7 +354,12 @@ def _insert_row(
         if name == "date" and value is None:
             value = pd.Timestamp.now()
         if name in _JSONB_FIELDS:
-            values.append(_json_value(value))
+            values.append(
+                _json_value(
+                    value,
+                    default_object=name in _JSONB_OBJECT_FIELDS,
+                )
+            )
             placeholders.append("%s::jsonb")
         elif name in _BOOLEAN_FIELDS:
             values.append(_as_bool(value))

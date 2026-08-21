@@ -1,319 +1,79 @@
-# 第二模块：slurry_policy_model 供浆动作学习与在线策略
+# 第二模块：供浆流量动作学习与在线策略
 
-`slurry_policy_model` 是供浆控制系统的第二模块。它读取第一模块已经标注 `condition_label` 的历史数据，从历史 ACTION/HOLD 片段中学习塔级供浆动作对净烟气 SO2 和塔 pH 的响应，并在在线阶段结合动态目标、安全约束和现场设备状态给出阀门推荐动作。
+`slurry_policy_model` 读取第一模块已经标注工况的历史数据，学习实际供浆流量变化与净烟气 SO2、吸收塔 pH 响应之间的关系。第二模块的规范动作是塔级目标供浆流量，不是阀门开度。
 
-## 1. 模块边界
-
-第二模块不负责工况划分，也不直接写 DCS。
-
-完整链路：
+## 模块边界
 
 ```text
-第一模块标注 CSV
+第一模块标注后的 10 秒数据
     ↓
-历史 ACTION / HOLD 提取
+识别实际供浆流量 STEP / PULSE / BOOST_STEP 事件
     ↓
-塔级动作归一化
+过滤泵切换、循环泵变化、工况切换等不可归因片段
     ↓
-SO2 / pH 响应统计
+统计峰值、最终流量、持续时间及 SO2 / pH 效果
     ↓
-LOCAL / NEIGHBOR / PLANT PRIOR / TRANSIENT 经验
+生成 supply_flow_prototypes.pkl
     ↓
-policy snapshot v###
+按当前工况、控制需求、安全状态选择流量原型
     ↓
-第一模块统一在线入口传入 condition_label + 当前过程状态 + 动态目标
-    ↓
-候选检索、过滤、排序
-    ↓
-塔级动作 → 实际阀门增量
-    ↓
-recommended_valve_deltas / projected_valve_openings
-    ↓
-P4PC / MainControl 最终联锁和执行
+输出 TARGET_SUPPLY_FLOW
 ```
 
-## 2. 厂级配置只改一处
+本模块不划分工况、不直接写 DCS，也不输出阀门增量。阀位和泵状态可以作为现场状态或监测量保留，但不会成为推荐动作或目标流量不可用时的回退控制量。
 
-换厂时所有现场物理结构统一配置在：
+## 离线训练
+
+输入为第一模块输出的带工况标签 CSV。历史数据中的实际供浆流量用于识别三类动作：
+
+- `STEP`：流量变化后保持在新平台；
+- `PULSE`：流量达到峰值后回到原平台附近；
+- `BOOST_STEP`：先达到强化峰值，再稳定在新的最终平台。
+
+只有动作形态可学习、上下文干净、效果窗口完整、工况有效且满足越界规则的片段，才以 `FLOW_ACTION / FLOW_POLICY` 进入原型统计。离线训练不再提取阀门 ACTION/HOLD，也不再生成局部阀门策略、邻近阀门策略或全厂阀门先验。
+
+主要产物：
 
 ```text
-system/model/config/plant_config.py
+policy snapshot v###/
+  global/supply_flow_prototypes.pkl
+  valid_episodes.csv
+  invalid_episodes.csv
+  training_summary.json
+  manifest.json
 ```
 
-第二模块不再重复维护：
+初次训练与增量训练均使用同一套 `ACTUAL_SUPPLY_FLOW_V1` 语义。增量版本继承并去重历史流量事件，再与新数据一起重建供浆流量原型。
 
-- 时间字段；
-- 净烟气 SO2 字段和安全范围；
-- 工况轴；
-- 单塔/双塔；
-- 各塔 pH 字段和安全范围；
-- 阀门数量、字段和量程；
-- 定频供浆泵电流字段、阈值和 pump→valve 拓扑；
-- 在线 SO2 目标字段。
+## 在线推理
 
-`slurry_policy_config.py` 是第二模块唯一算法配置入口，离线训练、P4PC 集成、版本激活和在线运行均使用这一份配置。它只保留算法参数，例如响应窗口、动作强度、可靠性、在线控制和执行限幅。
-
-## 3. 离线输入
-
-第二模块离线训练输入必须是第一模块刚生成的带工况标签 CSV：
+在线链路按当前稳定工况、SO2 目标偏差、塔 pH 安全状态和供浆流量原型可靠性选择动作。唯一规范输出为：
 
 ```text
-初次：Initial_train_after_condition.csv
-增量：Incremental_train_after_condition.csv
-```
-
-原始过程字段会被第一模块完整保留，因此第二模块能够继续读取：
-
-- 当前工况轴原始值；
-- 净烟气 SO2；
-- 各 enabled 塔 pH；
-- 各供浆阀开度；
-- 配置的定频供浆泵电流；
-- 第一模块 `condition_label / grid_id / state_key / version` 等字段。
-
-## 4. ACTION 与 HOLD
-
-第二模块同时学习：
-
-```text
-ACTION：阀门发生有效变化
-HOLD：阀门持续保持
-```
-
-历史响应采用：
-
-```text
-动作前 baseline
-→ 动作开始/结束
-→ response_delay
-→ response_window
-```
-
-如果响应窗口中又发生新动作、供浆泵启停等无法归因的扰动，对应 episode 可以判为 INVALID。
-
-## 5. 塔级动作语义
-
-策略学习的是“哪座塔增加/减少供浆”，而不是照搬操作员当时如何分配每一只阀。
-
-动作族主要为：
-
-```text
-TOWER:xst|SUPPLY
-TOWER:apt|SUPPLY
-```
-
-方向：
-
-```text
-INCREASE / DECREASE / HOLD
-```
-
-强度：
-
-```text
-MICRO / SMALL / MEDIUM / STRONG
-```
-
-同塔多阀的塔级动作幅度使用各阀归一化变化的平均值。例如两个 0~100 阀历史分别 +2、+4：
-
-```text
-(2/100 + 4/100) / 2 = 0.03
-```
-
-得到塔级等效增加 3%，不是简单相加成 6%。
-
-## 6. 单塔、双塔和任意阀门数量
-
-结构全部跟随中央 `plant_config.py`。
-
-单塔厂只启用一级塔时，只读取一级塔 pH、阀门和供浆泵；双塔时才同时存在两个塔级控制对象。一座塔有 1/2/3 个供浆阀时，只需要在 `valves` 中增删配置，算法本身不需要改。
-
-普通在线决策原则上一次只选择一座塔执行非 HOLD 动作；多塔同时动作历史保留作审计和 FAST 场景扩展。
-
-## 7. 定频供浆泵可用性
-
-供浆泵当前按定频泵处理：
-
-```text
-current > run_current_threshold → 1 运行
-current <= threshold            → 0 停止
-缺失 / NaN                       → 0 fail-safe
-```
-
-泵与阀的拓扑由：
-
-```python
-"served_valve_ids": ["xst_v1", "xst_v2"]
-```
-
-描述，因此支持一泵一阀、一泵多阀、多泵共阀和共母管。
-
-一个阀只要至少有一台服务泵状态为 1，就认为供浆路径可用。如果模型原计划两阀各 +3%，但其中一条独立泵支路停止，则只保留可用阀的 +3%，不会补偿成 +6%。所有服务路径均停止时，该塔动作直接不可执行。
-
-## 8. 动态 SO2 目标与 pH 安全
-
-离线模型不绑定固定目标，只学习动作历史响应。在线使用当前 `effective_target` 重新评价动作是否合适。
-
-pH 不作为大量离散状态，而是在候选执行前按当前 pH、历史 ΔpH 和该塔 `ph_safe_range` 做连续安全判断；预测越界时直接过滤动作。
-
-## 9. 在线候选和动作解析
-
-普通模式候选顺序：
-
-```text
-LOCAL_CONDITION
-→ NEIGHBOR_STATE
-→ PLANT_ACTION_PRIOR
-→ RULE_BASELINE
-```
-
-FAST 模式：
-
-```text
-TRANSIENT
-→ RULE_BASELINE
-```
-
-候选随后经过目标方向、pH、安全历史、手动/故障阀、供浆泵可用性、动作强度和在线状态机约束。
-
-选出塔级动作后，`ValveActionResolver` 将塔级等效动作映射到当前厂实际存在且可用的阀门，并执行阀位上下限、单次最大动作和最小有效动作等限制。
-
-主要输出：
-
-```text
-action_family
+recommendation_type = TARGET_SUPPLY_FLOW
+tower_id
 action_direction
-action_magnitude
-recommended_valve_deltas
-projected_valve_openings
-active_valve_ids
-active_tower_ids
-reason_codes
+flow_shape
+current_flow
+target_peak_flow
+target_final_flow
+target_peak_flow_range
+target_final_flow_range
 ```
 
-## 10. 执行反馈
+没有合格原型、流量计不完整、pH 不安全或状态机要求等待时，输出 `HOLD`，不会退回旧阀门建议。
 
-第二模块只给推荐，不直接写 DCS。实际执行后由上层调用：
+## 执行与反馈
 
-```python
-pipeline.record_execution({...})
-```
+当前 `TargetFlowExecutionAdapter` 为 `DRY_RUN`：它只生成目标流量执行预览并校验方向、目标区间和反馈契约，不执行任何 DCS 写操作。现场执行层完成工程限幅和联锁后，应通过 `record_execution()` 回传真实执行结果。状态机会继续跟踪流量是否到达峰值/最终值，并在响应窗口内评估 SO2 和 pH 效果。
 
-只有真实执行反馈才会推动 `WAITING_EFFECT`、动作间隔、反向锁等在线状态机。
+## 配置
 
-## 11. 初次与增量训练
+- 厂级测点与塔结构：`system/model/config/plant_config.py`
+- 第二模块离线/在线参数：`slurry_policy_config.py`
+- 当前规范输出：`ONLINE_POLICY_CONFIG["control_output"]["type"] = "TARGET_SUPPLY_FLOW"`
+- 当前执行边界：`ONLINE_POLICY_CONFIG["target_flow_execution"]["adapter_mode"] = "DRY_RUN"`
 
-初次：
+## 10 秒数据语义
 
-```text
-Initial_train_after_condition.csv
-+ condition snapshot v001
-→ initial_slurry_policy_trainer.py
-→ policy snapshot v001
-→ activate_policy_version.py
-→ active_version.json
-```
-
-增量：
-
-```text
-当前 active vN
-+ Incremental_train_after_condition.csv
-+ condition snapshot vN+1
-→ 继承并重映射历史 episode
-→ 增加新 episode
-→ policy vN+1
-→ 两模块同版本验证
-→ 原子激活 vN+1
-```
-
-增量失败时线上继续使用旧版本。
-
-## 12. 统一在线入口
-
-第二模块在线**不再作为独立主入口运行**。正式在线和历史 CSV 快速回放统一从第一模块进入：
-
-```text
-system/model/map_control/condition_model/online_condition_classifier.py
-```
-
-该文件内部长期持有：
-
-```text
-OnlineConditionClassifier
-        ↓
-OnlineConditionPolicyPipeline
-        ↓
-SlurryPolicyOnlineBridge
-        ↓
-OnlineSlurryPolicy
-```
-
-因此一条实时数据的完整路径是：
-
-```text
-原始实时 row
-→ 第一模块工况判定
-→ condition_label / grid_id / state_key
-→ 第二模块在线判定
-→ 动作候选、安全过滤、状态机、阀门解析
-→ 第一模块字段 + slurry_policy_* 字段联合输出
-```
-
-P4PC 也复用同一个 `build_online_condition_policy_pipeline()` 和长期 `pipeline.process()`，没有第二套在线实现。
-
-## 13. 历史 CSV 快速回放完整在线链
-
-训练并激活一组同版本模型后，可以直接运行第一模块在线文件，把历史 CSV 一行一行当成实时数据送入完整在线 Pipeline：
-
-```bash
-python system/model/map_control/condition_model/online_condition_classifier.py \
-  --snapshot active \
-  --input <历史测试数据.csv> \
-  --output <online_replay_result.csv> \
-  --target 20
-```
-
-或者由 CSV 每行提供动态目标：
-
-```bash
-python system/model/map_control/condition_model/online_condition_classifier.py \
-  --snapshot active \
-  --input <历史测试数据.csv> \
-  --output <online_replay_result.csv> \
-  --target-column outlet_so2_target
-```
-
-输出 CSV 同时包含：
-
-```text
-原始历史字段
-+ 第一模块 condition 字段
-+ 第二模块 slurry_policy_* 字段
-```
-
-回放过程中同一个 Pipeline 对象持续存在，所以第一模块多数窗口、第二模块 FAST/目标/状态机等内存状态都会跨行保留。它用于检查算法在历史现场状态下会如何判工况、选经验、过滤动作和给出阀门推荐，不会直接写 DCS。
-
-## 14. 版本和快照
-
-线上唯一正式版本入口是：
-
-```text
-active_version.json
-```
-
-激活时校验 condition/policy 版本、condition snapshot 哈希、grid-condition 映射及厂级塔/pH/阀门/供浆泵拓扑一致性。工况轴或设备拓扑发生结构变化时，应重新初次训练，不能让旧 snapshot 静默继续工作。
-
-## 15. 核心文件
-
-```text
-slurry_policy_config.py              第二模块唯一算法配置
-initial_slurry_policy_trainer.py     初次训练入口
-incremental_slurry_policy_trainer.py 增量训练入口
-slurry_policy_core.py                离线核心流程
-_engine/                              episode、聚合、快照等公共引擎
-slurry_policy_online/                 在线候选、目标、安全、状态机和动作解析
-activate_policy_version.py           同版本校验和激活
-```
-
-模块内不再保留 `test_core_regression.py` 一类合成测试。需要验证完整在线行为时，使用上述历史 CSV 回放入口。
+在线每 10 秒决策一次。第 10 秒输入使用第 8、9、10 秒连续量的均值；0/1 状态量取第 10 秒当前值。离线训练使用基于原始 1 秒 CSV 按同一规则得到的 10 秒语义数据，保证训练与在线一致。

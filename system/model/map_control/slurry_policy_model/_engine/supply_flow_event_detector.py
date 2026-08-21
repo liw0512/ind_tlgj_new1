@@ -53,34 +53,29 @@ class _DetectionSettings:
     noise_multiplier: float
     span_deadband_ratio: float
     level_deadband_ratio: float
-    trigger_confirmation_points: int
+    trigger_confirmation_seconds: float
 
 
 def _settings(training: dict[str, Any]) -> _DetectionSettings:
-    episode = training.get("episode", {})
-    override = training.get("supply_flow_event_detection", {}) or {}
-    max_transition = float(episode.get("max_action_duration_minutes", 20.0))
-    response_window = float(episode.get("response_window_minutes", 10.0))
+    episode = training["episode"]
+    max_transition = float(episode["max_action_duration_minutes"])
+    response_window = float(episode["response_window_minutes"])
     return _DetectionSettings(
-        baseline_minutes=float(episode.get("baseline_minutes", 5.0)),
-        backtrack_minutes=float(episode.get("action_detection_window_minutes", 2.0)),
-        stable_minutes=float(episode.get("action_end_stable_minutes", 1.5)),
+        baseline_minutes=float(episode["baseline_minutes"]),
+        backtrack_minutes=float(episode["action_detection_window_minutes"]),
+        stable_minutes=float(episode["action_end_stable_minutes"]),
         max_transition_minutes=max_transition,
         # Nearby elementary transitions are chained before shape classification.
         # The default uses the existing response horizon rather than introducing
         # a new plant-specific tuning parameter.
-        trajectory_merge_gap_minutes=float(
-            override.get(
-                "trajectory_merge_gap_minutes",
-                min(response_window, max_transition / 2.0),
-            )
-        ),
-        noise_multiplier=float(override.get("noise_multiplier", 4.0)),
-        span_deadband_ratio=float(override.get("span_deadband_ratio", 0.01)),
-        level_deadband_ratio=float(override.get("level_deadband_ratio", 0.005)),
-        trigger_confirmation_points=max(
-            1, int(override.get("trigger_confirmation_points", 2))
-        ),
+        trajectory_merge_gap_minutes=min(response_window, max_transition / 2.0),
+        # These scale-free detector constants convert observed signal noise and
+        # range into a physical deadband; they are not plant configuration.
+        noise_multiplier=4.0,
+        span_deadband_ratio=0.01,
+        level_deadband_ratio=0.005,
+        # Use real elapsed time instead of another cadence-dependent point count.
+        trigger_confirmation_seconds=60.0,
     )
 
 
@@ -366,16 +361,23 @@ def _detect_tower_transitions(
             i += 1
             continue
 
-        # Reject isolated meter spikes. Point-based confirmation keeps the logic
-        # independent of historian sampling frequency.
+        # Reject isolated meter spikes using real elapsed time. At the current
+        # cadence this is roughly six 10-second snapshots, but gaps or a future
+        # cadence change do not silently alter the physical confirmation time.
         sign = 1.0 if current_delta > 0 else -1.0
-        confirmed = 0
-        confirmation_end = min(n, i + settings.trigger_confirmation_points)
+        confirmation_target = timestamps[i] + pd.Timedelta(
+            seconds=settings.trigger_confirmation_seconds
+        )
+        confirmation_end = min(n, indexer.right(confirmation_target))
+        confirmed = True
+        last_confirmation_time = timestamps[i]
         for k in range(i, confirmation_end):
             value = _numeric_value(frame.iloc[k][flow_column])
-            if value is not None and sign * (value - baseline_flow) >= 0.75 * deadband:
-                confirmed += 1
-        if confirmed < settings.trigger_confirmation_points:
+            if value is None or sign * (value - baseline_flow) < 0.75 * deadband:
+                confirmed = False
+                break
+            last_confirmation_time = timestamps[k]
+        if not confirmed or last_confirmation_time < confirmation_target:
             i += 1
             continue
 
@@ -523,9 +525,8 @@ def detect_supply_flow_events(
 ) -> list[SupplyFlowEvent]:
     """Detect actual slurry-flow trajectories without classifying their shape.
 
-    Batch 2A intentionally leaves this function disconnected from the legacy
-    ``episode_extractor``. It can therefore be audited against historical flow
-    curves without changing the currently active valve-based policy semantics.
+    The episode extractor consumes these events as audit candidates. They stay
+    outside policy aggregation until effect/timing profiles promote them.
     """
     if df.empty:
         if progress:
