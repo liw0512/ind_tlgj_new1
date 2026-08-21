@@ -32,38 +32,64 @@ FAST_CHANGE_CONFIG = {
 
     # ------------------------------------------------------------------
     # 入口趋势风险。
-    # 实际监测字段直接读取 plant_config.condition_axes，支持 1 或 2 个任意数值轴。
-    # 先做因果 DEMA 平滑，再在时间窗口内同时检查：
-    #   1) 变化率是否越过 slow/fast 阈值；
-    #   2) 同方向变化点占比是否足够高。
-    # 这样可以减少单点毛刺触发 FAST_CHANGE。
+    # 当前钢厂没有机组负荷，plant_config.condition_axes 仅配置不可控扰动 yyq_SO2。
+    # 输入已经是 1 秒数据在 10 秒边界使用最近 8/9/10 秒均值形成的 10 秒快照，
+    # 因此 FAST 不再叠加原来的 150 秒重平滑 + 5 分钟长窗口，而使用约 1 分钟
+    # 因果窗口快速识别。参数来自 2026-06~08 历史 10 秒数据的首轮分布/未来风险分析：
+    # 60 秒变化率达到约 120 mg/Nm3/min 后，未来数分钟继续显著恶化的概率明显上升。
     # ------------------------------------------------------------------
     "trend": {
-        # 趋势窗口，单位：分钟。
-        "window_minutes": 5.0,
-        # DEMA 半衰期，单位：秒。越大越平滑，但响应也越慢。
-        "dema_halflife_seconds": 150.0,
-        # 至少多少个有效点后才正式判趋势；12个10秒点保持原来的约2分钟观察量。
-        "minimum_points": 12,
-        # 上升/下降方向一致性阈值，0~1。0.70 表示至少 70% 有效差分同方向。
+        # FAST 主趋势窗口，单位：分钟。约 1 分钟，在线只使用当前及过去数据。
+        "window_minutes": 1.0,
+        # 轻量 DEMA 半衰期，单位：秒。10 秒输入已做三点均值，因此只保留轻平滑。
+        "dema_halflife_seconds": 30.0,
+        # 6 个有效 10 秒点即可开始判趋势，约 50~60 秒观察量。
+        "minimum_points": 6,
+        # 上升/下降方向一致性阈值，0~1。至少 70% 有效差分同方向。
         "direction_ratio_threshold": 0.70,
-        # 小于 grid step 的该比例时，认为只是微小噪声，不计入方向占比。
+        # 默认微小噪声死区仍按 grid step 比例计算；当前 yyq_SO2 使用 axis_overrides 覆盖。
         "direction_deadband_step_ratio": 0.01,
 
-        # 通用变化率阈值按每个工况轴自身 grid step 自动换算，单位为“轴单位/分钟”。
-        # 当前默认：slow = 0.10 * step/min，fast = 0.30 * step/min。
-        # 例如 jzfh step=10 时约为 1 / 3 MW/min；
-        # yyq_SO2 step=200 时约为 20 / 60 mg/Nm3/min。
-        "slow_step_ratio_per_minute": 0.10,
-        "fast_step_ratio_per_minute": 0.30,
+        # 通用兜底阈值。未显式覆盖的其他工况轴仍按 grid step 自动换算。
+        "slow_step_ratio_per_minute": 0.90,
+        "fast_step_ratio_per_minute": 1.20,
 
-        # 可按字段名覆盖自动阈值。未配置的轴仍按 grid step 自动换算。
-        # 示例：
-        # "axis_overrides": {
-        #     "jzfh": {"slow_rate": 1.0, "fast_rate": 3.0},
-        #     "yyq_SO2": {"slow_rate": 20.0, "fast_rate": 60.0},
-        # },
-        "axis_overrides": {},
+        # 当前钢厂唯一不可控扰动轴 yyq_SO2 的显式阈值，单位 mg/Nm3/min。
+        # SLOW=90 作为 FAST 预警区；FAST=120 进入前馈保护。
+        "axis_overrides": {
+            "yyq_SO2": {
+                "slow_rate": 90.0,
+                "fast_rate": 120.0,
+                # 10 秒快照已是 8/9/10 秒均值，1 mg/Nm3 的相邻变化以下不计方向。
+                "direction_deadband": 1.0,
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # FAST 历史前馈学习语义。
+    # 这部分不会直接写死“加多少浆”；离线第二模块会从实际历史供浆动作中统计
+    # EXACT -> 同级 POOL -> 全厂安全 BASELINE 三层原型，在线只消费版本化训练产物。
+    # FAST 级别以当前 detector 输出的主轴变化率为基础：
+    #   L1: >= 120；L2: >= 160；L3: >= 220 mg/Nm3/min（按 fast_rate 倍数表达）。
+    # ------------------------------------------------------------------
+    "feedforward": {
+        "semantics_version": "CAUSAL_FAST_FEEDFORWARD_V1",
+        "severity_rate_multipliers": {
+            "L1": 1.0,
+            "L2": 4.0 / 3.0,
+            "L3": 11.0 / 6.0,
+        },
+        # 全厂安全基线只使用响应期 SO2 安全时间占比不低于该值、且无 pH/排放硬越限的动作。
+        "minimum_safe_ratio": 0.85,
+        # 不同回退层的最小独立历史动作条数。证据不足时继续向下一层回退。
+        "minimum_exact_events": 2,
+        "minimum_pool_events": 3,
+        "minimum_baseline_events": 5,
+        # EXACT 有精确上下文时取历史中位；POOL/BASELINE 使用较保守的 P25 首步动作。
+        "exact_action_quantile": 0.50,
+        "pool_action_quantile": 0.25,
+        "baseline_action_quantile": 0.25,
     },
 
     # ------------------------------------------------------------------
@@ -88,11 +114,12 @@ FAST_CHANGE_CONFIG = {
 
     # ------------------------------------------------------------------
     # FAST 状态机，防止边界附近反复进出。
+    # 状态机时长本轮先保持不变；后续将单独把“SLOW 不能算稳定”的退出语义修正。
     # ------------------------------------------------------------------
     "state_machine": {
         # 一旦进入 FAST_CHANGE，至少保持多久，单位：分钟。
         "minimum_fast_hold_minutes": 4.0,
-        # 原始趋势不再是 FAST 后，连续多少个周期稳定才进入 FAST_RECOVERY；12次仍约2分钟。
+        # 原始趋势不再是 FAST 后，连续多少个周期稳定才进入 FAST_RECOVERY；12次约2分钟。
         "exit_stable_cycles": 12,
         # FAST_RECOVERY 最少持续时间，单位：分钟。
         "recovery_hold_minutes": 2.0,
@@ -105,7 +132,7 @@ FAST_CHANGE_CONFIG = {
     "lifecycle": {
         # 离线 FAST 快照最多保留多少个版本；与第一/第二模块一样滚动清理旧版。
         "max_versions_to_keep": 5,
-        # 在线每处理多少条10秒数据覆盖写一次 runtime checkpoint；60条仍约10分钟。
+        # 在线每处理多少条10秒数据覆盖写一次 runtime checkpoint；60条约10分钟。
         "runtime_checkpoint_every_samples": 60,
         # 在线是否持久化闭合 FAST 事件的月度 JSONL 摘要。
         "persist_compact_events": True,
