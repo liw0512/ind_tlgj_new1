@@ -65,7 +65,7 @@ def tower_total_flow(tower: dict, process: Dict[str, Any]) -> Optional[float]:
 
 
 def tower_ph_is_safe(tower: dict, process: Dict[str, Any]) -> bool:
-    ph = finite_number(process.get(str(tower["ph_column"])))
+    ph = finite_number(process.get(str(tower["ph_column"])) )
     if ph is None:
         return False
     lo, hi = [float(value) for value in tower["ph_safe_range"]]
@@ -183,7 +183,7 @@ class SupplyFlowAdvisor:
         self,
         profile: Dict[str, Any],
         process: Dict[str, Any],
-    ) -> tuple[dict, float] | None:
+    ) -> Optional[tuple[dict, float]]:
         tower = self.towers.get(str(profile.get("tower_id", "")))
         if tower is None or not self._tower_is_safe(tower, process):
             return None
@@ -198,6 +198,7 @@ class SupplyFlowAdvisor:
     def _fast_recommendation(
         self,
         condition_label: str,
+        acceptable_effect_directions: Iterable[str],
         process: Dict[str, Any],
     ) -> Dict[str, Any]:
         direction = str(process.get("fast_change_direction", "NONE")).upper()
@@ -205,6 +206,18 @@ class SupplyFlowAdvisor:
             return unavailable_flow_recommendation("FAST_DROP_CONSERVATIVE_HOLD")
         if direction != "RISE":
             return unavailable_flow_recommendation("FAST_MIXED_CONSERVATIVE_HOLD")
+
+        # Adding slurry is expected to push outlet SO2 downward.  The realtime
+        # FastActionEnvelope/demand layer is authoritative about whether that
+        # effect is currently acceptable. Historical feedforward may choose
+        # HOW MUCH, but it cannot override a realtime HOLD/neutral constraint.
+        acceptable = {
+            str(value).upper() for value in acceptable_effect_directions
+        }
+        if "DECREASE" not in acceptable:
+            return unavailable_flow_recommendation(
+                "FAST_ENVELOPE_BLOCKS_PROTECTIVE_INCREASE"
+            )
 
         all_profiles = list(self.loader.load_supply_flow_prototypes().values())
         fast_profiles = [
@@ -343,7 +356,11 @@ class SupplyFlowAdvisor:
     ) -> Dict[str, Any]:
         mode = str(process.get("fast_change_mode", "REGULAR")).upper()
         if mode == "FAST_CHANGE":
-            return self._fast_recommendation(condition_label, process)
+            return self._fast_recommendation(
+                condition_label,
+                acceptable_effect_directions,
+                process,
+            )
 
         acceptable = {str(value).upper() for value in acceptable_effect_directions}
         candidates: List[tuple[Dict[str, Any], dict, float]] = []
@@ -432,8 +449,6 @@ class SupplyFlowAdvisor:
                 max(0.0, current_flow + min(peak_delta_range)),
                 max(0.0, current_flow + max(peak_delta_range)),
             ],
-            # Target bands come from historical IQR. The small proportional
-            # floor only prevents zero-width bands when all examples agree.
             "final_flow_tolerance": max(final_iqr / 2.0, abs(final_delta) * 0.1, 1e-6),
             "peak_flow_tolerance": max(peak_iqr / 2.0, abs(peak_delta) * 0.1, 1e-6),
             "expected_effect": dict(profile.get("effect", {}) or {}),
