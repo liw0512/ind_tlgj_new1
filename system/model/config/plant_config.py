@@ -168,7 +168,7 @@ PLANT_CONFIG = {
             "valves": [
                 {
                     "valve_id": "xst_v1",
-                    "display_name": "一级塔供浆阀1",
+                    "display_name": "吸收塔供浆阀",
                     "column": "xst_FMKD",
                     "min_opening": 0.0,
                     "max_opening": 100.0,
