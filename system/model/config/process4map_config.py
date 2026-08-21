@@ -99,7 +99,7 @@ class TrainingConfig:
 
     # 初次训练数据来源与数据量。
     initial_data_source: str = 'csv'  # database=从数据库读取；csv=读取 initial_source_csv。
-    initial_source_csv: str = 'F:/tlgj_new/files/new_data_train_30s.csv'  # 初次训练测试 CSV；仅 initial_data_source='csv' 时使用。
+    initial_source_csv: str = 'F:/tlgj_new/files/new_data_train_10s.csv'  # 初次训练测试 CSV；仅 initial_data_source='csv' 时使用。
     initial_training_days: int = 7  # 数据库模式下初次训练回看的天数。
     initial_minimum_records: int = 54_432  # 10秒数据连续7天、完整率90%时的最少记录数；测试时可调小。
     initial_database_record_limit: int = 60_480  # 10秒数据连续7天的记录数；0 表示按 initial_training_days 自动计算。
