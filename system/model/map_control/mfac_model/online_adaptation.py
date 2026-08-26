@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Event-driven online MFAC phi adaptation.
+"""Event-driven online SO2 MFAC phi adaptation.
 
-Only complete ``learning_eligible`` ActionResponseEvents may update live phi.
-The adapter is deliberately not wired into the production main loop here; the
-runtime activation gate remains a separate responsibility.
+Only complete ``learning_eligible`` ActionResponseEvents may update the SO2
+channel.  Dual-response pH state is preserved byte-for-byte when SO2 phi is
+updated so the two channels cannot overwrite each other.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -75,7 +75,7 @@ class MFACOnlineAdaptationResult:
 
 
 class MFACOnlineAdapter:
-    """Apply one canonical event to one matching live MFAC context state."""
+    """Apply one canonical SO2 event to one matching live MFAC context state."""
 
     def __init__(self, config: MFACOnlineAdaptationConfig) -> None:
         self.config = config
@@ -121,8 +121,7 @@ class MFACOnlineAdapter:
         )
         limit = abs(float(self.config.max_single_update_abs))
         bounded_update = max(-limit, min(limit, raw_update))
-        candidate = old_phi + bounded_update
-        candidate = max(lower, min(upper, candidate))
+        candidate = max(lower, min(upper, old_phi + bounded_update))
 
         if not math.isfinite(candidate) or candidate >= 0.0:
             return self._reject("PHYSICAL_DIRECTION_VIOLATION", state, event, old_phi)
@@ -136,6 +135,7 @@ class MFACOnlineAdapter:
             "raw_update": raw_update,
             "applied_update": candidate - old_phi,
             "quality_weight": quality_weight,
+            "channel": "SO2",
         }
         new_state = MFACRuntimeState(
             condition_snapshot_version=state.condition_snapshot_version,
@@ -151,6 +151,11 @@ class MFACOnlineAdapter:
                 or event.action_reached_time
                 or event.action_start_time
             ),
+            phi_ph_live=state.phi_ph_live,
+            confidence_ph_live=state.confidence_ph_live,
+            ph_valid_event_count=state.ph_valid_event_count,
+            ph_last_event_id=state.ph_last_event_id,
+            ph_last_update_time=state.ph_last_update_time,
             metadata=metadata,
             semantics_version=state.semantics_version,
         )
@@ -166,6 +171,7 @@ class MFACOnlineAdapter:
                 "prediction_residual": prediction_residual,
                 "raw_update": raw_update,
                 "quality_weight": quality_weight,
+                "channel": "SO2",
             },
         )
 
