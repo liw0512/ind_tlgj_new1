@@ -35,6 +35,13 @@ from .mfac_schema import (
     MFACContextResolution,
     MFACRuntimeState,
 )
+from .online_adaptation import (
+    ONLINE_ADAPTATION_SEMANTICS_VERSION,
+    MFACOnlineAdaptationConfig,
+    MFACOnlineAdaptationResult,
+    MFACOnlineAdapter,
+)
+from .online_event_adapter import OnlineResponseToMFACAdapter
 from .process_response import (
     PROCESS_RESPONSE_SEMANTICS_VERSION,
     ProcessResponseConfig,
@@ -42,6 +49,14 @@ from .process_response import (
     ProcessResponseMonitor,
     ProcessResponseUpdate,
     ProcessSample,
+)
+from .residual_control import (
+    RESIDUAL_CONTROL_SEMANTICS_VERSION,
+    MFACResidualConfig,
+    MFACResidualController,
+    MFACResidualDecision,
+    MFACResidualHoldDecision,
+    MFACResidualHoldManager,
 )
 from .supply_flow_tracking import (
     SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION,
@@ -56,6 +71,8 @@ __all__ = [
     "CONTINUOUS_TARGET_SEMANTICS_VERSION",
     "SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION",
     "PROCESS_RESPONSE_SEMANTICS_VERSION",
+    "ONLINE_ADAPTATION_SEMANTICS_VERSION",
+    "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "COUNTERFACTUAL_SHADOW",
     "ONLINE_SHADOW",
     "ActionResponseEvent",
@@ -85,4 +102,13 @@ __all__ = [
     "ProcessResponseMonitor",
     "ProcessResponseUpdate",
     "ProcessSample",
+    "OnlineResponseToMFACAdapter",
+    "MFACOnlineAdaptationConfig",
+    "MFACOnlineAdaptationResult",
+    "MFACOnlineAdapter",
+    "MFACResidualConfig",
+    "MFACResidualController",
+    "MFACResidualDecision",
+    "MFACResidualHoldDecision",
+    "MFACResidualHoldManager",
 ]
