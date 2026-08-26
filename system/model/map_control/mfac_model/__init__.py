@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Scheme 2 condition-aware MFAC package.
-
-V1 starts as a sidecar to ``condition_model``.  Online runtime pieces are
-introduced incrementally and remain isolated from DCS write paths until their
-shadow contracts have been validated.
-"""
+"""Scheme 2 condition-aware dual-response MFAC package."""
 
 from .bootstrap_trainer import (
     MFACBootstrapEvidence,
@@ -44,6 +39,25 @@ from .online_adaptation import (
     MFACOnlineAdapter,
 )
 from .online_event_adapter import OnlineResponseToMFACAdapter
+from .ph_adaptation import (
+    PH_ONLINE_ADAPTATION_SEMANTICS_VERSION,
+    PHOnlineAdaptationConfig,
+    PHOnlineAdaptationResult,
+    PHOnlineAdapter,
+)
+from .ph_arbitration import (
+    PH_ARBITRATION_SEMANTICS_VERSION,
+    PHResidualArbitrationConfig,
+    PHResidualArbitrationDecision,
+    PHResidualArbiter,
+)
+from .ph_response import (
+    PH_RESPONSE_SEMANTICS_VERSION,
+    PHResponseConfig,
+    PHResponseEvent,
+    PHResponseMonitor,
+    PHResponseUpdate,
+)
 from .process_response import (
     PROCESS_RESPONSE_SEMANTICS_VERSION,
     ProcessResponseConfig,
@@ -84,8 +98,11 @@ __all__ = [
     "CONTINUOUS_TARGET_SEMANTICS_VERSION",
     "SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION",
     "PROCESS_RESPONSE_SEMANTICS_VERSION",
+    "PH_RESPONSE_SEMANTICS_VERSION",
     "ONLINE_ADAPTATION_SEMANTICS_VERSION",
+    "PH_ONLINE_ADAPTATION_SEMANTICS_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
+    "PH_ARBITRATION_SEMANTICS_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
     "COUNTERFACTUAL_SHADOW",
@@ -119,15 +136,25 @@ __all__ = [
     "ProcessResponseMonitor",
     "ProcessResponseUpdate",
     "ProcessSample",
+    "PHResponseConfig",
+    "PHResponseEvent",
+    "PHResponseMonitor",
+    "PHResponseUpdate",
     "OnlineResponseToMFACAdapter",
     "MFACOnlineAdaptationConfig",
     "MFACOnlineAdaptationResult",
     "MFACOnlineAdapter",
+    "PHOnlineAdaptationConfig",
+    "PHOnlineAdaptationResult",
+    "PHOnlineAdapter",
     "MFACResidualConfig",
     "MFACResidualController",
     "MFACResidualDecision",
     "MFACResidualHoldDecision",
     "MFACResidualHoldManager",
+    "PHResidualArbitrationConfig",
+    "PHResidualArbitrationDecision",
+    "PHResidualArbiter",
     "Scheme2RuntimeRestore",
     "Scheme2RuntimeStore",
     "Scheme2RuntimeCoordinatorConfig",
