@@ -53,6 +53,10 @@ from system.model.map_control.yhfj_and_jzgj_model import ProcessControl as YHFJP
 from system.model.map_control.tower_power_consumption import TowerPowerCalculator  # 塔电耗计算
 from system.model.map_control.cost_calculator import CostCalculator  # 成本计算
 from system.model.map_control.StatCalc import PHStatCalc  # 统计计算
+from system.model.map_control.mfac_model.context_resolver import MFACContextResolver
+from system.model.map_control.mfac_model.runtime_coordinator import (
+    Scheme2RuntimeCoordinator,
+)
 logging = setup_log("process_for_mapconsole")
 psycopg2.extras.register_uuid()
 
@@ -203,6 +207,10 @@ class ProcessForMapConsole:
         self._slurry_pipeline = None
         self._slurry_pipeline_error = None
         self._slurry_pipeline_lock = threading.RLock()
+        # Scheme 2 is an opt-in Shadow sidecar.  It remains unconfigured until
+        # formal tracking/response parameters and a runtime store are supplied.
+        self._scheme2_runtime_coordinator = None
+        self._scheme2_context_resolver = None
         # # 测试标值start
         # self.system_state = self.SystemState.NORMAL_OPERATION  # 直接进入正常运行阶段
         # self.model_training_completed = True  # 标记模型已训练完成
@@ -1449,6 +1457,146 @@ class ProcessForMapConsole:
         })
         return result
 
+    @staticmethod
+    def _scheme2_shadow_disabled(reason):
+        return {
+            "scheme2_shadow_status": "DISABLED",
+            "scheme2_shadow_reason": str(reason or "NOT_CONFIGURED"),
+            "scheme2_learn_enabled": False,
+            "scheme2_residual_enabled": False,
+            "scheme2_dcs_write_enabled": False,
+            "scheme2_residual_mfac_hold": 0.0,
+        }
+
+    def configure_scheme2_shadow(self, coordinator, context_resolver=None):
+        """Install a calibrated Scheme-2 coordinator in fail-closed Shadow mode.
+
+        Process4MapControl intentionally rejects learning or residual-enabled
+        coordinators.  DCS target application/readback remains a future
+        external adapter and is never inferred from Scheme-1 recommendations.
+        """
+        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
+            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+        if coordinator.config.learning_enabled:
+            raise ValueError("Process4MapControl Scheme2 LEARN must remain 0")
+        if coordinator.config.residual_control_enabled:
+            raise ValueError("Process4MapControl Scheme2 Residual must remain 0")
+        if coordinator.dcs_write_enabled:
+            raise ValueError("Process4MapControl Scheme2 DCS write must remain off")
+        if context_resolver is not None and not isinstance(
+            context_resolver,
+            MFACContextResolver,
+        ):
+            raise TypeError("context_resolver must be MFACContextResolver")
+        self._scheme2_runtime_coordinator = coordinator
+        self._scheme2_context_resolver = context_resolver
+
+    @staticmethod
+    def _scheme2_finite(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
+    @staticmethod
+    def _scheme2_bool(value, default=False):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return bool(default)
+        return str(value).strip().lower() in {
+            "1", "true", "yes", "y", "on", "是"
+        }
+
+    def _scheme2_qbase(self, data, result):
+        # Only explicit baseline-flow fields are accepted.  In particular,
+        # xstshsjy_LL/current_flow/target_final_flow are not fallback sources.
+        for source in (result, data):
+            for key in ("scheme2_qbase_effective", "xst_base_flow"):
+                value = self._scheme2_finite(source.get(key))
+                if value is not None:
+                    return value, key
+        return None, ""
+
+    def _scheme2_context(self, result):
+        version = str(result.get("condition_snapshot_version") or "").strip()
+        resolver = self._scheme2_context_resolver
+        if resolver is None or resolver.condition_snapshot_version != version:
+            resolver = MFACContextResolver(version)
+            self._scheme2_context_resolver = resolver
+        return resolver.resolve(result)
+
+    def _run_scheme2_shadow(
+        self,
+        data,
+        result,
+        target_so2,
+        *,
+        data_quality_ok,
+    ):
+        coordinator = self._scheme2_runtime_coordinator
+        if coordinator is None:
+            return self._scheme2_shadow_disabled(
+                "UNCALIBRATED_RUNTIME_COORDINATOR"
+            )
+        if (
+            coordinator.config.learning_enabled
+            or coordinator.config.residual_control_enabled
+            or coordinator.dcs_write_enabled
+        ):
+            return self._scheme2_shadow_disabled("UNSAFE_RUNTIME_CONFIG_REJECTED")
+
+        try:
+            context = self._scheme2_context(result)
+            qbase, qbase_source = self._scheme2_qbase(data, result)
+            timestamp = result.get("date") or data.get("date")
+            so2_target = self._runtime_target(data, target_so2)
+            cycle = coordinator.process_cycle(
+                timestamp=timestamp,
+                qbase_effective=qbase,
+                qbase_inputs_valid=qbase is not None,
+                outlet_so2=data.get("jyq_SO2"),
+                inlet_so2=data.get("yyq_SO2"),
+                ph=data.get("xst_PH"),
+                so2_target=so2_target,
+                actual_supply_flow_feedback=data.get("xstshsjy_LL"),
+                condition_snapshot_version=context.condition_snapshot_version,
+                mfac_context_id=context.mfac_context_id,
+                condition_label=context.condition_label,
+                base_condition_id=context.base_condition_id,
+                grid_id=context.grid_id,
+                policy_region_id=context.policy_region_id,
+                # Shadow main-loop integration cannot claim a command was
+                # applied.  Formal DCS application/readback must enter through
+                # a separately reviewed adapter in a later activation stage.
+                target_was_applied=False,
+                dcs_applied_target_supply_flow=None,
+                replay_semantics="ONLINE_SHADOW",
+                fast_active=self._scheme2_bool(
+                    result.get("fast_change_active"),
+                    False,
+                ),
+                data_quality_ok=bool(data_quality_ok),
+            )
+            target = cycle.algorithm_target.algorithm_target_supply_flow
+            return {
+                "scheme2_shadow_status": "ACTIVE",
+                "scheme2_shadow_reason": "SHADOW_ONLY_NO_DCS_WRITE",
+                "scheme2_learn_enabled": False,
+                "scheme2_residual_enabled": False,
+                "scheme2_dcs_write_enabled": False,
+                "scheme2_residual_mfac_hold": 0.0,
+                "scheme2_qbase_source": qbase_source or "UNAVAILABLE",
+                "scheme2_algorithm_target_supply_flow": target,
+                "scheme2_shadow": cycle.to_dict(),
+            }
+        except Exception as exc:
+            logging.error("Scheme2 Shadow sidecar failed closed: %s", exc)
+            return self._scheme2_shadow_disabled(
+                "RUNTIME_ERROR:%s" % exc
+            )
+
     def insert_Mod(self, data, target_so2, store_to_db=True):
         """模型推理和结果处理：使用新的 condition + slurry_policy 集成在线入口。"""
         str_time = data.get("date", pd.Timestamp.now())
@@ -1468,6 +1616,16 @@ class ProcessForMapConsole:
                 result = self._safe_online_hold(data, self._slurry_pipeline_error)
         else:
             result = {}
+
+        if result:
+            result.update(
+                self._run_scheme2_shadow(
+                    data,
+                    result,
+                    target_so2,
+                    data_quality_ok=store_to_db,
+                )
+            )
 
         result["date"] = str_time
         result["model_seq"] = data.get("_snapshot_seq", -1)

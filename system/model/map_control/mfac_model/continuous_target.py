@@ -15,6 +15,8 @@ startup/DCS setpoint fallback.  Actual slurry-flow feedback is intentionally not
 part of this API and must never be used as a substitute algorithm target.
 """
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 import math
 from typing import Any, Dict, Optional

@@ -7,6 +7,8 @@ routes.  Scheme 2 has a different objective: estimate one local CFDL-like
 stricter and initially accepts only isolated, sustained STEP events.
 """
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 import math
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple

@@ -6,6 +6,8 @@ algorithm command time.  It produces auditable process-response evidence only;
 learning eligibility and online ``phi`` adaptation remain separate stages.
 """
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 import math

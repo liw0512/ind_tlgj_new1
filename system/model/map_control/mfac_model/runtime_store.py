@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Persistent runtime state for Scheme 2 MFAC sidecar."""
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass
 import json
 import math

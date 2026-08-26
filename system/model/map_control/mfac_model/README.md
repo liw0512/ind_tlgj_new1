@@ -44,6 +44,10 @@ SO2 target / outlet SO2 + phi_live
 MFACRuntimeState + residual_mfac_hold + last valid algorithm target
 -> Scheme2RuntimeStore
 -> atomic JSON persistence / guarded restore
+
+all stages above
+-> Scheme2RuntimeCoordinator
+-> one auditable Shadow cycle result
 ```
 
 ## 已完成
@@ -64,6 +68,9 @@ MFACRuntimeState + residual_mfac_hold + last valid algorithm target
 - MFAC residual candidate calculation；
 - non-accumulating residual HOLD semantics；
 - runtime state / residual / last-valid-target 持久化与版本保护恢复。
+- `Scheme2RuntimeCoordinator` 全链 Shadow 编排；
+- `Process4MapControl.py` fail-closed Shadow 接点；
+- Python 3.9 运行环境兼容性修复。
 
 ## 关键控制语义
 
@@ -110,11 +117,22 @@ mfac_context_id match
 
 否则拒绝恢复旧 `phi`/residual，不跨工况静默复用。
 
-## 当前仍未接入生产主链
+## 当前生产接入边界
 
-这些组件目前仍保持 sidecar/shadow 边界：
+`Process4MapControl.py` 已具备显式 `configure_scheme2_shadow(...)` 接点，
+但默认不构造未标定 Coordinator。该接点只接受以下安全配置：
 
-- 尚未接入 `Process4MapControl.py` 主循环；
+- `LEARN = 0`；
+- `Residual = 0`；
+- `DCS write = off`。
+
+主循环只从 `scheme2_qbase_effective` / `xst_base_flow` 读取 Qbase；不会用
+`xstshsjy_LL`、Scheme1 `current_flow` 或 `target_final_flow` 作为算法目标 fallback。
+即使输入数据声称 target 已应用，当前主循环接点也固定传入
+`target_was_applied=false`，直到正式 DCS application/readback adapter 单独评审接入。
+
+以下生产能力仍未启用：
+
 - 尚未建立正式 DCS write adapter；
 - 尚未启用生产在线 `LEARN`；
 - 尚未启用非零生产 residual；
@@ -130,9 +148,7 @@ DCS write = off
 
 ## 下一阶段
 
-1. 对新增组件执行完整 syntax/unit test；
-2. 建立 Scheme2 runtime coordinator，以 Shadow 方式串起 target -> tracking -> response -> event -> phi -> residual hold；
-3. 接入 `Process4MapControl.py`，但保持 DCS no-write / LEARN off / Residual off；
-4. 用历史回放验证 continuous target 与 `COUNTERFACTUAL_SHADOW`；
-5. 用正式 DCS target-applied readback + actual flow feedback 标定 tracking 参数；
-6. 有合格 Bootstrap/Profile 后再逐步打开 online learn 与 residual。
+1. 用正式 DCS target-applied readback + actual flow feedback 标定 tracking 参数；
+2. 配置并注入 Shadow Coordinator，持续观察目标、tracking 和 response 事件；
+3. 独立评审 DCS application/readback adapter；
+4. 有合格 Bootstrap/Profile 和回放证据后，再分阶段评审 online learn 与 residual。
