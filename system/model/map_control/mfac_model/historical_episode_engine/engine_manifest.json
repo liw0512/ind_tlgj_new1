@@ -1,0 +1,5 @@
+{
+  "source": "former slurry_policy_model/_engine",
+  "purpose": "offline MFAC episode evidence only",
+  "online_control_allowed": false
+}
