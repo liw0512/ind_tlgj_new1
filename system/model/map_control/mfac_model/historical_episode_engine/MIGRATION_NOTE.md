@@ -1,0 +1,1 @@
+The code in this directory is preserved only to generate historical physical action/response evidence for MFAC. It is not an online second-module controller and must not be imported by production control paths except offline calibration/bootstrap tooling.
