@@ -1,10 +1,67 @@
 # Scheme 2 MFAC Model
 
-本目录是方案2独立 MFAC sidecar，不替代 `condition_model`，也不直接修改方案1现有 `slurry_policy_model` 在线行为。
+本目录现在是项目的**正式第二模块**。第一模块 `condition_model` 保留，原第二模块 `slurry_policy_model` 的在线策略、Q-learning/动作推荐、训练器、激活器和运行时状态机已经退出当前分支并删除源码目录。
 
-## 当前实现边界
+当前主链定义为：
 
-当前分支已经具备以下独立组件：
+```text
+10s production frame
+-> condition_model                      # 第一模块
+-> MFAC                                 # 正式第二模块
+   -> Dynamic Qbase
+   -> residual_mfac_hold
+   -> continuous target
+-> DCS adapter (future, currently off)
+```
+
+为避免前端/数据库在一次迁移中同时断裂，`SlurryPolicyOnlineBridge` 这个**旧类名**和部分 `slurry_policy_*` 输出字段暂时保留为兼容壳；它们的实际 backend 已经是 `MFAC`，不会再 import 或执行旧 `slurry_policy_model`。
+
+## 第二模块替换状态
+
+已完成：
+
+```text
+old slurry_policy_model online controller    -> removed
+old slurry_policy_model trainer              -> removed
+old slurry_policy_model activation scripts   -> removed
+old source directory                         -> removed
+
+condition_model output
+-> MFACPrimaryPolicy
+-> DynamicQbaseCalculator
+-> ContinuousTargetPublisher
+-> algorithm_target_supply_flow
+```
+
+P4PC 原有的若干 legacy 配置键（例如 `slurry_policy_initial_script`、`slurry_policy_output_root`）仍暂时存在，但已经全部重定向到 `mfac_model` 的 version builder / activation / artifact root；这些键只是迁移兼容名称，不代表旧算法仍存在。
+
+旧第二模块中唯一继续保留的能力是**历史真实供浆动作的事件检测/响应画像工具**。该部分已经迁移到：
+
+```text
+mfac_model/historical_episode_engine/
+```
+
+只允许用于 MFAC offline bootstrap/calibration evidence，不具备在线控制权限。
+
+## 当前正式第二模块的安全阶段
+
+当前正式第二模块已替换成 MFAC，但控制权限还没有打开：
+
+```text
+LEARN = 0
+Residual = 0
+DCS write = off
+```
+
+因此当前主输出等价于：
+
+```text
+Q_target_algorithm = clip(Qbase + 0, 0, 70)
+```
+
+这不是永久控制律，而是替换旧第二模块后的安全 Shadow 起点。后续只有在双响应 Bootstrap/Profile 和 DCS readback 证据合格后，才允许逐步启用 `residual_mfac_hold` 和在线学习。
+
+## 完整 MFAC 组件链
 
 ```text
 condition_model output
@@ -13,14 +70,7 @@ condition_model output
 
 current inlet SO2 + runtime SO2 target + gas flow + slurry density
 -> DynamicQbaseCalculator
--> Qbase_raw / Qbase_effective audit result
-
-Scheme1 historical episode
--> Scheme1EpisodeToMFACAdapter
--> StrictMFACEligibilityGate
--> ActionResponseEvent
--> bootstrap_trainer
--> phi_prior / phi_live0 / delay evidence
+-> Qbase_raw / Qbase_effective
 
 Qbase + residual_mfac_hold
 -> ContinuousTargetPublisher
@@ -61,55 +111,50 @@ MFACRuntimeState
 + residual_mfac_hold
 + last valid algorithm target
 -> Scheme2RuntimeStore
--> atomic JSON persistence / guarded restore
-
-all stages above
--> Scheme2RuntimeCoordinator
--> one auditable Shadow cycle result
 ```
+
+其中完整双响应 Coordinator 当前仍以 Shadow/验证能力存在；正式主链先使用 `MFACPrimaryPolicy` 的安全零 residual 输出。后续激活时应把两者收敛为一个 MFAC runtime path，不能重新引入旧第二模块。
 
 ## 双响应定义
 
-方案2当前“**双响应 MFAC**”固定指两个被控响应通道：
+“**双响应 MFAC**”固定指：
 
 ```text
 SO2 response
 pH response
 ```
 
-不是把“执行延迟 + 过程延迟”称为双响应。执行延迟仍单独定义为：
+不是“执行延迟 + 过程延迟”。执行延迟仍单独定义：
 
 ```text
 target_change_time -> actual_flow_reached_time
 ```
 
-两条过程响应都从真实 `actual_flow_reached_time` 开始归因，并允许各自使用不同的 delay / observation / measurement window。
+两个响应通道都以真实 `actual_flow_reached_time` 为因果起点，并允许不同的 delay / observation / measurement window。
 
-学习方向固定为：
+学习方向：
 
 ```text
-phi_so2 = delta_SO2 / delta_Q_actual    # 正常物理方向 < 0
-phi_ph  = delta_pH  / delta_Q_actual    # 正常物理方向 > 0
+phi_so2 = delta_SO2 / delta_Q_actual    # 正常 < 0
+phi_ph  = delta_pH  / delta_Q_actual    # 正常 > 0
 ```
 
-两条通道可以不同步完成：
+两条通道可以不同步结束：
 
 ```text
 pH COMPLETED != whole action completed
 SO2 COMPLETED != force pH completed
 ```
 
-Coordinator 对同一个 tracking event 分别记录 SO2/pH 终态；启用双响应时，SO2 必须完成且 pH 也必须进入终态后，动作才可进入下一次 residual 更新资格。每个 tracking event 只消费一次，避免每 10 秒重复动作。
-
 ## SO2 主控、pH 仲裁
 
-pH **不是第二个并联供浆控制器**。最终控制量不允许采用：
+pH 不是第二个并联供浆控制器。禁止：
 
 ```text
-residual_final = residual_so2 + residual_ph    # 禁止
+residual_final = residual_so2 + residual_ph
 ```
 
-正确语义为：
+正确语义：
 
 ```text
 SO2 residual candidate
@@ -118,104 +163,68 @@ SO2 residual candidate
 -> residual_final
 ```
 
-因此：
+即：
 
 ```text
 residual_final = pH_arbitration(residual_so2)
 ```
 
-`PHResidualArbiter` 使用当前 pH、运行/安全区间以及（有证据时）`phi_ph_live` 预测 SO2 residual 对 pH 的影响，只能：
+`PHResidualArbiter` 不生成 additive `delta_Q_ph`。
 
-- `PASS`：保持 SO2 residual；
-- `SCALE`：缩小 SO2 residual；
-- `BLOCK`：把本次 residual 限制为 0。
+## Qbase 与实时 pH
 
-它不会生成 additive `delta_Q_ph`。
-
-## Qbase 与实时 pH 的职责边界
-
-Dynamic Qbase 每周期使用：
+Dynamic Qbase 使用：
 
 - `yyq_SO2`；
 - runtime SO2 target；
 - `yyq_LL`；
 - `xstshsjy_MD`。
 
-当前钢厂 Ca/S 固定使用参考 pH 6.0 对应的 `1.7`。实时 pH：
+当前钢厂：
+
+```text
+omega = 0.0013 * rho - 1.3
+reference pH = 6.0
+Ca/S = 1.7
+```
+
+实时 pH：
 
 ```text
 不得回灌 Qbase
 只进入 pH response learning + safety / residual arbitration
 ```
 
-密度—含固量关系已于 2026-08-26 确认为：
+历史实际供浆量也不得成为 Qbase 或 algorithm target fallback。
 
-```text
-omega = 0.0013 * rho - 1.3
-```
+## Historical evidence
 
-且 `omega` 以质量分数小数形式代入。
-
-## 已完成
-
-- MFAC schema / runtime-state contract；
-- condition -> MFAC context resolver；
-- MFAC compatibility-gate contract；
-- 复用方案1供浆 Episode 的历史事件适配；
-- strict learning eligibility；
-- offline bootstrap evidence / recursive replay；
-- continuous algorithm-target publication；
-- historical `COUNTERFACTUAL_SHADOW` 语义；
-- DCS applied target -> actual flow tracking；
-- `actual_flow_reached_time` 生成；
-- SO2 process-response monitoring；
-- pH independent response monitoring；
-- online SO2 response -> canonical `ActionResponseEvent`；
-- SO2 negative-direction event-driven online phi update；
-- pH positive-direction event-driven online phi update；
-- SO2 residual candidate calculation；
-- pH PASS/SCALE/BLOCK residual arbitration；
-- non-accumulating residual HOLD semantics；
-- SO2/pH 双状态 runtime persistence / restore；
-- `Scheme2RuntimeCoordinator` 双响应 Shadow 编排；
-- `Process4MapControl.py` fail-closed Shadow 接点；
-- Dynamic Qbase 在线审计计算。
-
-## 关键控制语义
-
-算法目标：
-
-```text
-Q_target_algorithm = clip(Qbase + residual_mfac_hold, 0, 70)
-```
-
-历史实际供浆量不允许作为算法目标 fallback。历史回放必须保持：
+历史回放必须保持：
 
 ```text
 replay_semantics = COUNTERFACTUAL_SHADOW
 ```
 
-在线因果事件只有在以下条件满足后才允许建立：
-
-```text
-target_was_applied = true
-AND
-dcs_applied_target_supply_flow valid
-AND
-actual flow reached
-```
-
-两条响应学习都必须使用真实：
+历史真实流量只用于真实物理证据：
 
 ```text
 delta_q_actual = actual_flow_after - actual_flow_before
 ```
 
-不得使用算法目标差代替真实 `delta_q_actual`。
+历史事件入口现在归 MFAC 所有：
 
-等待供浆执行/等待 SO2 或 pH 响应期间，`residual_mfac_hold` 保持不变，不允许每 10 秒重复累加；`Qbase` 可继续按每个控制周期重算。
+```text
+10s production-equivalent history
+-> mfac_model.historical_episode_engine
+-> Scheme1EpisodeToMFACAdapter / canonical ActionResponseEvent
+-> bootstrap / calibration
+```
 
-Runtime restore 必须同时满足：
+不得再依赖已删除的 `slurry_policy_model` 包。
+
+## Runtime restore
+
+恢复状态必须同时满足：
 
 ```text
 MFAC semantics version match
@@ -223,46 +232,46 @@ condition_snapshot_version match
 mfac_context_id match
 ```
 
-旧 V1 runtime 只有 `phi_live/confidence_live` 时仍可恢复，等价于 SO2 通道；pH 状态为空并保持未激活。新 runtime 同时持久化 SO2 和 pH 状态，不跨工况静默复用。
+旧 V1 runtime 只有 `phi_live/confidence_live` 时可按 SO2 通道兼容恢复；新 runtime 同时持久化 SO2/pH 状态。
 
-## 当前生产接入边界
+## Version lifecycle
 
-`Process4MapControl.py` 已具备显式 `configure_scheme2_shadow(...)` 接点，
-但默认不构造未标定 Coordinator。当前接点仍只接受以下安全配置：
-
-- `LEARN = 0`；
-- `Residual = 0`；
-- `DCS write = off`。
-
-即使输入数据声称 target 已应用，当前主循环接点也固定传入：
+第二模块版本产物已经迁到：
 
 ```text
-target_was_applied = false
+mfac_model/mfac_model_output/
+  active_version.json
+  snapshots/v###/
+    manifest.json
+    training_summary.json
 ```
 
-直到正式 DCS application/readback adapter 单独评审接入。
-
-以下生产能力仍未启用：
-
-- 尚未建立正式 DCS write adapter；
-- 尚未启用生产在线 `LEARN`；
-- 尚未启用非零生产 residual；
-- SO2/pH 双响应窗口和 tracking 参数仍需用正式 DCS/历史证据继续标定；
-- pH `phi` bootstrap/profile 仍需合格事件证据。
-
-因此当前生产安全语义仍保持：
+初次/增量生命周期：
 
 ```text
-LEARN = 0
-Residual = 0
-DCS write = off
+condition training/update
+-> condition snapshot v###
+-> MFAC version artifact v###
+-> activate_mfac_version.py
+-> active_version.json backend=MFAC
 ```
+
+当前 `active_version.json` 仍可临时包含一个 `slurry_policy` compatibility block，原因只是旧 `IntegratedVersionManager` 的字段兼容；该 block 指向 MFAC manifest，不指向旧算法产物。
+
+## 当前仍未完成
+
+- GitHub 环境没有 CI status，新增/迁移代码尚不能宣称已经完整执行通过；
+- standalone `condition_config` / `IntegratedVersionManager` 中还有若干 `slurry_policy_*` 兼容命名待逐步改成 canonical `mfac_*`；
+- `Process4MapControl.py` 目前同时保留 MFAC primary bridge 与独立 Scheme2 Shadow coordinator 接点，后续应收敛成单一路径；
+- 正式 DCS target-applied/readback adapter 尚未接入；
+- SO2/pH response calibration profile 尚未完成；
+- online LEARN、非零 residual、DCS write 均未启用。
 
 ## 下一阶段
 
-1. 在可执行环境运行全部 Scheme2 syntax/unit/integration tests；
-2. 用 mock-DCS 回放继续验证 SO2/pH 先后完成、单通道 censor、superseded、timeout、sample-gap；
-3. 用正式 DCS target-applied readback + actual flow feedback 标定 tracking 参数；
-4. 为 SO2/pH 分别形成可审计 response calibration profile；
-5. 独立评审 DCS application/readback adapter；
-6. 只有 Bootstrap/Profile 证据合格后，再分阶段评审 online learn 与非零 residual。
+1. 增加“旧第二模块已删除且 MFAC backend 生效”的替换回归测试；
+2. 清理 standalone condition 配置和版本管理中的 legacy 命名；
+3. 在可执行环境运行全部 Scheme2 syntax/unit/integration tests；
+4. 收敛 P4PC 的 MFAC primary 与 Shadow coordinator 为单一正式 MFAC runtime path；
+5. 完成 SO2/pH calibration profile 和 formal DCS readback；
+6. 证据合格后再逐阶段评审 LEARN、Residual、DCS write。
