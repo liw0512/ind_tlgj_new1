@@ -89,6 +89,7 @@ class SupplyFlowTrackingEvent:
     target_change_time: str
     status: str
     dcs_applied_target_supply_flow: Optional[float] = None
+    actual_supply_flow_before: Optional[float] = None
     actual_supply_flow_feedback: Optional[float] = None
     target_actual_gap: Optional[float] = None
     actual_flow_reached_time: str = ""
@@ -98,8 +99,16 @@ class SupplyFlowTrackingEvent:
     metadata: Dict[str, Any] = field(default_factory=dict)
     semantics_version: str = SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION
 
+    @property
+    def delta_q_actual(self) -> Optional[float]:
+        if self.actual_supply_flow_before is None or self.actual_supply_flow_feedback is None:
+            return None
+        return self.actual_supply_flow_feedback - self.actual_supply_flow_before
+
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        value["delta_q_actual"] = self.delta_q_actual
+        return value
 
 
 @dataclass
@@ -307,6 +316,7 @@ class SupplyFlowTrackingMonitor:
             target_change_time=_time_text(now),
             status=status,
             dcs_applied_target_supply_flow=dcs_target,
+            actual_supply_flow_before=actual,
             actual_supply_flow_feedback=actual,
             target_actual_gap=gap,
             target_was_applied=target_was_applied,
