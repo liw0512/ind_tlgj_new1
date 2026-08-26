@@ -40,6 +40,10 @@ SO2 target / outlet SO2 + phi_live
 -> MFACResidualController
 -> MFACResidualHoldManager
 -> residual_mfac_hold
+
+MFACRuntimeState + residual_mfac_hold + last valid algorithm target
+-> Scheme2RuntimeStore
+-> atomic JSON persistence / guarded restore
 ```
 
 ## 已完成
@@ -58,7 +62,8 @@ SO2 target / outlet SO2 + phi_live
 - online response -> canonical `ActionResponseEvent`；
 - event-driven online `phi` update component；
 - MFAC residual candidate calculation；
-- non-accumulating residual HOLD semantics。
+- non-accumulating residual HOLD semantics；
+- runtime state / residual / last-valid-target 持久化与版本保护恢复。
 
 ## 关键控制语义
 
@@ -95,6 +100,16 @@ phi_event = delta_so2 / delta_q_actual
 
 等待供浆执行/等待 SO2 响应期间，`residual_mfac_hold` 保持不变，不允许每 10 秒重复累加；`Qbase` 可继续按每个控制周期重算。
 
+Runtime restore 必须同时满足：
+
+```text
+MFAC semantics version match
+condition_snapshot_version match
+mfac_context_id match
+```
+
+否则拒绝恢复旧 `phi`/residual，不跨工况静默复用。
+
 ## 当前仍未接入生产主链
 
 这些组件目前仍保持 sidecar/shadow 边界：
@@ -103,7 +118,6 @@ phi_event = delta_so2 / delta_q_actual
 - 尚未建立正式 DCS write adapter；
 - 尚未启用生产在线 `LEARN`；
 - 尚未启用非零生产 residual；
-- runtime state 持久化/恢复尚未完成；
 - tracking deadband、reach tolerance、sustain、timeout 和 response-window 参数仍需用正式 DCS/历史证据标定。
 
 因此当前生产安全语义仍应保持：
@@ -117,9 +131,8 @@ DCS write = off
 ## 下一阶段
 
 1. 对新增组件执行完整 syntax/unit test；
-2. 增加 runtime state 持久化与恢复；
-3. 建立 Scheme2 runtime coordinator，以 Shadow 方式串起 target -> tracking -> response -> event -> phi；
-4. 接入 `Process4MapControl.py`，但保持 DCS no-write / LEARN off；
-5. 用历史回放验证 continuous target 与 `COUNTERFACTUAL_SHADOW`；
-6. 用正式 DCS target-applied readback + actual flow feedback 标定 tracking 参数；
-7. 有合格 Bootstrap/Profile 后再逐步打开 online learn 与 residual。
+2. 建立 Scheme2 runtime coordinator，以 Shadow 方式串起 target -> tracking -> response -> event -> phi -> residual hold；
+3. 接入 `Process4MapControl.py`，但保持 DCS no-write / LEARN off / Residual off；
+4. 用历史回放验证 continuous target 与 `COUNTERFACTUAL_SHADOW`；
+5. 用正式 DCS target-applied readback + actual flow feedback 标定 tracking 参数；
+6. 有合格 Bootstrap/Profile 后再逐步打开 online learn 与 residual。
