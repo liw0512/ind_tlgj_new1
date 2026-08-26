@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Shadow-only runtime orchestration for Scheme 2 MFAC.
+"""Shadow-only runtime orchestration for Scheme 2 dual-response MFAC.
 
-The coordinator is deliberately a sidecar.  It accepts DCS application and
-feedback evidence supplied by the caller, but it has no DCS write API.  The
-algorithm target is always produced by ``ContinuousTargetPublisher`` from
-``qbase_effective + residual_mfac_hold``; actual flow is only forwarded to the
-execution and response monitors.
+SO2 remains the only control-producing MFAC channel.  pH is observed and
+learned independently after the same real flow-reach event, then only
+arbitrates the SO2 residual by PASS/SCALE/BLOCK.  The coordinator has no DCS
+write API and can therefore remain a fail-closed Shadow sidecar.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .continuous_target import (
     ONLINE_SHADOW,
@@ -29,6 +28,21 @@ from .online_adaptation import (
     MFACOnlineAdapter,
 )
 from .online_event_adapter import OnlineResponseToMFACAdapter
+from .ph_adaptation import (
+    PHOnlineAdaptationConfig,
+    PHOnlineAdaptationResult,
+    PHOnlineAdapter,
+)
+from .ph_arbitration import (
+    PHResidualArbitrationConfig,
+    PHResidualArbitrationDecision,
+    PHResidualArbiter,
+)
+from .ph_response import (
+    PHResponseConfig,
+    PHResponseEvent,
+    PHResponseMonitor,
+)
 from .process_response import (
     ProcessResponseConfig,
     ProcessResponseEvent,
@@ -49,7 +63,7 @@ from .supply_flow_tracking import (
 )
 
 
-SCHEME2_RUNTIME_COORDINATOR_VERSION = "SCHEME2_RUNTIME_COORDINATOR_V1"
+SCHEME2_RUNTIME_COORDINATOR_VERSION = "SCHEME2_RUNTIME_COORDINATOR_V2_DUAL_RESPONSE"
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -62,7 +76,7 @@ def _finite(value: Any) -> Optional[float]:
 
 @dataclass(frozen=True)
 class Scheme2RuntimeCoordinatorConfig:
-    """Explicit runtime settings; plant timing values have no defaults."""
+    """Explicit runtime settings; plant timing values have no implicit defaults."""
 
     tracking: SupplyFlowTrackingConfig
     response: ProcessResponseConfig
@@ -74,6 +88,9 @@ class Scheme2RuntimeCoordinatorConfig:
     eligibility: MFACEligibilityConfig = field(
         default_factory=MFACEligibilityConfig
     )
+    ph_response: Optional[PHResponseConfig] = None
+    ph_online_adaptation: Optional[PHOnlineAdaptationConfig] = None
+    ph_arbitration: Optional[PHResidualArbitrationConfig] = None
     learning_enabled: bool = False
     residual_control_enabled: bool = False
     persist_runtime: bool = True
@@ -97,6 +114,10 @@ class Scheme2RuntimeCycleResult:
     dcs_write_enabled: bool = False
     persistence_status: str = "NOT_SAVED"
     metadata: Dict[str, Any] = field(default_factory=dict)
+    ph_response_events: List[PHResponseEvent] = field(default_factory=list)
+    active_ph_response_tracking_event_id: str = ""
+    ph_adaptation_results: List[PHOnlineAdaptationResult] = field(default_factory=list)
+    ph_arbitration: Optional[PHResidualArbitrationDecision] = None
     semantics_version: str = SCHEME2_RUNTIME_COORDINATOR_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -110,8 +131,12 @@ class Scheme2RuntimeCycleResult:
                 else None
             ),
             "response_events": [event.to_dict() for event in self.response_events],
-            "active_response_tracking_event_id": (
-                self.active_response_tracking_event_id
+            "active_response_tracking_event_id": self.active_response_tracking_event_id,
+            "ph_response_events": [
+                event.to_dict() for event in self.ph_response_events
+            ],
+            "active_ph_response_tracking_event_id": (
+                self.active_ph_response_tracking_event_id
             ),
             "action_response_events": [
                 event.to_dict() for event in self.action_response_events
@@ -119,7 +144,15 @@ class Scheme2RuntimeCycleResult:
             "adaptation_results": [
                 result.to_dict() for result in self.adaptation_results
             ],
+            "ph_adaptation_results": [
+                result.to_dict() for result in self.ph_adaptation_results
+            ],
             "residual_decision": self.residual_decision.to_dict(),
+            "ph_arbitration": (
+                self.ph_arbitration.to_dict()
+                if self.ph_arbitration is not None
+                else None
+            ),
             "residual_hold": self.residual_hold.to_dict(),
             "runtime_state": (
                 self.runtime_state.to_dict()
@@ -136,13 +169,7 @@ class Scheme2RuntimeCycleResult:
 
 
 class Scheme2RuntimeCoordinator:
-    """Run the complete Scheme-2 observation/adaptation chain once per sample.
-
-    Production integration is expected to construct this class with both
-    ``learning_enabled`` and ``residual_control_enabled`` false until formal
-    calibration and activation approval.  DCS writing cannot be enabled on
-    this class: ``dcs_write_enabled`` is a constant false capability marker.
-    """
+    """Run SO2-led dual-response MFAC once per process sample."""
 
     dcs_write_enabled = False
 
@@ -168,6 +195,24 @@ class Scheme2RuntimeCoordinator:
         self.online_adapter = MFACOnlineAdapter(config.online_adaptation)
         self.residual_controller = MFACResidualController(config.residual)
 
+        if config.ph_online_adaptation is not None and config.ph_response is None:
+            raise ValueError("ph_online_adaptation requires ph_response")
+        self.ph_response_monitor = (
+            PHResponseMonitor(config.ph_response)
+            if config.ph_response is not None
+            else None
+        )
+        self.ph_online_adapter = (
+            PHOnlineAdapter(config.ph_online_adaptation)
+            if config.ph_online_adaptation is not None
+            else None
+        )
+        self.ph_arbiter = (
+            PHResidualArbiter(config.ph_arbitration)
+            if config.ph_arbitration is not None
+            else None
+        )
+
         initial_residual = _finite(initial_residual_mfac_hold)
         if initial_residual is None:
             raise ValueError("initial_residual_mfac_hold must be finite")
@@ -183,6 +228,9 @@ class Scheme2RuntimeCoordinator:
             )
         self._lock = threading.RLock()
         self._restore_warning = ""
+        self._dual_response_status: Dict[str, Dict[str, str]] = {}
+        self._dual_response_consumed: Set[str] = set()
+
         persisted_target = runtime_store.last_valid_algorithm_target
         if persisted_target is not None:
             try:
@@ -204,7 +252,6 @@ class Scheme2RuntimeCoordinator:
         *,
         residual_mfac_hold: float = 0.0,
     ) -> None:
-        """Install an explicitly bootstrapped/restored context state."""
         residual = _finite(residual_mfac_hold)
         if residual is None:
             raise ValueError("residual_mfac_hold must be finite")
@@ -217,6 +264,8 @@ class Scheme2RuntimeCoordinator:
             self.residual_hold_manager = MFACResidualHoldManager(
                 residual if self.config.residual_control_enabled else 0.0
             )
+            self._dual_response_status.clear()
+            self._dual_response_consumed.clear()
 
     def process_cycle(
         self,
@@ -260,9 +309,7 @@ class Scheme2RuntimeCoordinator:
 
             tracking = self.tracking_monitor.update(
                 timestamp=timestamp,
-                algorithm_target_supply_flow=(
-                    target.algorithm_target_supply_flow
-                ),
+                algorithm_target_supply_flow=target.algorithm_target_supply_flow,
                 algorithm_target_valid=target.algorithm_target_valid,
                 target_was_applied=bool(target_was_applied),
                 dcs_applied_target_supply_flow=dcs_applied_target_supply_flow,
@@ -295,9 +342,36 @@ class Scheme2RuntimeCoordinator:
                 reached_event=reached,
             )
 
+            ph_response_events: List[PHResponseEvent] = []
+            active_ph_response_tracking_event_id = ""
+            if self.ph_response_monitor is not None:
+                ph_response = self.ph_response_monitor.update(
+                    timestamp=timestamp,
+                    ph=ph,
+                    qbase_effective=(
+                        qbase_effective if bool(qbase_inputs_valid) else None
+                    ),
+                    so2_target=so2_target,
+                    actual_supply_flow_feedback=actual_supply_flow_feedback,
+                    condition_snapshot_version=snapshot,
+                    mfac_context_id=context_id,
+                    fast_active=bool(fast_active),
+                    data_quality_ok=bool(data_quality_ok),
+                    reached_event=reached,
+                )
+                ph_response_events = list(ph_response.emitted_events)
+                active_ph_response_tracking_event_id = (
+                    ph_response.active_tracking_event_id
+                )
+
             actions: List[ActionResponseEvent] = []
             adaptations: List[MFACOnlineAdaptationResult] = []
             for response_event in response.emitted_events:
+                self._record_response_status(
+                    response_event.tracking_event_id,
+                    "so2",
+                    response_event.status,
+                )
                 action = self.event_adapter.adapt(
                     response_event,
                     condition_label=condition_label,
@@ -310,11 +384,24 @@ class Scheme2RuntimeCoordinator:
                             SCHEME2_RUNTIME_COORDINATOR_VERSION
                         ),
                         "learning_enabled": bool(self.config.learning_enabled),
+                        "response_channel": "SO2",
                     },
                 )
                 actions.append(action)
                 adaptation = self._adapt(action)
                 adaptations.append(adaptation)
+                if adaptation.updated and adaptation.runtime_state is not None:
+                    self.runtime_state = adaptation.runtime_state
+
+            ph_adaptations: List[PHOnlineAdaptationResult] = []
+            for ph_event in ph_response_events:
+                self._record_response_status(
+                    ph_event.tracking_event_id,
+                    "ph",
+                    ph_event.status,
+                )
+                adaptation = self._adapt_ph(ph_event)
+                ph_adaptations.append(adaptation)
                 if adaptation.updated and adaptation.runtime_state is not None:
                     self.runtime_state = adaptation.runtime_state
 
@@ -324,26 +411,58 @@ class Scheme2RuntimeCoordinator:
                 state=self.runtime_state,
                 control_enabled=bool(self.config.residual_control_enabled),
             )
-            response_ready = any(
-                event.status == "COMPLETED" for event in response.emitted_events
+
+            ph_arbitration: Optional[PHResidualArbitrationDecision] = None
+            hold_source = residual_decision
+            if self.ph_arbiter is not None:
+                ph_arbitration = self.ph_arbiter.arbitrate(
+                    ph_value=ph,
+                    state=self.runtime_state,
+                    so2_residual=residual_decision,
+                    arbitration_enabled=bool(
+                        self.config.residual_control_enabled
+                    ),
+                )
+                if residual_decision.status == "CALCULATED":
+                    metadata = dict(residual_decision.metadata or {})
+                    metadata["ph_arbitration"] = ph_arbitration.to_dict()
+                    hold_source = MFACResidualDecision(
+                        status="CALCULATED",
+                        candidate_residual=ph_arbitration.final_residual,
+                        so2_error=residual_decision.so2_error,
+                        phi_live=residual_decision.phi_live,
+                        confidence_live=residual_decision.confidence_live,
+                        hard_clipped=residual_decision.hard_clipped,
+                        metadata=metadata,
+                    )
+
+            response_ready, response_ready_tracking_id = self._response_ready(
+                list(response.emitted_events),
+                ph_response_events,
             )
             residual_hold = self.residual_hold_manager.update(
-                residual_decision,
+                hold_source,
                 allow_update=(
                     bool(self.config.residual_control_enabled)
                     and response_ready
                 ),
                 reset=not bool(self.config.residual_control_enabled),
             )
+            if response_ready_tracking_id:
+                self._dual_response_consumed.add(response_ready_tracking_id)
 
             persistence_status = self._persist()
             metadata = {
                 "context_status": context_status,
                 "replay_semantics": str(replay_semantics or ONLINE_SHADOW),
                 "response_ready_for_residual": response_ready,
+                "response_ready_tracking_event_id": response_ready_tracking_id,
+                "dual_response_enabled": self.ph_response_monitor is not None,
                 "qbase_inputs_valid": bool(qbase_inputs_valid),
                 "actual_flow_used_as_algorithm_target": False,
                 "target_formula": "clip(qbase_effective + residual_mfac_hold)",
+                "residual_semantics": "SO2_LED_PH_ARBITRATED",
+                "additive_ph_residual": False,
                 "restore_warning": self._restore_warning,
             }
             return Scheme2RuntimeCycleResult(
@@ -352,22 +471,72 @@ class Scheme2RuntimeCoordinator:
                 tracking_events=list(tracking.emitted_events),
                 active_tracking_event=tracking.active_event,
                 response_events=list(response.emitted_events),
-                active_response_tracking_event_id=(
-                    response.active_tracking_event_id
-                ),
+                active_response_tracking_event_id=response.active_tracking_event_id,
                 action_response_events=actions,
                 adaptation_results=adaptations,
                 residual_decision=residual_decision,
                 residual_hold=residual_hold,
                 runtime_state=self.runtime_state,
                 learning_enabled=bool(self.config.learning_enabled),
-                residual_control_enabled=bool(
-                    self.config.residual_control_enabled
-                ),
+                residual_control_enabled=bool(self.config.residual_control_enabled),
                 dcs_write_enabled=False,
                 persistence_status=persistence_status,
                 metadata=metadata,
+                ph_response_events=ph_response_events,
+                active_ph_response_tracking_event_id=(
+                    active_ph_response_tracking_event_id
+                ),
+                ph_adaptation_results=ph_adaptations,
+                ph_arbitration=ph_arbitration,
             )
+
+    def _record_response_status(
+        self,
+        tracking_event_id: str,
+        channel: str,
+        status: str,
+    ) -> None:
+        if not tracking_event_id:
+            return
+        value = self._dual_response_status.setdefault(tracking_event_id, {})
+        value[str(channel)] = str(status)
+
+    @staticmethod
+    def _terminal_response_status(status: str) -> bool:
+        return str(status) in {
+            "COMPLETED",
+            "CENSORED",
+            "INSUFFICIENT_BASELINE",
+            "INSUFFICIENT_RESPONSE_DATA",
+        }
+
+    def _response_ready(
+        self,
+        so2_events: List[ProcessResponseEvent],
+        ph_events: List[PHResponseEvent],
+    ) -> Tuple[bool, str]:
+        if self.ph_response_monitor is None:
+            for event in so2_events:
+                if event.status == "COMPLETED":
+                    return True, event.tracking_event_id
+            return False, ""
+
+        touched = {
+            event.tracking_event_id for event in so2_events + ph_events
+            if event.tracking_event_id
+        }
+        for tracking_id in touched:
+            if tracking_id in self._dual_response_consumed:
+                continue
+            status = self._dual_response_status.get(tracking_id, {})
+            so2_status = status.get("so2", "")
+            ph_status = status.get("ph", "")
+            if (
+                so2_status == "COMPLETED"
+                and self._terminal_response_status(ph_status)
+            ):
+                return True, tracking_id
+        return False, ""
 
     def _select_context(self, snapshot: str, context_id: str) -> str:
         key = (snapshot, context_id)
@@ -376,6 +545,8 @@ class Scheme2RuntimeCoordinator:
                 self.runtime_state = None
                 self.residual_hold_manager = MFACResidualHoldManager(0.0)
                 self._active_context_key = None
+                self._dual_response_status.clear()
+                self._dual_response_consumed.clear()
             return "CONTEXT_UNAVAILABLE"
         if self._active_context_key == key:
             return "CONTEXT_ACTIVE"
@@ -385,6 +556,8 @@ class Scheme2RuntimeCoordinator:
             mfac_context_id=context_id,
         )
         self._active_context_key = key
+        self._dual_response_status.clear()
+        self._dual_response_consumed.clear()
         if restored.restored and restored.runtime_state is not None:
             self.runtime_state = restored.runtime_state
             residual = (
@@ -424,6 +597,41 @@ class Scheme2RuntimeCoordinator:
                 runtime_state=None,
             )
         return self.online_adapter.update(self.runtime_state, event)
+
+    def _adapt_ph(self, event: PHResponseEvent) -> PHOnlineAdaptationResult:
+        old_phi = (
+            _finite(self.runtime_state.phi_ph_live)
+            if self.runtime_state is not None
+            else None
+        )
+        if not self.config.learning_enabled:
+            return PHOnlineAdaptationResult(
+                updated=False,
+                reason="LEARNING_DISABLED",
+                old_phi=old_phi,
+                new_phi=old_phi,
+                event_id=event.response_event_id,
+                runtime_state=self.runtime_state,
+            )
+        if self.runtime_state is None:
+            return PHOnlineAdaptationResult(
+                updated=False,
+                reason="NO_RUNTIME_STATE",
+                old_phi=None,
+                new_phi=None,
+                event_id=event.response_event_id,
+                runtime_state=None,
+            )
+        if self.ph_online_adapter is None:
+            return PHOnlineAdaptationResult(
+                updated=False,
+                reason="PH_ADAPTATION_NOT_CONFIGURED",
+                old_phi=old_phi,
+                new_phi=old_phi,
+                event_id=event.response_event_id,
+                runtime_state=self.runtime_state,
+            )
+        return self.ph_online_adapter.update(self.runtime_state, event)
 
     def _persist(self) -> str:
         if not self.config.persist_runtime:
