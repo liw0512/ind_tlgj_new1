@@ -33,6 +33,59 @@ PLANT_CONFIG = {
     # 净烟气 SO2 硬安全范围。上限同时作为第一模块 risk_rate 的排放限值。
     "outlet_so2_safe_range": [0.0, 35.0],
 
+    # 方案2 Dynamic Qbase 的厂级物理配置。当前仅允许 Shadow 计算；
+    # LEARN、Residual 和 DCS write 仍由运行协调器强制保持关闭。
+    "scheme2": {
+        "enabled": False,
+        "runtime_mode": "SCHEME2_SHADOW",
+        "semantics_version": "SCHEME2_MFAC_V1_DYNAMIC_QBASE",
+        "qbase": {
+            # q0=((c1-c2)*G*(100/64))/(omega*1e6*0.9*rho)
+            # q1=(Ca/S)*q0
+            "formula_version": "CRAFTSMAN_QBASE_V1",
+            "inlet_so2_column": "yyq_SO2",
+            "target_so2_column": "outlet_so2_target",
+            "gas_flow_column": "yyq_LL",
+            "caco3_molar_mass": 100.0,
+            "so2_molar_mass": 64.0,
+            "limestone_effective_fraction": 0.9,
+            "density_missing_policy": "BLOCK",
+            # “方案2”知识库仍要求现场标定表/人工算例最终确认截距符号和
+            # omega尺度。因此配置保留已实现的候选关系，但显式限制为Shadow。
+            "solid_fraction_curve": {
+                "slope": 0.0013,
+                "intercept": -1.3,
+            },
+            "solid_fraction_valid_range": [0.05, 0.30],
+            "calibration_status": "UNCONFIRMED_SHADOW_ONLY",
+            "ca_s_curve": [
+                [4.8, 1.05],
+                [5.0, 1.1],
+                [5.2, 1.2],
+                [5.4, 1.3],
+                [5.6, 1.4],
+                [5.8, 1.5],
+                [6.0, 1.7],
+            ],
+            "ca_s_interpolation": "LINEAR",
+            "ca_s_out_of_range": "CLAMP",
+            # 当前钢厂Qbase固定使用参考pH 6.0 -> Ca/S 1.7；
+            # 实时pH只供独立安全监督，不进入Qbase反馈。
+            "ca_s_ph_source": "CONFIG_REFERENCE",
+            "ca_s_reference_ph": 6.0,
+        },
+        "so2_control": {
+            "allowed_target_range": [5.0, 30.0],
+            "runtime_target_required": True,
+        },
+        "target_supply_flow": {
+            "minimum": 0.0,
+            "maximum": 70.0,
+            "unit": "m3/h",
+            "feedback_column": "xstshsjy_LL",
+        },
+    },
+
     # ------------------------------------------------------------------
 # 正式前端实时监控页的烟气侧/公共辅助测点。
     # 这里使用“列表”而不是写死字段，因此换厂时可直接增删：
@@ -141,7 +194,9 @@ PLANT_CONFIG = {
             "enabled": True,
             "ph_column": "xstjy_PH",
             "ph_safe_range": [5.6, 6.8],
+            "ph_operating_range": [6.0, 6.4],
             "ph_guard_band": 0.15,
+            "slurry_density_column": "xstshsjy_MD",
 
             # GUI 塔体实时测点。可按厂增删，pH 也可在此重复展示。
             "monitor_fields": [
@@ -341,6 +396,7 @@ def configured_persistence_columns(
 
     for tower in enabled_towers(plant):
         add(tower.get("ph_column"))
+        add(tower.get("slurry_density_column"))
         for item in tower.get("monitor_fields", []) or []:
             add(item.get("column"))
         for valve in tower.get("valves", []) or []:

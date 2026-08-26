@@ -80,6 +80,8 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
         console = ProcessForMapConsole.__new__(ProcessForMapConsole)
         console._scheme2_runtime_coordinator = None
         console._scheme2_context_resolver = None
+        console._scheme2_qbase_calculator = None
+        console.slurry_core_config = {"target_column": "outlet_so2_target"}
         return console
 
     def coordinator(self, root, **config):
@@ -116,18 +118,38 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
 
     def test_actual_flow_and_scheme1_target_are_not_qbase_fallbacks(self):
         console = self.bare_console()
-        qbase, source = console._scheme2_qbase(
+        qbase = console._scheme2_qbase(
             {
                 "xstshsjy_LL": 69.0,
                 "current_flow": 69.0,
+                "xst_base_flow": 31.0,
             },
-            {
-                "slurry_policy_target_final_flow": 45.0,
-                "target_final_flow": 45.0,
-            },
+            20.0,
         )
-        self.assertIsNone(qbase)
-        self.assertEqual(source, "")
+        self.assertFalse(qbase.valid)
+        self.assertIsNone(qbase.qbase_effective)
+
+    def test_unconfigured_coordinator_still_audits_online_qbase(self):
+        console = self.bare_console()
+        payload = console._run_scheme2_shadow(
+            {
+                "yyq_SO2": 2000.0,
+                "yyq_LL": 2200000.0,
+                "xstshsjy_MD": 1200.0,
+                "xstjy_PH": 6.2,
+                "outlet_so2_target": 20.0,
+            },
+            {},
+            20.0,
+            data_quality_ok=True,
+        )
+        self.assertEqual(payload["scheme2_shadow_status"], "DISABLED")
+        self.assertTrue(payload["scheme2_qbase_valid"])
+        self.assertEqual(payload["scheme2_qbase_source"], "DYNAMIC_QBASE")
+        self.assertAlmostEqual(
+            payload["scheme2_qbase_effective"],
+            41.20592948717949,
+        )
 
     def test_insert_mod_runs_shadow_without_claiming_dcs_application(self):
         with tempfile.TemporaryDirectory() as root:
@@ -147,22 +169,29 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
                     "date": "2026-08-26T10:00:00+08:00",
                     "xst_base_flow": 31.0,
                     "xstshsjy_LL": 69.0,
+                    "xstshsjy_MD": 1200.0,
                     "jyq_SO2": 50.0,
-                    "yyq_SO2": 1000.0,
-                    "xst_PH": 6.2,
-                    "outlet_so2_target": 35.0,
+                    "yyq_SO2": 2000.0,
+                    "yyq_LL": 2200000.0,
+                    "xstjy_PH": 6.2,
+                    "outlet_so2_target": 20.0,
                     "target_was_applied": True,
                     "dcs_applied_target_supply_flow": 31.0,
                 },
-                35.0,
+                20.0,
                 store_to_db=False,
             )
 
             self.assertEqual(result["scheme2_shadow_status"], "ACTIVE")
-            self.assertEqual(result["scheme2_qbase_source"], "xst_base_flow")
-            self.assertEqual(
+            self.assertEqual(result["scheme2_qbase_source"], "DYNAMIC_QBASE")
+            self.assertAlmostEqual(
                 result["scheme2_algorithm_target_supply_flow"],
-                31.0,
+                41.20592948717949,
+            )
+            self.assertTrue(result["scheme2_qbase_valid"])
+            self.assertAlmostEqual(
+                result["scheme2_qbase_effective"],
+                41.20592948717949,
             )
             self.assertFalse(result["scheme2_learn_enabled"])
             self.assertFalse(result["scheme2_residual_enabled"])

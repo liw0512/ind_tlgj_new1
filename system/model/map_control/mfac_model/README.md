@@ -11,6 +11,10 @@ condition_model output
 -> MFACContextResolver
 -> mfac_context_id
 
+current inlet SO2 + runtime SO2 target + gas flow + slurry density
+-> DynamicQbaseCalculator
+-> Qbase_raw / Qbase_effective audit result
+
 Scheme1 historical episode
 -> Scheme1EpisodeToMFACAdapter
 -> StrictMFACEligibilityGate
@@ -71,6 +75,8 @@ all stages above
 - `Scheme2RuntimeCoordinator` 全链 Shadow 编排；
 - `Process4MapControl.py` fail-closed Shadow 接点；
 - Python 3.9 运行环境兼容性修复。
+- 按工匠公式在线动态计算 Qbase，并记录公式输入、版本和失效原因；
+- 当前钢厂 Ca/S 使用参考 pH 6.0 对应的 1.7，实时 pH 只进入安全监督。
 
 ## 关键控制语义
 
@@ -126,8 +132,11 @@ mfac_context_id match
 - `Residual = 0`；
 - `DCS write = off`。
 
-主循环只从 `scheme2_qbase_effective` / `xst_base_flow` 读取 Qbase；不会用
-`xstshsjy_LL`、Scheme1 `current_flow` 或 `target_final_flow` 作为算法目标 fallback。
+主循环每周期使用当前 `yyq_SO2`、在线 SO2 target、`yyq_LL` 和
+`xstshsjy_MD` 动态计算 Qbase；不会用 `xstshsjy_LL`、Scheme1
+`current_flow`、`xst_base_flow` 或 `target_final_flow` 作为算法目标 fallback。
+密度—含固量关系的截距符号和数值尺度仍待现场标定表/人工算例最终确认，
+因此当前计算结果只允许 Shadow 审计，不得作为开启闭环的依据。
 即使输入数据声称 target 已应用，当前主循环接点也固定传入
 `target_was_applied=false`，直到正式 DCS application/readback adapter 单独评审接入。
 

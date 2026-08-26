@@ -9,6 +9,7 @@ from system.model.map_control.mfac_model.mfac_schema import MFACRuntimeState
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )
+from system.model.map_control.mfac_model.qbase import DynamicQbaseCalculator
 from system.model.map_control.mfac_model.process_response import (
     ProcessResponseConfig,
 )
@@ -132,16 +133,32 @@ class Scheme2RuntimeCoordinatorTest(unittest.TestCase):
     def test_counterfactual_replay_never_starts_causal_response(self):
         with tempfile.TemporaryDirectory() as root:
             coordinator = self.build(root)
+            qbase = DynamicQbaseCalculator("xst").calculate(
+                {
+                    "yyq_SO2": 2000.0,
+                    "outlet_so2_target": 20.0,
+                    "yyq_LL": 2200000.0,
+                    "xstshsjy_MD": 1200.0,
+                    "xstjy_PH": 6.2,
+                    # Historical actual flow is evidence only, not Qbase input.
+                    "xstshsjy_LL": 69.0,
+                }
+            )
             result = self.cycle(
                 coordinator,
                 "2026-08-26T10:00:00+08:00",
-                qbase_effective=31.0,
+                qbase_effective=qbase.qbase_effective,
                 actual_supply_flow_feedback=69.0,
                 target_was_applied=True,
-                dcs_applied_target_supply_flow=31.0,
+                dcs_applied_target_supply_flow=qbase.qbase_effective,
                 replay_semantics=COUNTERFACTUAL_SHADOW,
             )
 
+            self.assertTrue(qbase.valid)
+            self.assertAlmostEqual(
+                result.algorithm_target.algorithm_target_supply_flow,
+                41.20592948717949,
+            )
             self.assertEqual(
                 [event.status for event in result.tracking_events],
                 ["COUNTERFACTUAL_SHADOW"],

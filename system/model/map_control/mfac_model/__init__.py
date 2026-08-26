@@ -34,7 +34,9 @@ from .mfac_schema import (
     MFACBootstrapProfile,
     MFACContextResolution,
     MFACRuntimeState,
+    QbaseResult,
 )
+from .qbase import DynamicQbaseCalculator
 from .online_adaptation import (
     ONLINE_ADAPTATION_SEMANTICS_VERSION,
     MFACOnlineAdaptationConfig,
@@ -93,6 +95,8 @@ __all__ = [
     "MFACBootstrapProfile",
     "MFACContextResolution",
     "MFACRuntimeState",
+    "QbaseResult",
+    "DynamicQbaseCalculator",
     "MFACContextResolver",
     "MFACEligibilityConfig",
     "MFACEligibilityDecision",

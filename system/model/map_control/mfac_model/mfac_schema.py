@@ -8,7 +8,7 @@ migrated explicitly instead of silently reusing stale semantics.
 """
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 MFAC_SEMANTICS_VERSION = "SCHEME2_MFAC_V1"
@@ -38,6 +38,32 @@ class MFACContextResolution:
     policy_region_id: str
     mfac_context_id: str
     resolution_source: str
+
+
+@dataclass(frozen=True)
+class QbaseResult:
+    """Auditable result of one online Dynamic Qbase calculation."""
+
+    tower_id: str
+    valid: bool
+    status: str
+    qbase_raw: Optional[float]
+    qbase_effective: Optional[float]
+    inlet_so2: Optional[float]
+    target_so2: Optional[float]
+    gas_flow: Optional[float]
+    slurry_density: Optional[float]
+    solid_fraction: Optional[float]
+    ca_s_ratio: Optional[float]
+    ph_value: Optional[float]
+    formula_version: str
+    reason_codes: Tuple[str, ...] = ()
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        value = asdict(self)
+        value["reason_codes"] = list(self.reason_codes)
+        return value
 
 
 @dataclass

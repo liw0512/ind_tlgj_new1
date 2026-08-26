@@ -57,6 +57,7 @@ from system.model.map_control.mfac_model.context_resolver import MFACContextReso
 from system.model.map_control.mfac_model.runtime_coordinator import (
     Scheme2RuntimeCoordinator,
 )
+from system.model.map_control.mfac_model.qbase import DynamicQbaseCalculator
 logging = setup_log("process_for_mapconsole")
 psycopg2.extras.register_uuid()
 
@@ -211,6 +212,7 @@ class ProcessForMapConsole:
         # formal tracking/response parameters and a runtime store are supplied.
         self._scheme2_runtime_coordinator = None
         self._scheme2_context_resolver = None
+        self._scheme2_qbase_calculator = None
         # # 测试标值start
         # self.system_state = self.SystemState.NORMAL_OPERATION  # 直接进入正常运行阶段
         # self.model_training_completed = True  # 标记模型已训练完成
@@ -1492,14 +1494,6 @@ class ProcessForMapConsole:
         self._scheme2_context_resolver = context_resolver
 
     @staticmethod
-    def _scheme2_finite(value):
-        try:
-            number = float(value)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        return number if math.isfinite(number) else None
-
-    @staticmethod
     def _scheme2_bool(value, default=False):
         if isinstance(value, bool):
             return value
@@ -1509,15 +1503,18 @@ class ProcessForMapConsole:
             "1", "true", "yes", "y", "on", "是"
         }
 
-    def _scheme2_qbase(self, data, result):
-        # Only explicit baseline-flow fields are accepted.  In particular,
-        # xstshsjy_LL/current_flow/target_final_flow are not fallback sources.
-        for source in (result, data):
-            for key in ("scheme2_qbase_effective", "xst_base_flow"):
-                value = self._scheme2_finite(source.get(key))
-                if value is not None:
-                    return value, key
-        return None, ""
+    def _scheme2_qbase(self, data, target_so2):
+        """Calculate Qbase from current process inputs and runtime SO2 target.
+
+        Actual slurry flow and Scheme-1 target fields are deliberately absent
+        from this input contract, so neither can become an algorithm-target
+        fallback when a formula input is missing.
+        """
+        calculator = getattr(self, "_scheme2_qbase_calculator", None)
+        if calculator is None:
+            calculator = DynamicQbaseCalculator("xst")
+            self._scheme2_qbase_calculator = calculator
+        return calculator.calculate(data, target_so2=target_so2)
 
     def _scheme2_context(self, result):
         version = str(result.get("condition_snapshot_version") or "").strip()
@@ -1535,30 +1532,48 @@ class ProcessForMapConsole:
         *,
         data_quality_ok,
     ):
-        coordinator = self._scheme2_runtime_coordinator
-        if coordinator is None:
-            return self._scheme2_shadow_disabled(
-                "UNCALIBRATED_RUNTIME_COORDINATOR"
-            )
-        if (
-            coordinator.config.learning_enabled
-            or coordinator.config.residual_control_enabled
-            or coordinator.dcs_write_enabled
-        ):
-            return self._scheme2_shadow_disabled("UNSAFE_RUNTIME_CONFIG_REJECTED")
-
         try:
-            context = self._scheme2_context(result)
-            qbase, qbase_source = self._scheme2_qbase(data, result)
-            timestamp = result.get("date") or data.get("date")
             so2_target = self._runtime_target(data, target_so2)
+            qbase_result = self._scheme2_qbase(data, so2_target)
+            qbase_payload = {
+                "scheme2_qbase_source": (
+                    "DYNAMIC_QBASE"
+                    if qbase_result.valid
+                    else "DYNAMIC_QBASE_INVALID"
+                ),
+                "scheme2_qbase_valid": bool(qbase_result.valid),
+                "scheme2_qbase_raw": qbase_result.qbase_raw,
+                "scheme2_qbase_effective": qbase_result.qbase_effective,
+                "scheme2_qbase": qbase_result.to_dict(),
+            }
+
+            coordinator = self._scheme2_runtime_coordinator
+            if coordinator is None:
+                payload = self._scheme2_shadow_disabled(
+                    "UNCALIBRATED_RUNTIME_COORDINATOR"
+                )
+                payload.update(qbase_payload)
+                return payload
+            if (
+                coordinator.config.learning_enabled
+                or coordinator.config.residual_control_enabled
+                or coordinator.dcs_write_enabled
+            ):
+                payload = self._scheme2_shadow_disabled(
+                    "UNSAFE_RUNTIME_CONFIG_REJECTED"
+                )
+                payload.update(qbase_payload)
+                return payload
+
+            context = self._scheme2_context(result)
+            timestamp = result.get("date") or data.get("date")
             cycle = coordinator.process_cycle(
                 timestamp=timestamp,
-                qbase_effective=qbase,
-                qbase_inputs_valid=qbase is not None,
+                qbase_effective=qbase_result.qbase_effective,
+                qbase_inputs_valid=bool(qbase_result.valid),
                 outlet_so2=data.get("jyq_SO2"),
                 inlet_so2=data.get("yyq_SO2"),
-                ph=data.get("xst_PH"),
+                ph=data.get("xstjy_PH"),
                 so2_target=so2_target,
                 actual_supply_flow_feedback=data.get("xstshsjy_LL"),
                 condition_snapshot_version=context.condition_snapshot_version,
@@ -1587,9 +1602,9 @@ class ProcessForMapConsole:
                 "scheme2_residual_enabled": False,
                 "scheme2_dcs_write_enabled": False,
                 "scheme2_residual_mfac_hold": 0.0,
-                "scheme2_qbase_source": qbase_source or "UNAVAILABLE",
                 "scheme2_algorithm_target_supply_flow": target,
                 "scheme2_shadow": cycle.to_dict(),
+                **qbase_payload,
             }
         except Exception as exc:
             logging.error("Scheme2 Shadow sidecar failed closed: %s", exc)
