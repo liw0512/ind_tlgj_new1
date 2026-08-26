@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Scheme 2 condition-aware MFAC package.
 
-V1 starts as a sidecar to ``condition_model``.  Nothing in this package is
-wired into the existing online control path until the shadow/runtime phases.
+V1 starts as a sidecar to ``condition_model``.  Online runtime pieces are
+introduced incrementally and remain isolated from DCS write paths until their
+shadow contracts have been validated.
 """
 
 from .bootstrap_trainer import (
@@ -10,6 +11,14 @@ from .bootstrap_trainer import (
     MFACReplayConfig,
     build_bootstrap_evidence,
     finalize_bootstrap_profile,
+)
+from .continuous_target import (
+    CONTINUOUS_TARGET_SEMANTICS_VERSION,
+    COUNTERFACTUAL_SHADOW,
+    ONLINE_SHADOW,
+    ContinuousTargetConfig,
+    ContinuousTargetDecision,
+    ContinuousTargetPublisher,
 )
 from .context_resolver import MFACContextResolver
 from .episode_adapter import Scheme1EpisodeToMFACAdapter, adapt_episode_frame
@@ -29,6 +38,9 @@ from .mfac_schema import (
 
 __all__ = [
     "MFAC_SEMANTICS_VERSION",
+    "CONTINUOUS_TARGET_SEMANTICS_VERSION",
+    "COUNTERFACTUAL_SHADOW",
+    "ONLINE_SHADOW",
     "ActionResponseEvent",
     "DelayProfile",
     "MFACBootstrapProfile",
@@ -44,4 +56,7 @@ __all__ = [
     "MFACReplayConfig",
     "build_bootstrap_evidence",
     "finalize_bootstrap_profile",
+    "ContinuousTargetConfig",
+    "ContinuousTargetDecision",
+    "ContinuousTargetPublisher",
 ]
