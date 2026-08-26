@@ -218,6 +218,16 @@ class SupplyFlowTrackingMonitor:
                 self._active_started_at = now
                 self._within_tolerance_since = None
 
+        if (
+            self._active_event is not None
+            and bool(target_was_applied)
+            and dcs_target is not None
+        ):
+            self._active_event.dcs_applied_target_supply_flow = dcs_target
+            self._active_event.metadata[
+                "latest_dcs_applied_target_supply_flow"
+            ] = dcs_target
+
         if self._active_event is not None:
             if actual is None:
                 emitted.append(self._terminate_active("FEEDBACK_MISSING", now))
@@ -268,6 +278,11 @@ class SupplyFlowTrackingMonitor:
             event.metadata["within_tolerance_seconds"] = sustained
             if sustained >= float(self.config.required_sustain_seconds):
                 event.actual_flow_reached_time = _time_text(now)
+                if self._active_started_at is not None:
+                    event.metadata["execution_delay_seconds"] = self._elapsed_seconds(
+                        self._active_started_at,
+                        now,
+                    )
                 emitted.append(self._terminate_active("REACHED", now))
         else:
             self._within_tolerance_since = None
