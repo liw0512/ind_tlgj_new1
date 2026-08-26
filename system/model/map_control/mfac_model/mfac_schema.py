@@ -5,6 +5,12 @@ The first implementation deliberately keeps MFAC state outside
 ``condition_model``.  Every artifact is bound to the condition snapshot
 version that produced its context so later seven-day condition updates can be
 migrated explicitly instead of silently reusing stale semantics.
+
+Backward compatibility note
+---------------------------
+The legacy ``phi_live`` / ``confidence_live`` fields remain the canonical SO2
+channel fields.  Dual-response support adds an independent positive-direction
+pH channel without changing old bootstrap/runtime artifacts.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -153,18 +159,48 @@ class MFACBootstrapProfile:
 class MFACRuntimeState:
     condition_snapshot_version: str
     mfac_context_id: str
+    # Legacy fields are the SO2 channel and remain backward-compatible.
     phi_live: float
     confidence_live: float
     bias_live: float = 0.0
     valid_event_count: int = 0
     last_event_id: str = ""
     last_update_time: str = ""
+
+    # Independent pH response channel.  Positive phi is the physical direction:
+    # more slurry -> higher pH, less slurry -> lower pH.
+    phi_ph_live: Optional[float] = None
+    confidence_ph_live: float = 0.0
+    ph_valid_event_count: int = 0
+    ph_last_event_id: str = ""
+    ph_last_update_time: str = ""
+
     metadata: Dict[str, Any] = field(default_factory=dict)
     semantics_version: str = MFAC_SEMANTICS_VERSION
 
+    @property
+    def phi_so2_live(self) -> float:
+        return self.phi_live
+
+    @property
+    def confidence_so2_live(self) -> float:
+        return self.confidence_live
+
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        # Public aliases make the dual-channel contract explicit while keeping
+        # old serialized keys available to existing V1 consumers.
+        value["phi_so2_live"] = self.phi_live
+        value["confidence_so2_live"] = self.confidence_live
+        return value
 
     @classmethod
     def from_dict(cls, value: Dict[str, Any]) -> "MFACRuntimeState":
-        return cls(**dict(value))
+        data = dict(value)
+        if "phi_live" not in data and "phi_so2_live" in data:
+            data["phi_live"] = data["phi_so2_live"]
+        if "confidence_live" not in data and "confidence_so2_live" in data:
+            data["confidence_live"] = data["confidence_so2_live"]
+        data.pop("phi_so2_live", None)
+        data.pop("confidence_so2_live", None)
+        return cls(**data)
