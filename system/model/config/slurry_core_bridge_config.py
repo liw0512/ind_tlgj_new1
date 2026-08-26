@@ -1,9 +1,9 @@
-"""p4pc -> condition_model -> slurry_policy_model bridge configuration.
+"""P4PC -> condition_model -> MFAC bridge configuration.
 
-This file contains only fixed project wiring: script locations, fixed interface
-CSV paths, snapshot roots and the integrated active-version pointer. Standard
-process signal names are fixed in ``standard_fields.py`` and are not configured
-again in this bridge.
+The public constant name ``SLURRY_CORE_BRIDGE_CONFIG`` and several dictionary
+keys are retained temporarily because ``Process4MapControl`` still consumes
+those names.  Their targets now point exclusively to ``mfac_model``; no legacy
+``slurry_policy_model`` trainer, runtime policy, or activation script is used.
 """
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
-POLICY_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "slurry_policy_model"
+MFAC_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "mfac_model"
 MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
-POLICY_OUTPUT_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "slurry_policy_model" / "slurry_policy_model_output"
+MFAC_OUTPUT_ROOT = MFAC_ROOT / "mfac_model_output"
 
 SLURRY_CORE_BRIDGE_CONFIG = {
     "target_column": TARGET_SO2_COLUMN,
     "initial_version": "v001",
+    "second_module_backend": "MFAC",
 
     # 第一模块训练入口与产物。
     "condition_initial_script": str(CONDITION_ROOT / "initial_condition_builder.py"),
@@ -30,12 +31,18 @@ SLURRY_CORE_BRIDGE_CONFIG = {
     "initial_condition_output_csv": str(MODEL_CSV_ROOT / "Initial_train_after_condition.csv"),
     "incremental_condition_output_csv": str(MODEL_CSV_ROOT / "Incremental_train_after_condition.csv"),
 
-    # 第二模块训练、同版本激活与在线配置。
-    "slurry_policy_initial_script": str(POLICY_ROOT / "initial_slurry_policy_trainer.py"),
-    "slurry_policy_incremental_script": str(POLICY_ROOT / "incremental_slurry_policy_trainer.py"),
-    "slurry_policy_activate_script": str(POLICY_ROOT / "activate_policy_version.py"),
-    # 第二模块唯一配置入口；P4PC、离线训练、激活和在线均使用同一文件。
-    "slurry_policy_config": str(POLICY_ROOT / "slurry_policy_config.py"),
-    "slurry_policy_output_root": str(POLICY_OUTPUT_ROOT),
-    "active_version_file": str(POLICY_OUTPUT_ROOT / "active_version.json"),
+    # Legacy key names below are consumed by P4PC, but all paths are MFAC.
+    "slurry_policy_initial_script": str(MFAC_ROOT / "initial_mfac_version_builder.py"),
+    "slurry_policy_incremental_script": str(MFAC_ROOT / "incremental_mfac_version_builder.py"),
+    "slurry_policy_activate_script": str(MFAC_ROOT / "activate_mfac_version.py"),
+    "slurry_policy_config": str(MFAC_ROOT / "mfac_primary_config.py"),
+    "slurry_policy_output_root": str(MFAC_OUTPUT_ROOT),
+    "active_version_file": str(MFAC_OUTPUT_ROOT / "active_version.json"),
+
+    # New canonical aliases for code migrated away from the legacy key names.
+    "mfac_initial_script": str(MFAC_ROOT / "initial_mfac_version_builder.py"),
+    "mfac_incremental_script": str(MFAC_ROOT / "incremental_mfac_version_builder.py"),
+    "mfac_activate_script": str(MFAC_ROOT / "activate_mfac_version.py"),
+    "mfac_config": str(MFAC_ROOT / "mfac_primary_config.py"),
+    "mfac_output_root": str(MFAC_OUTPUT_ROOT),
 }
