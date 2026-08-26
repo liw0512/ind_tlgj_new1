@@ -135,8 +135,9 @@ mfac_context_id match
 主循环每周期使用当前 `yyq_SO2`、在线 SO2 target、`yyq_LL` 和
 `xstshsjy_MD` 动态计算 Qbase；不会用 `xstshsjy_LL`、Scheme1
 `current_flow`、`xst_base_flow` 或 `target_final_flow` 作为算法目标 fallback。
-密度—含固量关系的截距符号和数值尺度仍待现场标定表/人工算例最终确认，
-因此当前计算结果只允许 Shadow 审计，不得作为开启闭环的依据。
+密度—含固量关系已于 2026-08-26 确认为
+`omega = 0.0013 * rho - 1.3`，并以质量分数小数形式代入。当前仍只允许
+Shadow 审计；tracking/response 参数、DCS readback 和控制权限仍需独立验收。
 即使输入数据声称 target 已应用，当前主循环接点也固定传入
 `target_was_applied=false`，直到正式 DCS application/readback adapter 单独评审接入。
 

@@ -36,6 +36,7 @@ class DynamicQbaseCalculatorTest(unittest.TestCase):
             "SAFETY_SUPERVISION_ONLY",
         )
         self.assertEqual(result.metadata["control_permission"], "SHADOW_ONLY")
+        self.assertEqual(result.metadata["calibration_status"], "CONFIRMED")
 
     def test_runtime_target_overrides_process_field(self):
         process = dict(self.process, outlet_so2_target=29.0)

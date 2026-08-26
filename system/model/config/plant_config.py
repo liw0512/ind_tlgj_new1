@@ -50,14 +50,14 @@ PLANT_CONFIG = {
             "so2_molar_mass": 64.0,
             "limestone_effective_fraction": 0.9,
             "density_missing_policy": "BLOCK",
-            # “方案2”知识库仍要求现场标定表/人工算例最终确认截距符号和
-            # omega尺度。因此配置保留已实现的候选关系，但显式限制为Shadow。
+            # 2026-08-26 已由用户最终确认：omega=0.0013*rho-1.3，
+            # 且omega以质量分数小数形式代入公式（如rho=1200 -> 0.26）。
             "solid_fraction_curve": {
                 "slope": 0.0013,
                 "intercept": -1.3,
             },
             "solid_fraction_valid_range": [0.05, 0.30],
-            "calibration_status": "UNCONFIRMED_SHADOW_ONLY",
+            "calibration_status": "CONFIRMED",
             "ca_s_curve": [
                 [4.8, 1.05],
                 [5.0, 1.1],
