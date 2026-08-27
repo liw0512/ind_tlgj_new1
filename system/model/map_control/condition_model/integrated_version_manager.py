@@ -110,24 +110,16 @@ class IntegratedVersionPointer:
 
 
 def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
-    """优先读取 canonical ``mfac`` block，并兼容旧 MFAC 指针格式。
-
-    Compatibility parsing does not imply execution of the removed legacy
-    second module. The normalized object always exposes MFAC as module 2.
-    """
-
+    """优先读取 canonical ``mfac`` block，并兼容旧 MFAC 指针格式。"""
     if not isinstance(value, dict):
         raise IntegratedVersionError("active_version.json 根对象必须是字典")
 
     condition_block = value.get("condition")
     if not isinstance(condition_block, dict):
         condition_block = {}
-
     mfac_block = value.get("mfac")
     if not isinstance(mfac_block, dict):
         mfac_block = {}
-
-    # Input-only compatibility for active pointers emitted during migration.
     legacy_block = value.get("slurry_policy")
     if not isinstance(legacy_block, dict):
         legacy_block = {}
@@ -224,7 +216,7 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
 
 
 class IntegratedVersionManager:
-    """轮询统一版本指针并准备第一模块候选快照。"""
+    """轮询统一版本指针并准备 condition + MFAC 原子候选版本。"""
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = dict(config or {})
@@ -244,6 +236,9 @@ class IntegratedVersionManager:
         )
         self.verify_condition_hash = bool(
             self.config.get("verify_condition_snapshot_hash", True)
+        )
+        self.verify_mfac_hash = bool(
+            self.config.get("verify_mfac_manifest_hash", True)
         )
         self.keep_current_on_failure = bool(
             self.config.get("keep_current_version_on_failure", True)
@@ -295,10 +290,71 @@ class IntegratedVersionManager:
         self._switch_error = None
         return pointer
 
+    @staticmethod
+    def _mfac_manifest_path(pointer: IntegratedVersionPointer) -> Path:
+        path = pointer.mfac_snapshot_path
+        if path.is_dir():
+            path = path / "manifest.json"
+        return path
+
+    def prepare_mfac(self, pointer: IntegratedVersionPointer) -> Dict[str, Any]:
+        """Validate the MFAC artifact paired with the condition candidate."""
+        path = self._mfac_manifest_path(pointer)
+        if not path.exists() or not path.is_file():
+            raise IntegratedVersionError("MFAC候选 manifest 不存在: %s" % path)
+        if (
+            self.verify_mfac_hash
+            and pointer.mfac_manifest_sha256
+            and _sha256_file(path) != pointer.mfac_manifest_sha256
+        ):
+            raise IntegratedVersionError("MFAC manifest 哈希与激活指针不一致")
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except Exception as exc:
+            raise IntegratedVersionError("MFAC manifest 读取失败: %s" % exc)
+        if not isinstance(manifest, dict):
+            raise IntegratedVersionError("MFAC manifest 根对象必须是字典")
+
+        manifest_version = _valid_version(
+            manifest.get("version"), "mfac_manifest.version"
+        )
+        source_condition = _valid_version(
+            manifest.get("condition_snapshot_version"),
+            "mfac_manifest.condition_snapshot_version",
+        )
+        if manifest_version != pointer.mfac_version:
+            raise IntegratedVersionError(
+                "MFAC manifest版本 %s 与激活版本 %s 不一致"
+                % (manifest_version, pointer.mfac_version)
+            )
+        if source_condition != pointer.condition_version:
+            raise IntegratedVersionError(
+                "MFAC manifest绑定condition版本 %s 与激活condition版本 %s 不一致"
+                % (source_condition, pointer.condition_version)
+            )
+        artifact_type = str(manifest.get("artifact_type") or "").strip()
+        if artifact_type and artifact_type != "MFAC_PRIMARY_MANIFEST":
+            raise IntegratedVersionError(
+                "MFAC manifest artifact_type 无效: %s" % artifact_type
+            )
+        if bool(manifest.get("legacy_second_module_present", False)):
+            raise IntegratedVersionError("MFAC manifest 不得声明旧第二模块存在")
+        for field_name in ("learn_enabled", "residual_enabled", "dcs_write_enabled"):
+            if bool(manifest.get(field_name, False)):
+                raise IntegratedVersionError(
+                    "当前激活阶段 MFAC manifest 禁止 %s=true" % field_name
+                )
+        return manifest
+
     def prepare_condition(
         self,
         pointer: IntegratedVersionPointer,
     ) -> Tuple[ConditionSnapshot, ConditionModelConfig]:
+        # Atomic pair preparation: MFAC artifact must validate before the
+        # candidate condition can be accepted into the integrated switch.
+        self.prepare_mfac(pointer)
+
         path = pointer.condition_snapshot_path
         if not path.exists() or not path.is_file():
             raise IntegratedVersionError(
@@ -382,7 +438,6 @@ class IntegratedVersionManager:
             "integrated_active_version": active_version,
             "condition_loaded_version": condition_version,
             "mfac_loaded_version": mfac_version,
-            # Temporary output compatibility only.
             "slurry_policy_loaded_version": mfac_version,
             "version_consistent": consistent,
             "version_switch_state": self._switch_state,
