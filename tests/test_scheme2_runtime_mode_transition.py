@@ -58,13 +58,8 @@ class Scheme2RuntimeModeTransitionTest(unittest.TestCase):
                 "phi_upper_bound": 1.0,
                 "max_single_update_abs": 0.1,
             },
-            "ph_arbitration": {
-                "operating_min": 5.4,
-                "operating_max": 6.2,
-                "safe_min": 5.0,
-                "safe_max": 6.5,
-                "guard_band": 0.1,
-            },
+            # Plant-owned pH ranges/guard band are derived by the builder.
+            "ph_arbitration": {},
         }
 
     @staticmethod
