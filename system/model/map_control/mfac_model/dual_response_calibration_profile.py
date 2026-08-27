@@ -51,6 +51,13 @@ _REQUIRED_RESPONSE_KEYS: Tuple[str, ...] = (
     "min_response_samples",
 )
 
+_DELAY_PROFILE_KEYS: Tuple[str, ...] = (
+    "onset_p50_seconds",
+    "onset_p90_seconds",
+    "response_p50_seconds",
+    "response_p90_seconds",
+)
+
 
 def _finite(value: Any) -> Optional[float]:
     try:
@@ -86,6 +93,25 @@ def _validate_response_config(channel: str, value: Mapping[str, Any]) -> None:
             "%s CALIBRATED response config is invalid: %s"
             % (str(channel).upper(), exc)
         ) from exc
+
+
+def _validate_delay_profile(value: DelayProfile) -> None:
+    parsed: Dict[str, float] = {}
+    for key in _DELAY_PROFILE_KEYS:
+        number = _finite(getattr(value, key, None))
+        if number is None or number < 0.0:
+            raise ValueError(
+                "CALIBRATED channel requires finite nonnegative %s" % key
+            )
+        parsed[key] = number
+    if parsed["onset_p90_seconds"] < parsed["onset_p50_seconds"]:
+        raise ValueError("delay onset P90 cannot be below P50")
+    if parsed["response_p90_seconds"] < parsed["response_p50_seconds"]:
+        raise ValueError("response timing P90 cannot be below P50")
+    if parsed["response_p50_seconds"] < parsed["onset_p50_seconds"]:
+        raise ValueError("response P50 cannot precede onset P50")
+    if parsed["response_p90_seconds"] < parsed["onset_p90_seconds"]:
+        raise ValueError("response P90 cannot precede onset P90")
 
 
 @dataclass(frozen=True)
@@ -137,6 +163,7 @@ class DualResponseChannelCalibration:
         if self.status == CHANNEL_CALIBRATED:
             if not _valid_confidence(self.confidence):
                 raise ValueError("CALIBRATED channel requires reviewed confidence")
+            _validate_delay_profile(self.delay_profile)
             _validate_response_config(channel, self.response_config)
 
     @property
@@ -283,6 +310,7 @@ def build_calibration_profile_from_dual_bootstrap(
         metadata={
             "bootstrap_semantics_version": bundle.so2.semantics_version,
             "bootstrap_status": bundle.status,
+            "bootstrap_delay_profile_is_evidence_not_reviewed_calibration": True,
         },
     )
     ph = DualResponseChannelCalibration(
