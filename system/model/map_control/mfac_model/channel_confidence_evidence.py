@@ -2,10 +2,10 @@
 """Review-only confidence evidence for Scheme-2 calibrated response channels.
 
 A confidence value is not guessed from one trial and is not a probability. This
-module summarizes already-reviewed cohort consistency, trial-count/day
-sufficiency and observed-timing coverage into an auditable conservative review
-candidate. A human channel-calibration review must still explicitly choose the
-final confidence value.
+module summarizes an adequate quantitative cohort *plus the human-approved
+bootstrap event copies*, trial-count/day sufficiency and observed-timing coverage
+into an auditable conservative review candidate. A human channel-calibration
+review must still explicitly choose the final confidence value.
 
 No runtime permission is granted here.
 """
@@ -13,8 +13,9 @@ No runtime permission is granted here.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 import math
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from .dual_response_calibration_profile import (
     CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION,
@@ -24,6 +25,7 @@ from .local_gain_cohort_review import (
     LocalGainCohortConsistencyConfig,
     LocalGainCohortReview,
 )
+from .mfac_schema import ActionResponseEvent
 
 
 CHANNEL_CONFIDENCE_EVIDENCE_VERSION = (
@@ -50,11 +52,7 @@ def _sufficiency(actual: int, required: Optional[int]) -> float:
 
 
 def _consistency_score(metric: float, reviewed_limit: float) -> float:
-    """Monotone audit score: 1 at zero dispersion, 0.5 at reviewed limit.
-
-    This is deliberately named a score rather than a probability. It is only a
-    conservative input to human confidence review.
-    """
+    """Monotone audit score: 1 at zero dispersion, 0.5 at reviewed limit."""
     metric_value = _finite(metric)
     limit_value = _finite(reviewed_limit)
     if metric_value is None or metric_value < 0.0:
@@ -69,6 +67,16 @@ def _same(left: float, right: float) -> bool:
     return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-12)
 
 
+def _iso_timestamp(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("cohort review time is required")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
+    except ValueError as exc:
+        raise ValueError("cohort review time must be a valid ISO timestamp") from exc
+
+
 @dataclass(frozen=True)
 class ChannelConfidenceEvidence:
     evidence_id: str
@@ -76,6 +84,9 @@ class ChannelConfidenceEvidence:
     condition_snapshot_version: str
     mfac_context_id: str
     cohort_review_id: str
+    cohort_bootstrap_review_approved: bool
+    cohort_review_reviewer_id: str
+    cohort_review_time: str
     timing_evidence_id: str
     cohort_event_ids: Tuple[str, ...]
     timing_event_ids: Tuple[str, ...]
@@ -108,10 +119,15 @@ class ChannelConfidenceEvidence:
             "condition_snapshot_version",
             "mfac_context_id",
             "cohort_review_id",
+            "cohort_review_reviewer_id",
+            "cohort_review_time",
             "timing_evidence_id",
         ):
             if not str(getattr(self, name) or "").strip():
                 raise ValueError("%s is required" % name)
+        _iso_timestamp(self.cohort_review_time)
+        if self.cohort_bootstrap_review_approved is not True:
+            raise ValueError("confidence evidence requires human cohort bootstrap approval")
         if str(self.channel or "").upper() not in {"SO2", "PH"}:
             raise ValueError("confidence channel must be SO2 or PH")
         if self.status != "READY_FOR_CONFIDENCE_REVIEW":
@@ -149,11 +165,7 @@ class ChannelConfidenceEvidence:
         if int(self.independent_days) > int(self.valid_event_count):
             raise ValueError("independent_days cannot exceed valid_event_count")
 
-        numeric_nonnegative = (
-            "phi_relative_mad",
-            "phi_max_relative_deviation",
-        )
-        for name in numeric_nonnegative:
+        for name in ("phi_relative_mad", "phi_max_relative_deviation"):
             number = _finite(getattr(self, name))
             if number is None or number < 0.0:
                 raise ValueError("%s must be finite and >= 0" % name)
@@ -179,12 +191,9 @@ class ChannelConfidenceEvidence:
 
         expected_count = _sufficiency(self.valid_event_count, self.required_valid_trials)
         expected_days = _sufficiency(self.independent_days, self.required_independent_days)
-        expected_timing = _clip01(
-            float(len(timing_ids)) / float(self.valid_event_count)
-        )
+        expected_timing = _clip01(float(len(timing_ids)) / float(self.valid_event_count))
         expected_mad = _consistency_score(
-            self.phi_relative_mad,
-            self.reviewed_phi_relative_mad_limit,
+            self.phi_relative_mad, self.reviewed_phi_relative_mad_limit
         )
         expected_deviation = _consistency_score(
             self.phi_max_relative_deviation,
@@ -216,20 +225,49 @@ class ChannelConfidenceEvidence:
         return value
 
 
+def _validate_approved_events(
+    review: LocalGainCohortReview,
+    approved_events: Iterable[ActionResponseEvent],
+) -> Tuple[Tuple[str, ...], str, str]:
+    events = list(approved_events)
+    ids = tuple(str(event.event_id or "") for event in events)
+    if len(ids) != len(review.event_ids) or set(ids) != set(review.event_ids):
+        raise ValueError("human-approved cohort event set does not match quantitative review")
+    reviewers = set()
+    review_times = set()
+    for event in events:
+        metadata = dict(event.metadata or {})
+        if event.learning_eligible is not True:
+            raise ValueError("cohort-approved event must be bootstrap learning-eligible")
+        if metadata.get("cohort_bootstrap_review_approved") is not True:
+            raise ValueError("cohort-approved event is missing human bootstrap approval")
+        if metadata.get("offline_bootstrap_evidence_allowed") is not True:
+            raise ValueError("cohort-approved event is not allowed for offline bootstrap")
+        if metadata.get("automatic_online_adaptation_allowed") is not False:
+            raise ValueError("cohort-approved event cannot allow automatic online adaptation")
+        if str(metadata.get("cohort_review_id") or "") != review.review_id:
+            raise ValueError("cohort-approved event review ID mismatch")
+        reviewer = str(metadata.get("cohort_review_reviewer_id") or "").strip()
+        review_time = str(metadata.get("cohort_review_time") or "").strip()
+        if not reviewer or not review_time:
+            raise ValueError("cohort-approved event is missing reviewer/time")
+        reviewers.add(reviewer)
+        review_times.add(_iso_timestamp(review_time))
+    if len(reviewers) != 1 or len(review_times) != 1:
+        raise ValueError("cohort-approved event copies must share one reviewer/time")
+    return ids, next(iter(reviewers)), next(iter(review_times))
+
+
 def build_channel_confidence_evidence(
     cohort_review: LocalGainCohortReview,
     *,
+    approved_events: Iterable[ActionResponseEvent],
     channel: str,
     consistency_config: LocalGainCohortConsistencyConfig,
     timing_evidence: Any,
     evidence_id: str,
 ) -> ChannelConfidenceEvidence:
-    """Build a review candidate from already-reviewed evidence facts.
-
-    ``timing_evidence`` is intentionally duck-typed to avoid making this module
-    the authority for timing extraction. Its semantics and bindings are still
-    validated explicitly.
-    """
+    """Build a review candidate from quantitatively and human-reviewed evidence."""
 
     channel_name = str(channel or "").upper()
     if channel_name not in {"SO2", "PH"}:
@@ -238,6 +276,11 @@ def build_channel_confidence_evidence(
         raise ValueError("cohort must be quantitatively adequate before confidence review")
     if not cohort_review.adequate_for_bootstrap_review:
         raise ValueError("cohort adequate_for_bootstrap_review must be true")
+
+    approved_ids, cohort_reviewer, cohort_review_time = _validate_approved_events(
+        cohort_review, approved_events
+    )
+
     if getattr(timing_evidence, "semantics_version", None) != (
         OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION
     ):
@@ -252,6 +295,8 @@ def build_channel_confidence_evidence(
         raise ValueError("timing/cohort MFAC context mismatch")
 
     cohort_ids = tuple(str(value) for value in cohort_review.event_ids)
+    if set(approved_ids) != set(cohort_ids):
+        raise ValueError("approved cohort IDs differ from quantitative cohort IDs")
     timing_ids = tuple(str(value) for value in getattr(timing_evidence, "event_ids", ()))
     if not timing_ids or not set(timing_ids).issubset(set(cohort_ids)):
         raise ValueError("timing evidence must come from the reviewed cohort")
@@ -302,6 +347,9 @@ def build_channel_confidence_evidence(
         condition_snapshot_version=cohort_review.condition_snapshot_version,
         mfac_context_id=cohort_review.mfac_context_id,
         cohort_review_id=cohort_review.review_id,
+        cohort_bootstrap_review_approved=True,
+        cohort_review_reviewer_id=cohort_reviewer,
+        cohort_review_time=cohort_review_time,
         timing_evidence_id=str(getattr(timing_evidence, "evidence_id", "")),
         cohort_event_ids=cohort_ids,
         timing_event_ids=timing_ids,
@@ -330,6 +378,8 @@ def build_channel_confidence_evidence(
             "consistency_score_definition": "1/(1+observed_metric/reviewed_limit)",
             "candidate_is_not_probability": True,
             "candidate_is_not_runtime_confidence": True,
+            "quantitative_cohort_review_id": cohort_review.review_id,
+            "human_cohort_bootstrap_review_approved": True,
             "explicit_human_confidence_review_required": True,
             "automatic_online_adaptation_allowed": False,
             "normal_runtime_activation_allowed": False,
