@@ -1,7 +1,8 @@
 {
-  "semantics_version": "SCHEME2_LOCAL_STEP_IDENTIFICATION_V2_BASELINE_STABILITY",
+  "semantics_version": "SCHEME2_LOCAL_STEP_IDENTIFICATION_V3_PARAMETER_OWNERSHIP",
   "trial_protocol_version": "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V2_SINGLE_ACTION_BINDING",
   "trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
+  "observation_profile_id": "MFAC-LOCAL-STEP-OBSERVATION-DESIGN-5553E529-20260827",
   "design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
   "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
   "source_noise_audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
@@ -11,20 +12,53 @@
   "automatic_escalation_allowed": false,
   "dcs_write_enabled": false,
   "learning_permission": false,
+  "parameter_ownership": {
+    "identification_design": [
+      "step_up_m3_h",
+      "max_abs_step_error_m3_h",
+      "max_actual_flow_baseline_range_m3_h",
+      "max_abs_actual_minus_qbase",
+      "max_abs_qbase_drift_m3_h",
+      "max_relative_qbase_drift",
+      "max_outlet_so2_baseline_range_mg_nm3",
+      "ph_lower_margin_inside_operating",
+      "ph_upper_margin_inside_operating",
+      "max_sample_gap_seconds",
+      "minimum_so2_observation_seconds",
+      "minimum_ph_observation_seconds",
+      "min_candidate_interval_seconds",
+      "min_quiet_seconds",
+      "max_abs_inlet_so2_change",
+      "max_ph_baseline_range",
+      "outlet_so2_headroom_to_safe_max",
+      "min_abs_delta_so2",
+      "min_abs_delta_ph"
+    ],
+    "observation_profile": [
+      "tracking target-change deadband/reach tolerance/sustain/execution timeout",
+      "response baseline/delay/observation/measurement windows",
+      "monitor sample gap and sample-count rules"
+    ],
+    "trial_matrix": [
+      "max_step_up_m3_h",
+      "required_valid_trials",
+      "required_independent_days",
+      "level review status"
+    ],
+    "shared_safety_check": "max_sample_gap_seconds is repeated defensively between trial safety and observation monitors, but LocalStepSessionReadiness requires exact equality"
+  },
   "evidence_gap": {
     "historical_local_gain": "INSUFFICIENT_EVIDENCE",
     "low_flow_staircase_support": "OUT_OF_HISTORICAL_SUPPORT",
     "pulse_recovery_to_quiet_time": "REVIEW_CANDIDATE_NOT_REVIEWED",
     "minimum_effect_multiplier": "REVIEW_REQUIRED",
     "inlet_so2_5min_stability": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
-    "qbase_proximity_without_historical_target": "UNIDENTIFIED"
+    "qbase_proximity_without_historical_target": "UNIDENTIFIED",
+    "observation_profile": "INCOMPLETE_REVIEW_REQUIRED"
   },
   "review_candidate_parameters": {
     "step_up_m3_h": 2.0,
-    "max_step_up_m3_h": 2.0,
-    "reach_tolerance_m3_h": 0.5,
     "max_abs_step_error_m3_h": 0.5,
-    "baseline_seconds": 300.0,
     "max_actual_flow_baseline_range_m3_h": 1.0,
     "max_abs_actual_minus_qbase": null,
     "max_abs_qbase_drift_m3_h": 2.0,
@@ -32,11 +66,9 @@
     "max_outlet_so2_baseline_range_mg_nm3": 2.0,
     "ph_lower_margin_inside_operating": 0.05,
     "ph_upper_margin_inside_operating": 0.05,
-    "action_timeout_seconds": 300.0,
     "max_sample_gap_seconds": 30.0,
     "minimum_so2_observation_seconds": 600.0,
     "minimum_ph_observation_seconds": 900.0,
-    "effect_timeout_seconds": 1800.0,
     "min_candidate_interval_seconds": 3600.0,
     "min_quiet_seconds": 2700.0,
     "max_abs_inlet_so2_change": null,
@@ -45,24 +77,19 @@
     "min_abs_delta_so2": null,
     "min_abs_delta_ph": null,
     "notes": [
-      "2.0 m3/h is the inherited first-phase manual identification candidate from the 2026-08-25 design; it is not a control step limit.",
-      "0.5 m3/h max_abs_step_error is only a review candidate inherited from the prior reach-tolerance candidate.",
-      "30 s max_sample_gap is supported by the 10 s cadence audit: only 91 of 298874 adjacent intervals exceed 30 s; it remains a review candidate, not a reviewed value.",
-      "0.05 pH baseline range is supported as approximately the median 2-minute pH range among stable-flow windows with outlet-SO2 first-last change <=2 mg/Nm3; it remains a review candidate.",
-      "600 s is retained as an SO2 early-observation floor; dual-channel closure now requires at least 900 s so the pH P90 peak candidate near 886 s is not truncated.",
-      "1800 s remains an observation timeout candidate only; it is not a PendingDoseGuard response-memory constant.",
-      "2700 s min_quiet is a REVIEW_CANDIDATE rounded above the pulse-end-to-recovery-band P95 ~=2450 s from the separate recovery audit; baseline stability gates must still pass before another test.",
-      "A separate 300-second baseline audit found only three qualifying independent windows, so max_abs_inlet_so2_change remains null rather than publishing unstable quantiles.",
-      "min_abs_delta_SO2/pH remain null because the CSV identifies an empirical noise floor but does not choose the engineering safety multiplier above that floor.",
-      "Fields left null still require plant review or new evidence."
+      "2.0 m3/h is the inherited first-phase manual identification candidate; it is not the runtime planner step cap.",
+      "Tracking reach tolerance, response baseline/window/delay parameters and action timeout are owned by the separate Observation Profile and are no longer duplicated here.",
+      "Trial-matrix max_step and trial-count/day requirements are owned by the Trial Matrix and are no longer duplicated here.",
+      "30 s max_sample_gap remains here only as a trial-safety check; readiness requires equality with all observation-monitor gap settings.",
+      "2700 s min_quiet is a REVIEW_CANDIDATE rounded above pulse-end-to-recovery-band P95 ~=2450 s; all fresh baseline gates must still pass.",
+      "A 300-second baseline audit found only three qualifying independent windows, so max_abs_inlet_so2_change remains null.",
+      "min_abs_delta_SO2/pH remain null because the CSV identifies a noise floor but does not choose the confidence multiplier.",
+      "Fields left null require plant review or new evidence."
     ]
   },
   "reviewed_parameters": {
     "step_up_m3_h": null,
-    "max_step_up_m3_h": null,
-    "reach_tolerance_m3_h": null,
     "max_abs_step_error_m3_h": null,
-    "baseline_seconds": null,
     "max_actual_flow_baseline_range_m3_h": null,
     "max_abs_actual_minus_qbase": null,
     "max_abs_qbase_drift_m3_h": null,
@@ -70,11 +97,9 @@
     "max_outlet_so2_baseline_range_mg_nm3": null,
     "ph_lower_margin_inside_operating": null,
     "ph_upper_margin_inside_operating": null,
-    "action_timeout_seconds": null,
     "max_sample_gap_seconds": null,
     "minimum_so2_observation_seconds": null,
     "minimum_ph_observation_seconds": null,
-    "effect_timeout_seconds": null,
     "min_candidate_interval_seconds": null,
     "min_quiet_seconds": null,
     "max_abs_inlet_so2_change": null,
@@ -124,7 +149,7 @@
     "ph_half_window_median_difference_p99": 0.0346,
     "outlet_so2_half_window_median_difference_p95_mg_nm3": 1.4098,
     "outlet_so2_half_window_median_difference_p99_mg_nm3": 2.1638,
-    "note": "Pending rise timing, pulse recovery, planner HOLD, 5-minute baseline evidence and noise are separate evidence classes. None fills reviewed identification parameters automatically."
+    "note": "Pending rise, pulse recovery, Planner HOLD, observation-monitor design, trial-matrix design and noise evidence have separate parameter ownership."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
@@ -141,18 +166,6 @@
     "inlet SO2 and outlet SO2 baseline sufficiently stable",
     "proposed positive step remains inside plant supply-flow bounds"
   ],
-  "in_trial_abort_recommendations": [
-    "data quality invalid",
-    "FAST becomes active",
-    "equipment changes",
-    "condition snapshot or MFAC context changes",
-    "an unexpected target change occurs",
-    "pH leaves the plant operating envelope",
-    "outlet SO2 reaches the reviewed abort headroom threshold",
-    "Qbase drift exceeds the reviewed trial limit",
-    "inlet SO2 change exceeds the reviewed trial limit",
-    "sample gap exceeds the reviewed maximum"
-  ],
   "dual_response_success_criteria": [
     "SO2 response status is COMPLETED",
     "pH response status is COMPLETED",
@@ -164,9 +177,8 @@
     "SO2 response observation meets the reviewed minimum duration",
     "pH response observation meets the reviewed minimum duration",
     "pH remains inside the operating envelope throughout the monitored trial",
-    "phi_so2_event = delta_SO2/delta_Q_actual is negative",
-    "phi_ph_event = delta_pH/delta_Q_actual is positive",
-    "SO2 and pH response magnitudes exceed separately reviewed minimum-effect thresholds",
+    "phi_so2_event is negative and phi_ph_event is positive",
+    "SO2 and pH effects exceed separately reviewed minimum-effect thresholds",
     "Qbase and inlet SO2 drift remain inside reviewed evidence limits"
   ],
   "evidence_promotion_contract": {
@@ -191,10 +203,9 @@
   },
   "notes": [
     "No numeric value from unit tests is a site calibration default.",
-    "Review candidates are inherited engineering or data-derived candidates, not reviewed plant parameters.",
-    "The +2.0 m3/h identification stimulus is not the runtime planner max_step_up and is never a 10-second recurrent increment.",
+    "Identification Design, Observation Profile and Trial Matrix must all be reviewed and cross-profile consistent before a session is considered ready.",
+    "The +2.0 m3/h identification stimulus is never a 10-second recurrent increment.",
     "PendingDoseGuard has no recovery-memory authority; trial quiet time is separately reviewed from pulse recovery evidence.",
-    "A completed test must pass actual-flow tracking, independent SO2/pH response attribution and the trial evidence gate before it can inform phi.",
     "Production remains LEARN=0, Residual=0, DCS write=off."
   ]
 }
