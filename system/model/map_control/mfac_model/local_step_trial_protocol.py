@@ -2,8 +2,8 @@
 """Manual-only closed-loop protocol for controlled LOCAL_GAIN identification.
 
 The protocol deliberately reuses the existing actual-flow tracking and
-independent SO2/pH response events.  It does not issue a command, replace the
-normal MFAC target, write DCS, or update online ``phi``.  A successful trial is
+independent SO2/pH response events. It does not issue a command, replace the
+normal MFAC target, write DCS, or update online ``phi``. A successful trial is
 only an evidence candidate until a second explicit human evidence review
 promotes it to a canonical ``ActionResponseEvent``.
 """
@@ -23,7 +23,7 @@ from .process_response import ProcessResponseEvent
 
 
 LOCAL_STEP_TRIAL_PROTOCOL_VERSION = (
-    "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V1_MANUAL_REVIEW"
+    "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V2_SINGLE_ACTION_BINDING"
 )
 
 
@@ -53,6 +53,13 @@ def _elapsed_seconds(start: Any, end: Any) -> Optional[float]:
         return max(0.0, (_timestamp(end) - _timestamp(start)).total_seconds())
     except (TypeError, ValueError):
         return None
+
+
+def _later_time_text(left: str, right: str) -> str:
+    try:
+        return max((_timestamp(left), _timestamp(right))).isoformat()
+    except (TypeError, ValueError):
+        return max(str(left or ""), str(right or ""))
 
 
 @dataclass(frozen=True)
@@ -128,7 +135,7 @@ def approve_local_step_proposal(
 ) -> LocalStepTrialPlan:
     """Convert one proposal into an approved *manual* trial plan.
 
-    This function records approval only.  It has no actuator or DCS side effect.
+    This function records approval only. It has no actuator or DCS side effect.
     """
     if not bool(human_approved):
         raise ValueError("explicit human approval is required")
@@ -366,6 +373,8 @@ class LocalStepTrialOutcome:
     qbase_before: Optional[float] = None
     qbase_after: Optional[float] = None
     qbase_drift: Optional[float] = None
+    so2_target: Optional[float] = None
+    inlet_so2_change: Optional[float] = None
     so2_before: Optional[float] = None
     so2_after: Optional[float] = None
     ph_before: Optional[float] = None
@@ -396,6 +405,8 @@ def evaluate_local_step_trial(
     """Evaluate one manually executed trial; never grants runtime learning."""
     reasons = []
     insufficient = []
+    if safety.trial_id != plan.trial_id:
+        reasons.append("SAFETY_TRIAL_ID_MISMATCH")
     if safety.abort_recommended:
         reasons.append("TRIAL_ABORT_RECOMMENDED")
     if so2_response.status != "COMPLETED":
@@ -534,6 +545,8 @@ def evaluate_local_step_trial(
         qbase_before=qbase_before,
         qbase_after=qbase_after,
         qbase_drift=qbase_drift,
+        so2_target=_finite(so2_response.so2_target),
+        inlet_so2_change=inlet_change,
         so2_before=_finite(so2_response.so2_before),
         so2_after=_finite(so2_response.so2_after),
         ph_before=_finite(ph_response.ph_before),
@@ -548,6 +561,8 @@ def evaluate_local_step_trial(
         metadata={
             "manual_evidence_review_required": True,
             "automatic_online_adaptation_allowed": False,
+            "return_to_baseline_learning_allowed": False,
+            "manual_return_target_supply_flow": plan.manual_return_target_supply_flow,
             "safety_decision": safety.to_dict(),
             "so2_response_event_id": so2_response.response_event_id,
             "ph_response_event_id": ph_response.response_event_id,
@@ -594,7 +609,7 @@ def promote_local_step_evidence(
         action_start_time=outcome.action_start_time,
         action_reached_time=outcome.actual_flow_reached_time,
         response_start_time=outcome.so2_response_start_time,
-        response_end_time=max(
+        response_end_time=_later_time_text(
             outcome.so2_response_end_time,
             outcome.ph_response_end_time,
         ),
@@ -605,12 +620,14 @@ def promote_local_step_evidence(
         qbase_before=outcome.qbase_before,
         qbase_after=outcome.qbase_after,
         qbase_drift=outcome.qbase_drift,
+        so2_target=outcome.so2_target,
         so2_before=outcome.so2_before,
         so2_after=outcome.so2_after,
         delta_so2=outcome.delta_so2,
         ph_before=outcome.ph_before,
         ph_after=outcome.ph_after,
         delta_ph=outcome.delta_ph,
+        inlet_so2_change=outcome.inlet_so2_change,
         fast_overlap=False,
         equipment_changed=False,
         target_changed=False,
@@ -630,6 +647,8 @@ def promote_local_step_evidence(
             "operator_action_imitation": False,
             "automatic_online_adaptation_allowed": False,
             "offline_bootstrap_evidence_allowed": True,
+            "return_to_baseline_learning_allowed": False,
+            "manual_return_target_supply_flow": plan.manual_return_target_supply_flow,
             "trial_outcome": outcome.to_dict(),
         },
     )
