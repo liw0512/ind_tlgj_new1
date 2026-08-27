@@ -140,6 +140,23 @@ class Scheme2DualResponseCalibrationProfileTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             profile.to_runtime_config()
 
+    def test_complete_but_invalid_response_window_is_not_calibrated(self):
+        config = self.response_config()
+        config["observation_seconds"] = 30.0
+        config["measurement_window_seconds"] = 60.0
+        with self.assertRaises(ValueError):
+            DualResponseChannelCalibration(
+                channel="SO2",
+                status=CHANNEL_CALIBRATED,
+                phi_prior=-4.0,
+                phi_live0=-4.1,
+                confidence=0.8,
+                valid_event_count=3,
+                independent_days=2,
+                response_config=config,
+                evidence_event_ids=("E1", "E2", "E3"),
+            )
+
     def test_same_local_gain_cohort_is_required_when_both_channels_have_gain(self):
         with self.assertRaises(ValueError):
             DualResponseCalibrationProfile(
