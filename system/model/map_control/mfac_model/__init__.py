@@ -131,6 +131,14 @@ from .trajectory_calibration_profile import (
     Scheme2TrajectoryCalibrationProfile,
     TrajectoryPlannerCalibrationCandidate,
 )
+from .trajectory_counterfactual import (
+    TRAJECTORY_COUNTERFACTUAL_VERSION,
+    StaircaseStage,
+    StaircaseTrajectoryCandidate,
+    TrajectoryCounterfactualComparison,
+    TrajectoryCounterfactualMetrics,
+    build_equal_dose_candidate,
+)
 from .trajectory_coordinator import (
     TRAJECTORY_SHADOW_COORDINATOR_VERSION,
     Scheme2TrajectoryShadowCoordinator,
@@ -152,6 +160,7 @@ __all__ = [
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
     "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
+    "TRAJECTORY_COUNTERFACTUAL_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
     "TRAJECTORY_SHADOW_COORDINATOR_VERSION",
@@ -224,6 +233,11 @@ __all__ = [
     "TrajectoryPlannerCalibrationCandidate",
     "HistoricalSafetyEvidenceSummary",
     "Scheme2TrajectoryCalibrationProfile",
+    "StaircaseStage",
+    "StaircaseTrajectoryCandidate",
+    "TrajectoryCounterfactualMetrics",
+    "TrajectoryCounterfactualComparison",
+    "build_equal_dose_candidate",
     "Scheme2RuntimeRestore",
     "Scheme2RuntimeStore",
     "Scheme2RuntimeCoordinatorConfig",
