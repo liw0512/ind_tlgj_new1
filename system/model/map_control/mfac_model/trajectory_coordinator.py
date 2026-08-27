@@ -35,15 +35,11 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         initial_residual_mfac_hold: float = 0.0,
         startup_setpoint_target: Optional[float] = None,
     ) -> None:
-        super().__init__(
-            config,
-            runtime_store,
-            runtime_state=runtime_state,
-            initial_residual_mfac_hold=initial_residual_mfac_hold,
-            startup_setpoint_target=startup_setpoint_target,
-        )
         if config.ph_arbitration is None:
             raise ValueError("trajectory shadow requires pH arbitration envelope")
+        # Initialize subclass-owned state before the base constructor. The base
+        # may restore runtime state and dispatch to our overridden
+        # ``set_runtime_state`` during construction.
         self.pending_dose_guard = PendingDoseGuard(
             pending_dose_config,
             config.ph_arbitration,
@@ -53,6 +49,13 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             config.continuous_target,
         )
         self._trajectory_context_key: Optional[Tuple[str, str]] = None
+        super().__init__(
+            config,
+            runtime_store,
+            runtime_state=runtime_state,
+            initial_residual_mfac_hold=initial_residual_mfac_hold,
+            startup_setpoint_target=startup_setpoint_target,
+        )
 
     def set_runtime_state(self, runtime_state, *, residual_mfac_hold: float = 0.0) -> None:
         super().set_runtime_state(
