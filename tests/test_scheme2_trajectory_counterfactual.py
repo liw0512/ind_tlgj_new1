@@ -1,14 +1,26 @@
 import unittest
 
 from system.model.map_control.mfac_model.trajectory_counterfactual import (
-    StaircaseTrajectoryCandidate,
+    HistoricalTrajectorySupport,
     TrajectoryCounterfactualComparison,
     TrajectoryCounterfactualMetrics,
+    assess_historical_support,
     build_equal_dose_candidate,
 )
 
 
 class Scheme2TrajectoryCounterfactualTest(unittest.TestCase):
+    @staticmethod
+    def historical_support():
+        return HistoricalTrajectorySupport(
+            sustained_extra_flow_p05_m3_h=57.877,
+            sustained_extra_flow_p95_m3_h=88.106,
+            action_duration_p05_seconds=320.0,
+            action_duration_p95_seconds=730.0,
+            max_observed_proactive_advance_seconds=0.0,
+            source_event_count=725,
+        )
+
     def test_equal_dose_candidate_matches_reference_without_runtime_authority(self):
         reference = 7.5
         candidate = build_equal_dose_candidate(
@@ -34,6 +46,49 @@ class Scheme2TrajectoryCounterfactualTest(unittest.TestCase):
                 advance_seconds=600.0,
                 dose_match_tolerance_m3=0.05,
             )
+
+    def test_current_low_flow_proactive_staircase_is_out_of_support(self):
+        candidate = build_equal_dose_candidate(
+            "ST3_OOD",
+            [20.0, 30.0, 40.0],
+            300.0,
+            reference_extra_volume_m3=7.5,
+            advance_seconds=600.0,
+            dose_match_tolerance_m3=1e-9,
+        )
+        result = assess_historical_support(candidate, self.historical_support())
+        self.assertEqual(result.stage_level_support_fraction, 0.0)
+        self.assertFalse(result.sustained_level_supported)
+        self.assertFalse(result.duration_supported)
+        self.assertFalse(result.proactive_advance_supported)
+        self.assertTrue(result.extrapolation_required)
+        self.assertFalse(result.eligible_for_step_calibration_evidence)
+        self.assertIn(
+            "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
+            result.reasons,
+        )
+        self.assertIn("TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", result.reasons)
+        self.assertIn("PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT", result.reasons)
+
+    def test_synthetic_historically_supported_shape_can_pass_support_gate(self):
+        candidate = build_equal_dose_candidate(
+            "SUPPORTED_SHAPE",
+            [60.0],
+            360.0,
+            reference_extra_volume_m3=6.0,
+            advance_seconds=0.0,
+            dose_match_tolerance_m3=1e-9,
+        )
+        result = assess_historical_support(candidate, self.historical_support())
+        self.assertTrue(result.sustained_level_supported)
+        self.assertTrue(result.duration_supported)
+        self.assertTrue(result.proactive_advance_supported)
+        self.assertFalse(result.extrapolation_required)
+        self.assertTrue(result.eligible_for_step_calibration_evidence)
+        self.assertEqual(
+            result.metadata["support_flow_semantics"],
+            "EXTRA_FLOW_ABOVE_EVENT_BASELINE",
+        )
 
     def test_counterfactual_comparison_is_never_activatable(self):
         metrics = TrajectoryCounterfactualMetrics(
