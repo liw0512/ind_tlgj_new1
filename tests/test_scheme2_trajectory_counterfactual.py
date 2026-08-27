@@ -13,8 +13,8 @@ class Scheme2TrajectoryCounterfactualTest(unittest.TestCase):
     @staticmethod
     def historical_support():
         return HistoricalTrajectorySupport(
-            sustained_extra_flow_p05_m3_h=57.877,
-            sustained_extra_flow_p95_m3_h=88.106,
+            sustained_extra_flow_p05_m3_h=51.072,
+            sustained_extra_flow_p95_m3_h=86.3891,
             action_duration_p05_seconds=320.0,
             action_duration_p95_seconds=730.0,
             max_observed_proactive_advance_seconds=0.0,
