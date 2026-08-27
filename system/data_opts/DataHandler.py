@@ -48,8 +48,7 @@ class DataHandler:
         "liquid_gas_ratio": ("liquid_gas_ratio", "液气比"),
     }
 
-    # chart key is kept stable for the UI.  Tuple = canonical, title, legacy
-    # fallback.  Fallback is used only when canonical query cannot be served.
+    # chart key is stable. Tuple = canonical column, title, legacy fallback.
     MODEL_SERIES: Dict[str, Tuple[str, str, str]] = {
         "condition_label": ("condition_label", "工况标签", ""),
         "stable_condition_label": ("stable_condition_label", "稳定工况标签", ""),
@@ -84,9 +83,7 @@ class DataHandler:
         self.engine = create_engine(config["dbconnetion"])
         self.lock = threading.Lock()
         persistence = PROCESS4MAP_CONFIG.persistence
-        self.filter_table_name = monthly_table_name(
-            persistence.filter_table_prefix
-        )
+        self.filter_table_name = monthly_table_name(persistence.filter_table_prefix)
         self.contro_table_name = monthly_table_name(
             persistence.model_result_table_prefix
         )
@@ -94,7 +91,8 @@ class DataHandler:
         self.send_obj = {"chart": [], "data": {}}
         self.mark = {
             "start_time": (
-                datetime.datetime.now() - datetime.timedelta(hours=config.get("search_time", 1))
+                datetime.datetime.now()
+                - datetime.timedelta(hours=config.get("search_time", 1))
             ).strftime("%Y-%m-%d %H:%M:%S"),
             "end_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "args": ["yyq_so2", "jyq_so2", "condition_label"],
@@ -143,10 +141,14 @@ class DataHandler:
         except Exception:
             return fallback
 
+    @staticmethod
+    def _safe_column(column: str) -> str:
+        return str(column).replace('"', '""')
+
     def _query_series(self, table_name: str, column: str, start_time, end_time):
         if not table_name:
             return []
-        safe_column = str(column).replace('"', '""')
+        safe_column = self._safe_column(column)
         sql = (
             f'SELECT "date", "{safe_column}" AS value FROM "{table_name}" '
             'WHERE "date" BETWEEN %s AND %s ORDER BY "date"'
@@ -154,7 +156,11 @@ class DataHandler:
         rows = self.engine.execute(sql, (start_time, end_time)).fetchall()
         return [
             {
-                "date": row[0].strftime("%Y-%m-%d %H:%M:%S") if hasattr(row[0], "strftime") else str(row[0]),
+                "date": (
+                    row[0].strftime("%Y-%m-%d %H:%M:%S")
+                    if hasattr(row[0], "strftime")
+                    else str(row[0])
+                ),
                 "value": row[1],
             }
             for row in rows
@@ -167,30 +173,48 @@ class DataHandler:
         start_time,
         end_time,
     ):
-        try:
-            return self._query_series(
-                self.contro_table_name, canonical, start_time, end_time
-            )
-        except Exception as exc:
-            if not legacy:
+        if not legacy:
+            try:
+                return self._query_series(
+                    self.contro_table_name, canonical, start_time, end_time
+                )
+            except Exception as exc:
                 logging.warning(
                     "历史MFAC序列读取失败 column=%s: %s", canonical, exc
                 )
                 return []
-            logging.info(
-                "canonical MFAC字段不可用，回退历史兼容字段: %s -> %s",
+
+        # Both columns are present after ensure_mfac_model_result_table().
+        # COALESCE keeps old rows readable after canonical columns are added:
+        # new rows use mfac_*, migration-era rows fall back to slurry_policy_*.
+        canonical_safe = self._safe_column(canonical)
+        legacy_safe = self._safe_column(legacy)
+        sql = (
+            f'SELECT "date", COALESCE("{canonical_safe}", "{legacy_safe}") AS value '
+            f'FROM "{self.contro_table_name}" '
+            'WHERE "date" BETWEEN %s AND %s ORDER BY "date"'
+        )
+        try:
+            rows = self.engine.execute(sql, (start_time, end_time)).fetchall()
+            return [
+                {
+                    "date": (
+                        row[0].strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(row[0], "strftime")
+                        else str(row[0])
+                    ),
+                    "value": row[1],
+                }
+                for row in rows
+            ]
+        except Exception as exc:
+            logging.warning(
+                "历史MFAC兼容序列读取失败 canonical=%s legacy=%s: %s",
                 canonical,
                 legacy,
+                exc,
             )
-            try:
-                return self._query_series(
-                    self.contro_table_name, legacy, start_time, end_time
-                )
-            except Exception as legacy_exc:
-                logging.warning(
-                    "历史兼容序列读取失败 column=%s: %s", legacy, legacy_exc
-                )
-                return []
+            return []
 
     def get_send_data(self):
         now = datetime.datetime.now()
@@ -222,21 +246,21 @@ class DataHandler:
                     points = []
             elif key in self.MODEL_SERIES:
                 column, title, legacy = self.MODEL_SERIES[key]
-                points = self._query_model_series(
-                    column, legacy, start, end
-                )
+                points = self._query_model_series(column, legacy, start, end)
             else:
                 logging.info("DataHandler 已忽略未知图表字段: %s", key)
                 continue
-            charts.append({
-                "name": key,
-                "title": title,
-                "step": config.get("rtstep", 1),
-                "data": [point["value"] for point in points],
-                "time": [point["date"] for point in points],
-                "start_time": start.strftime("%Y-%m-%d %H:%M:%S"),
-                "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
-            })
+            charts.append(
+                {
+                    "name": key,
+                    "title": title,
+                    "step": config.get("rtstep", 1),
+                    "data": [point["value"] for point in points],
+                    "time": [point["date"] for point in points],
+                    "start_time": start.strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
         self.send_obj["chart"] = charts
         return self.send_obj
 
