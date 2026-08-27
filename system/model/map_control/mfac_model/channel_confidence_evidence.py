@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Review-only confidence evidence for Scheme-2 calibrated response channels.
 
-A confidence value is not guessed from one trial and is not a probability.  This
+A confidence value is not guessed from one trial and is not a probability. This
 module summarizes already-reviewed cohort consistency, trial-count/day
 sufficiency and observed-timing coverage into an auditable conservative review
-candidate.  A human channel-calibration review must still explicitly choose the
+candidate. A human channel-calibration review must still explicitly choose the
 final confidence value.
 
 No runtime permission is granted here.
@@ -17,6 +17,7 @@ import math
 from typing import Any, Dict, Optional, Tuple
 
 from .dual_response_calibration_profile import (
+    CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION,
     OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION,
 )
 from .local_gain_cohort_review import (
@@ -26,7 +27,7 @@ from .local_gain_cohort_review import (
 
 
 CHANNEL_CONFIDENCE_EVIDENCE_VERSION = (
-    "SCHEME2_CHANNEL_CONFIDENCE_EVIDENCE_V1_REVIEW_CANDIDATE"
+    CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION
 )
 
 
@@ -51,7 +52,7 @@ def _sufficiency(actual: int, required: Optional[int]) -> float:
 def _consistency_score(metric: float, reviewed_limit: float) -> float:
     """Monotone audit score: 1 at zero dispersion, 0.5 at reviewed limit.
 
-    This is deliberately named a score rather than a probability.  It is only a
+    This is deliberately named a score rather than a probability. It is only a
     conservative input to human confidence review.
     """
     metric_value = _finite(metric)
@@ -146,7 +147,7 @@ def build_channel_confidence_evidence(
     """Build a review candidate from already-reviewed evidence facts.
 
     ``timing_evidence`` is intentionally duck-typed to avoid making this module
-    the authority for timing extraction.  Its semantics and bindings are still
+    the authority for timing extraction. Its semantics and bindings are still
     validated explicitly.
     """
 
