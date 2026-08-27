@@ -1,5 +1,5 @@
 {
-  "semantics_version": "SCHEME2_LOCAL_STEP_NOISE_AUDIT_V1",
+  "semantics_version": "SCHEME2_LOCAL_STEP_NOISE_AUDIT_V2_5MIN_EVIDENCE_GAP",
   "audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
   "source_file": "new_data_train_10s.csv",
   "source_sha256": "5553e529b1f222544b40b9e31e992584e87b4c4c1cbb51eea2bf460595b3ea23",
@@ -71,6 +71,22 @@
       "max": 37.6135
     }
   },
+  "five_minute_identification_baseline_audit": {
+    "baseline_seconds": 300.0,
+    "independent_window_spacing_seconds": 300.0,
+    "qualifying_window_count": 3,
+    "filter": {
+      "continuous_window_required": true,
+      "sample_gap_max_seconds": 30.0,
+      "actual_supply_flow_median_gt_m3_h": 2.0,
+      "actual_supply_flow_range_max_m3_h": 1.0,
+      "ph_median_range": [6.05, 6.35],
+      "abs_ph_first_last_minute_median_change_max": 0.05,
+      "abs_outlet_so2_first_last_minute_median_change_max_mg_nm3": 2.0
+    },
+    "max_abs_inlet_so2_change_status": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
+    "reason": "Only three independent 300-second windows satisfy the identification-like baseline filters; their quantiles would be unstable and must not be used as a site threshold."
+  },
   "review_implications": {
     "max_sample_gap_seconds": 30.0,
     "max_ph_baseline_range": 0.05,
@@ -78,11 +94,13 @@
     "min_abs_delta_so2": null,
     "min_effect_rule": "reviewed minimum effect must be explicitly selected above the empirical low-disturbance noise floor; this audit does not choose the safety multiplier",
     "max_abs_inlet_so2_change": null,
+    "max_abs_inlet_so2_change_status": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
     "max_abs_actual_minus_qbase": null,
     "notes": [
-      "The 43 strict noise windows are sufficient to expose an empirical noise floor but not to define a production confidence multiplier by themselves.",
+      "The 43 strict 2-minute noise windows expose an empirical noise floor but do not define a production confidence multiplier by themselves.",
       "Historical CSV lacks the runtime outlet_so2_target needed to reconstruct strict Qbase proximity, so max_abs_actual_minus_qbase cannot be calibrated from this file alone.",
-      "The inlet-SO2 <=50 mg/Nm3 condition is part of the strict-noise selection and therefore cannot be claimed as newly estimated from that same selected subset.",
+      "The inlet-SO2 <=50 mg/Nm3 condition is part of the strict 2-minute noise selection and therefore cannot be claimed as newly estimated from that same selected subset.",
+      "A separate 300-second baseline audit found only three qualifying independent windows; max_abs_inlet_so2_change therefore remains null rather than publishing unstable P90/P95 values.",
       "All values remain audit/review candidates; no runtime or manual test permission is granted."
     ]
   }
