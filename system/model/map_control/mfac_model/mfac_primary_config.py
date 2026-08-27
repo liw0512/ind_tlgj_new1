@@ -2,22 +2,23 @@
 """Single artifact/runtime configuration source for formal Scheme-2 MFAC."""
 
 from copy import deepcopy
-from pathlib import Path
+
+from system.model.config.mfac_paths import (
+    CONDITION_ROOT,
+    MFAC_ACTIVE_VERSION_FILE,
+    MFAC_OUTPUT_ROOT,
+    MFAC_ROOT,
+    MFAC_RUNTIME_DIR,
+    MFAC_SNAPSHOTS_DIR,
+    PROJECT_ROOT,
+)
 
 from .runtime_config import DEFAULT_MFAC_RUNTIME_CONFIG
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
-MFAC_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "mfac_model"
-MFAC_OUTPUT_ROOT = MFAC_ROOT / "mfac_model_output"
-MFAC_SNAPSHOTS_DIR = MFAC_OUTPUT_ROOT / "snapshots"
-MFAC_ACTIVE_VERSION_FILE = MFAC_OUTPUT_ROOT / "active_version.json"
-MFAC_RUNTIME_DIR = MFAC_OUTPUT_ROOT / "runtime"
-
-# Runtime calibration defaults are defined by runtime_config, but the production
-# runtime persistence path is an artifact path and therefore comes from this
-# module's single path tree.
+# Runtime calibration defaults are defined by runtime_config, while production
+# persistence uses the canonical path contract shared by every MFAC integration
+# layer.
 _PRIMARY_RUNTIME_CONFIG = deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG)
 _PRIMARY_RUNTIME_CONFIG["runtime_dir"] = str(MFAC_RUNTIME_DIR)
 
