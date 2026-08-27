@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Artifact paths for MFAC as the formal second module.
+"""Artifact and runtime configuration for MFAC as the formal second module."""
 
-This configuration replaces the historical slurry-policy snapshot root.  It is
-kept intentionally small: condition-model lifecycle remains owned by module 1,
-while MFAC runtime state/profile artifacts live under ``mfac_model_output``.
-"""
-
+from copy import deepcopy
 from pathlib import Path
+
+from .runtime_config import DEFAULT_MFAC_RUNTIME_CONFIG
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -25,4 +23,16 @@ MFAC_PRIMARY_ARTIFACT_CONFIG = {
     "learn_enabled": False,
     "residual_enabled": False,
     "dcs_write_enabled": False,
+    # Formal coordinator construction is fail-closed until real plant
+    # calibration values are supplied.  Empty sections are intentional.
+    "runtime": deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG),
 }
+
+
+__all__ = [
+    "PROJECT_ROOT",
+    "CONDITION_ROOT",
+    "MFAC_ROOT",
+    "MFAC_OUTPUT_ROOT",
+    "MFAC_PRIMARY_ARTIFACT_CONFIG",
+]
