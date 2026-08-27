@@ -18,7 +18,7 @@ identification subsystem into an automatic controller.
 
 ## Safety authority
 
-The identification subsystem is manual-only:
+The entire identification subsystem is manual-only:
 
 ```text
 automatic_execution_allowed = false
@@ -37,15 +37,152 @@ Residual = 0
 DCS write = off
 ```
 
-## Candidate values versus reviewed values
+## Three reviewed gates are required before a session
 
-The audit artifact
+A supervised Phase-1 session is not ready merely because a `+2.0 m3/h` test
+magnitude has been discussed. The unified readiness contract requires all three:
+
+```text
+Identification Design
++ Observation Profile
++ Trial Matrix Level
+```
+
+### Identification Design
+
+Owns proposal/safety/evidence limits such as:
+
+```text
+step magnitude
+pH identification margins
+quiet interval
+candidate interval
+actual-flow/Qbase baseline stability
+Qbase/inlet/outlet-SO2 stability
+effect minimums
+minimum evidence observation durations
+```
+
+Artifact:
 
 ```text
 calibration_audits/MFAC-LOCAL-STEP-DESIGN-5553E529-20260827.json
 ```
 
-separates:
+### Observation Profile
+
+Owns the independent manual-trial monitor configuration:
+
+```text
+SupplyFlowTrackingConfig
+ProcessResponseConfig   # SO2
+PHResponseConfig        # pH
+```
+
+Artifact:
+
+```text
+calibration_audits/MFAC-LOCAL-STEP-OBSERVATION-DESIGN-5553E529-20260827.json
+```
+
+This is intentionally separate from the production runtime. A manual
+identification test may **not** silently borrow whichever tracking/response
+windows happen to be configured in the formal MFAC runtime.
+
+The observation profile remains incomplete. Current review candidates include:
+
+```text
+tracking reach_tolerance       0.5 m3/h
+tracking execution timeout     300 s
+monitor max_sample_gap         30 s
+response baseline window       300 s
+SO2 delay-onset audit candidate 310 s
+pH delay-onset audit candidate  190 s
+```
+
+The last two come from large-pulse timing evidence and therefore remain only
+review candidates; low-step timing has not been observed directly.
+
+Still unresolved include:
+
+```text
+tracking target_change_deadband
+tracking required_sustain_seconds
+SO2/pH observation windows
+SO2/pH measurement windows
+SO2/pH target-change tolerance
+SO2/pH minimum sample counts
+```
+
+`LocalStepObservationProfile` cannot construct monitors while any reviewed field
+is missing.
+
+### Trial Matrix
+
+Phase-1 contains one candidate level only:
+
+```text
+PHASE1_STEP_2
+step = +2.0 m3/h
+max step = +2.0 m3/h
+review status = REVIEW_REQUIRED
+```
+
+Still unresolved:
+
+```text
+required_valid_trials
+required_independent_days
+```
+
+There is no automatic progression:
+
+```text
+2 -> 4 -> 6 m3/h
+```
+
+A later level requires complete Phase-1 evidence and a new human design review.
+
+## Unified readiness and cross-profile consistency
+
+`evaluate_local_step_session_readiness()` is the one read-only readiness gate.
+Even if all three artifacts are individually reviewed, the session is rejected
+when their overlapping safety/check semantics conflict.
+
+Current consistency rules include:
+
+```text
+trial max_sample_gap
+== tracking max_sample_gap
+== SO2 response max_sample_gap
+== pH response max_sample_gap
+
+tracking target_change_deadband
+< reviewed identification step
+
+tracking reach_tolerance
+<= trial max_abs_step_error
+
+SO2 delay_onset + observation
+>= trial minimum SO2 observation
+
+pH delay_onset + observation
+>= trial minimum pH observation
+```
+
+This removes last-writer-wins behavior between identification and observation
+configuration.
+
+Even `READY_FOR_SUPERVISED_MANUAL_SESSION` still means only:
+
+> all reviewed prerequisites are internally consistent.
+
+It does **not** execute a command. A separate first human approval is still
+required for every proposal.
+
+## Candidate values versus reviewed values
+
+Audit artifacts separate:
 
 ```text
 review_candidate_parameters
@@ -53,9 +190,6 @@ reviewed_parameters
 ```
 
 Candidate values never populate reviewed values automatically.
-`LocalStepIdentificationDesignProfile` refuses to build manual trial configs
-until all required reviewed fields are present and the design status is
-explicitly `REVIEWED_MANUAL_ONLY`.
 
 The inherited first-phase engineering candidate remains:
 
@@ -70,36 +204,6 @@ This is a manual identification stimulus only. It is **not**:
 - a 10-second recurrent increment;
 - a Qbase cycle limiter;
 - permission to execute a test.
-
-## Phase-1 trial matrix
-
-Phase-1 contains one candidate level only:
-
-```text
-PHASE1_STEP_2
-step = +2.0 m3/h
-max step = +2.0 m3/h
-review status = REVIEW_REQUIRED
-```
-
-The following remain unset until reviewed:
-
-```text
-required_valid_trials
-required_independent_days
-```
-
-Therefore the current matrix is not ready for a manual session.
-
-There is no automatic progression such as:
-
-```text
-2 -> 4 -> 6 m3/h
-```
-
-A later level can only be considered after Phase-1 has accumulated the reviewed
-number of valid trials and independent days, followed by a new human design
-review.
 
 ## Proposal gate
 
@@ -135,42 +239,30 @@ A proposal becomes a `LocalStepTrialPlan` only after explicit human approval:
 approve_local_step_proposal(... human_approved=True ...)
 ```
 
-The plan records:
-
-```text
-pre-trial actual flow
-pre-trial Qbase
-pre-trial pH
-pre-trial outlet SO2
-approved manual test target
-manual return target
-condition snapshot
-MFAC context
-reviewer identity/time
-```
-
-Creating the plan has no actuator side effect.
+The plan records pre-trial process state, the approved manual target, the manual
+return target, condition/context binding and reviewer/time. Creating the plan has
+no actuator side effect.
 
 ## Execution and causal anchor
 
-If the test is manually executed, the existing execution/response stack remains
-the causal source of truth:
+If the test is manually executed, the reviewed observation profile instantiates
+the existing monitor classes:
 
 ```text
 manual reviewed test target
 -> DCS applied target/readback
--> actual supply-flow feedback
+-> SupplyFlowTrackingMonitor
 -> actual_flow_reached_time
--> independent SO2 response monitor
--> independent pH response monitor
+-> ProcessResponseMonitor      # SO2
+-> PHResponseMonitor           # pH
 ```
 
-The identification protocol does not replace these monitors.
+The identification subsystem does not implement a second tracking/response
+algorithm and does not use historical actual flow as an algorithm target.
 
 ## In-trial abort recommendation
 
-`LocalStepTrialSafetyMonitor` recommends manual abort/return-to-baseline when any
-of the following occurs:
+`LocalStepTrialSafetyMonitor` recommends manual abort/return-to-baseline for:
 
 ```text
 data quality invalid
@@ -189,8 +281,8 @@ The monitor has no `execute()` API and cannot write DCS.
 
 ## Dual-response success gate
 
-A manually executed test does not become learning evidence merely because a
-response is visible. `evaluate_local_step_trial()` requires:
+`evaluate_local_step_trial()` requires both responses from the same real
+tracking event and enforces:
 
 ```text
 SO2 response == COMPLETED
@@ -213,41 +305,32 @@ phi_so2_event < 0
 phi_ph_event  > 0
 ```
 
-The real-data audit shows that a 600-second SO2-only early observation is not
-sufficient for dual-channel closure because pH peak P90 is about 886 s. The
-current review candidates are therefore:
+Current review candidates are:
 
 ```text
 minimum SO2 observation = 600 s
 minimum pH observation  = 900 s
 ```
 
-These remain review candidates, not reviewed site parameters.
+They remain unreviewed.
 
 ## Second human review: evidence promotion
 
-A successful dual-response trial has status:
+A successful trial becomes only:
 
 ```text
 LOCAL_GAIN_EVIDENCE_CANDIDATE
-```
-
-but still:
-
-```text
 learning_permission = false
 ```
 
 Only a second explicit evidence review may call
-`promote_local_step_evidence()`. The promoted canonical event contains both
+`promote_local_step_evidence()`. The resulting canonical event contains both
 channels from the same physical action:
 
 ```text
 delta_q_actual
-delta_so2
-phi_so2_event
-delta_ph
-phi_ph_event
+delta_so2 / phi_so2_event
+delta_ph  / phi_ph_event
 ```
 
 and is marked:
@@ -260,112 +343,109 @@ automatic_online_adaptation_allowed = false
 offline_bootstrap_evidence_allowed = true
 ```
 
-SO2 and pH offline bootstrap therefore consume the same reviewed physical trial,
-not two unrelated actions.
-
 ## Return to baseline and pH recovery
 
-The manual return from the test plateau to the pre-trial target is a recovery
-action, not a second LOCAL_GAIN demonstration. Its delayed response overlaps the
-first test and must not be automatically learned.
+The manual return from the test plateau is a recovery action, not a second
+LOCAL_GAIN event. It must not be automatically learned.
 
-A crucial distinction is now explicit:
+These clocks are different:
 
 ```text
 PendingDoseGuard onset/peak
-!= pulse recovery time
-!= identification quiet time
+!= Planner HOLD
+!= pulse recovery / identification quiet
 != candidate interval
 ```
 
 `phi_ph` is a step sensitivity. A sustained positive delta-Q does not decay
-because a generic memory timer expires. For a pulse, pH falls because the later
-negative return-flow step progressively cancels the earlier positive step.
-Therefore PendingDoseGuard only models future response that has not yet been
-realized between response onset and peak.
+because a generic memory timer expires. For a pulse, pH recovery is generated by
+the later negative return-flow step progressively cancelling the earlier
+positive step.
 
-Pulse recovery is audited separately. In the current 918-event recovery cohort:
+PendingDoseGuard therefore models only the future response not yet realized
+between onset and peak.
+
+Separate 918-event pulse-recovery audit:
 
 ```text
 pulse end -> pH peak
-P50 ~ 220 s
-P90 ~ 393 s
-P95 ~ 450 s
+P50 ~ 220 s   P90 ~ 393 s   P95 ~ 450 s
 
 peak -> half-decay
-P50 ~ 590 s
-P90 ~ 970 s
-P95 ~ 1140 s
+P50 ~ 590 s   P90 ~ 970 s   P95 ~ 1140 s
 
 pulse end -> half-decay
-P50 ~ 830 s
-P90 ~ 1280 s
-P95 ~ 1440 s
+P50 ~ 830 s   P90 ~ 1280 s  P95 ~ 1440 s
 
 pulse end -> recovery band
-P50 ~ 1030 s
-P90 ~ 2020 s
-P95 ~ 2450 s
+P50 ~ 1030 s  P90 ~ 2020 s  P95 ~ 2450 s
 ```
 
-Recovery band is defined as:
+Recovery band:
 
 ```text
 pH <= pre-pulse baseline + 0.05
 sustained for approximately 120 s
 ```
 
-The current quiet-time engineering candidate is therefore:
+Current quiet-time candidate:
 
 ```text
-min_quiet_seconds = 2700 s  # 45 min, REVIEW_CANDIDATE
+min_quiet_seconds = 2700 s  # REVIEW_CANDIDATE
 ```
 
-It is rounded above the recovery-band P95 and is still not a reviewed value.
-After this quiet interval, a new trial still cannot start unless **all** proposal
-baseline-stability checks pass again.
+A new test still requires all fresh baseline gates after this interval.
 
-The separate conservative session policy remains:
+Separate session-spacing candidate:
 
 ```text
-min_candidate_interval_seconds = 3600 s  # REVIEW_CANDIDATE
+min_candidate_interval_seconds = 3600 s
 ```
 
-Therefore neither 2700 s nor 3600 s is a PendingDoseGuard parameter.
+Neither is a PendingDoseGuard parameter.
 
-There is no dose debt and no requirement to perform another action merely to
-balance cumulative slurry volume.
+## Historical evidence gaps that remain explicit
 
-## Timing map
+The CSV can support some stability candidates, but it cannot safely fill all
+parameters.
 
-The current real-data evidence should be read as four different clocks:
+For example, a dedicated 300-second baseline audit found only **3** independent
+windows satisfying identification-like stable-flow/pH/outlet-SO2 conditions.
+Therefore:
 
 ```text
-pH pending onset P90       ~190 s  -> PendingDoseGuard review
-pH pending peak P90        ~886 s  -> PendingDoseGuard review (~900 s candidate)
-SO2 improvement onset P90  ~310 s  -> Planner HOLD review (~360 s candidate)
-pH pulse recovery P95      ~2450 s -> identification quiet review (~2700 s candidate)
-identification interval    3600 s   -> separate session-policy candidate
+max_abs_inlet_so2_change = null
+status = INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE
 ```
 
-They must not be merged into one generic `response_memory_seconds`.
+The CSV also lacks the historical runtime `outlet_so2_target`, so strict
+historical Qbase proximity cannot be reconstructed:
+
+```text
+max_abs_actual_minus_qbase = null
+```
+
+Noise-floor evidence exists for minimum SO2/pH effects, but the multiplier above
+that floor remains an engineering review decision.
 
 ## Current readiness
 
 ```text
-historical DYNAMIC evidence   rich
-historical SAFETY evidence    rich
-historical LOCAL_GAIN         insufficient
-Phase-1 step                  +2.0 m3/h REVIEW_CANDIDATE
-max sample gap                30 s REVIEW_CANDIDATE
-pH baseline range             0.05 REVIEW_CANDIDATE
-minimum quiet time            2700 s REVIEW_CANDIDATE
-required trial count          unresolved
-required independent days     unresolved
-several safety/effect limits  unresolved
-manual session ready          false
-runtime activation            false
+historical DYNAMIC evidence       rich
+historical SAFETY evidence        rich
+historical LOCAL_GAIN             insufficient
+Identification Design             incomplete
+Observation Profile               incomplete
+Phase-1 Trial Matrix              incomplete
+cross-profile consistency         cannot pass until above are reviewed
+manual session ready              false
+runtime activation                false
 ```
 
-The remaining null values must still be reviewed or supported by new evidence.
-Only after that review can a supervised Phase-1 manual session be considered.
+No amount of editing an audit JSON changes production authority:
+
+```text
+LEARN = 0
+Residual = 0
+DCS write = off
+```
