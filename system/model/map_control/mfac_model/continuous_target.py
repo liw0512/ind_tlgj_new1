@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """Continuous algorithm-target publication for Scheme 2 MFAC.
 
-This module owns only the algorithm target contract.  It deliberately does not
+This module owns only the algorithm target contract. It deliberately does not
 track actual slurry-flow feedback, infer process response, update ``phi``, or
-write DCS commands.  Those responsibilities belong to later runtime stages.
+write DCS commands. Those responsibilities belong to later runtime stages.
 
 Core contract::
 
     Q_target_algorithm = clip(Qbase + residual_mfac_hold, hard_min, hard_max)
 
-When current inputs are invalid, the publisher holds the last *valid algorithm
-calculation*.  Before the first valid calculation it may use an explicit plant
-startup/DCS setpoint fallback.  Actual slurry-flow feedback is intentionally not
-part of this API and must never be used as a substitute algorithm target.
+The hard supply-flow bounds are not duplicated here: defaults are derived from
+``PLANT_CONFIG.scheme2.target_supply_flow`` through the canonical MFAC plant
+contract. Runtime code may pass an explicit config object for isolated tests,
+but the formal production builder rejects plant-bound overrides.
 """
 
 from __future__ import annotations
@@ -21,10 +21,14 @@ from dataclasses import asdict, dataclass, field
 import math
 from typing import Any, Dict, Optional
 
+from system.model.config.mfac_plant_contract import target_supply_flow_contract
 
-CONTINUOUS_TARGET_SEMANTICS_VERSION = "SCHEME2_CONTINUOUS_TARGET_V1"
+
+CONTINUOUS_TARGET_SEMANTICS_VERSION = "SCHEME2_CONTINUOUS_TARGET_V2_PLANT_CONTRACT"
 COUNTERFACTUAL_SHADOW = "COUNTERFACTUAL_SHADOW"
 ONLINE_SHADOW = "ONLINE_SHADOW"
+
+_PLANT_TARGET_CONTRACT = target_supply_flow_contract()
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -37,8 +41,8 @@ def _finite(value: Any) -> Optional[float]:
 
 @dataclass(frozen=True)
 class ContinuousTargetConfig:
-    hard_min_supply_flow: float = 0.0
-    hard_max_supply_flow: float = 70.0
+    hard_min_supply_flow: float = float(_PLANT_TARGET_CONTRACT["minimum"])
+    hard_max_supply_flow: float = float(_PLANT_TARGET_CONTRACT["maximum"])
 
     def __post_init__(self) -> None:
         lower = _finite(self.hard_min_supply_flow)
@@ -70,8 +74,8 @@ class ContinuousTargetPublisher:
     """Publish one bounded Scheme-2 algorithm target per decision cycle.
 
     ``startup_setpoint_target`` is an explicit DCS target readback or plant
-    startup setpoint.  It must never be populated from actual slurry-flow
-    feedback.  The API intentionally has no ``actual_flow`` argument so that
+    startup setpoint. It must never be populated from actual slurry-flow
+    feedback. The API intentionally has no ``actual_flow`` argument so that
     historical/operator actual flow cannot silently leak into the algorithm
     target calculation.
     """
@@ -118,7 +122,9 @@ class ContinuousTargetPublisher:
     ) -> ContinuousTargetDecision:
         qbase = _finite(qbase_effective)
         residual = _finite(residual_mfac_hold)
-        current_inputs_valid = bool(inputs_valid) and qbase is not None and residual is not None
+        current_inputs_valid = (
+            bool(inputs_valid) and qbase is not None and residual is not None
+        )
 
         if current_inputs_valid:
             raw_target = qbase + residual
