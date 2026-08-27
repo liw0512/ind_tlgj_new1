@@ -133,10 +133,13 @@ from .trajectory_calibration_profile import (
 )
 from .trajectory_counterfactual import (
     TRAJECTORY_COUNTERFACTUAL_VERSION,
+    CounterfactualSupportAssessment,
+    HistoricalTrajectorySupport,
     StaircaseStage,
     StaircaseTrajectoryCandidate,
     TrajectoryCounterfactualComparison,
     TrajectoryCounterfactualMetrics,
+    assess_historical_support,
     build_equal_dose_candidate,
 )
 from .trajectory_coordinator import (
@@ -235,6 +238,9 @@ __all__ = [
     "Scheme2TrajectoryCalibrationProfile",
     "StaircaseStage",
     "StaircaseTrajectoryCandidate",
+    "HistoricalTrajectorySupport",
+    "CounterfactualSupportAssessment",
+    "assess_historical_support",
     "TrajectoryCounterfactualMetrics",
     "TrajectoryCounterfactualComparison",
     "build_equal_dose_candidate",
