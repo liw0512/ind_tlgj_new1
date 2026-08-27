@@ -1,0 +1,84 @@
+{
+  "semantics_version": "SCHEME2_TRAJECTORY_CALIBRATION_PROFILE_V1_AUDIT_ONLY",
+  "profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
+  "activation_status": "NOT_ACTIVATABLE",
+  "review_status": "REVIEW_REQUIRED",
+  "local_gain_status": "INSUFFICIENT_EVIDENCE",
+  "source": {
+    "file": "new_data_train_10s.csv",
+    "sha256": "5553e529b1f222544b40b9e31e992584e87b4c4c1cbb51eea2bf460595b3ea23",
+    "rows": 298875,
+    "start_time": "2026-06-14T00:00:00",
+    "end_time": "2026-07-22T00:00:00",
+    "median_cadence_seconds": 10.0
+  },
+  "extraction": {
+    "method": "SITE_PUMP_RUN_ANCHOR_AUDIT_V1",
+    "pump_on_rule": "xstgjb_APL > 1 Hz",
+    "clean_event_rule": "prev_off>=10min,next_off>=20min,duration=3..20min,flow_peak>=50m3/h,dose>=2m3",
+    "pump_segment_count": 1760,
+    "clean_dynamic_candidate_count": 761,
+    "validated_dynamic_event_count": 725,
+    "memory_event_count_30m_clean": 140
+  },
+  "observed_timing_seconds": {
+    "actual_flow_reach": {"count": 725, "p10": 20.0, "p25": 20.0, "p50": 20.0, "p75": 30.0, "p90": 40.0, "p95": 60.0},
+    "ph_turn_onset": {"count": 725, "p10": 120.0, "p25": 140.0, "p50": 160.0, "p75": 170.0, "p90": 190.0, "p95": 200.0},
+    "ph_peak": {"count": 725, "p10": 580.0, "p25": 640.0, "p50": 710.0, "p75": 800.0, "p90": 886.0, "p95": 960.0},
+    "so2_turn_onset": {"count": 725, "p10": 260.0, "p25": 270.0, "p50": 280.0, "p75": 300.0, "p90": 310.0, "p95": 330.0},
+    "so2_trough": {"count": 725, "p10": 660.0, "p25": 730.0, "p50": 840.0, "p75": 1000.0, "p90": 1120.0, "p95": 1190.0}
+  },
+  "pending_dose_candidate": {
+    "status": "REVIEW_REQUIRED",
+    "response_onset_candidate_seconds": 190.0,
+    "response_onset_basis": "pH turn-onset P90; conservative pending-effect accounting",
+    "response_peak_candidate_seconds": 900.0,
+    "response_peak_basis": "rounded pH peak P90 ~= 886s",
+    "response_memory_candidate_seconds": null,
+    "response_memory_lower_bound_seconds": 1800.0,
+    "memory_observation_window_seconds": 1800.0,
+    "memory_event_count": 140,
+    "memory_half_decay_observed_count": 28,
+    "memory_right_censored_ratio": 0.8,
+    "reason": "80% of clean 30min events had not decayed to half-amplitude by 30min; full memory not identified"
+  },
+  "trajectory_planner_candidate": {
+    "status": "INSUFFICIENT_LOCAL_STEP_EVIDENCE",
+    "min_hold_evidence_floor_seconds": 310.0,
+    "min_hold_candidate_seconds": 360.0,
+    "min_hold_basis": "rounded above SO2 turn-onset P90 ~=310s; evaluate PendingDoseGuard before next step",
+    "max_step_up_candidate": null,
+    "max_step_down_candidate": null,
+    "demand_deadband_candidate": null,
+    "reason": "historical data is dominated by large pulses; safe local step magnitude is not identified"
+  },
+  "safety": {
+    "operating_ph_max": 6.4,
+    "safe_ph_max": 6.8,
+    "validated_event_count": 725,
+    "p_ph_gt_6_4": 0.6897,
+    "p_ph_gt_6_8": 0.0855,
+    "p_ph_gt_6_9": 0.0386,
+    "p_ph_gt_7_0": 0.0166,
+    "dose_risk_examples": [
+      {"baseline_ph_band": "[6.0,6.1)", "dose_band_m3": "<6", "event_count": 21, "median_ph_peak": 6.242, "p_ph_gt_6_4": 0.0476, "median_so2_drop_mg_nm3": 10.174},
+      {"baseline_ph_band": "[6.0,6.1)", "dose_band_m3": "6-8", "event_count": 75, "median_ph_peak": 6.360, "p_ph_gt_6_4": 0.4133, "median_so2_drop_mg_nm3": 15.254},
+      {"baseline_ph_band": "[6.0,6.1)", "dose_band_m3": "8-10", "event_count": 54, "median_ph_peak": 6.465, "p_ph_gt_6_4": 0.6667, "median_so2_drop_mg_nm3": 15.366},
+      {"baseline_ph_band": "[6.1,6.2)", "dose_band_m3": "6-8", "event_count": 95, "median_ph_peak": 6.430, "p_ph_gt_6_4": 0.6211, "median_so2_drop_mg_nm3": 16.775},
+      {"baseline_ph_band": "[6.1,6.2)", "dose_band_m3": "8-10", "event_count": 47, "median_ph_peak": 6.560, "p_ph_gt_6_4": 0.9149, "median_so2_drop_mg_nm3": 14.207},
+      {"baseline_ph_band": "[6.2,6.3)", "dose_band_m3": "6-8", "event_count": 64, "median_ph_peak": 6.520, "p_ph_gt_6_4": 0.8750, "median_so2_drop_mg_nm3": 14.353},
+      {"baseline_ph_band": "[6.2,6.3)", "dose_band_m3": "8-10", "event_count": 46, "median_ph_peak": 6.630, "p_ph_gt_6_4": 1.0000, "median_so2_drop_mg_nm3": 16.385}
+    ]
+  },
+  "permissions": {
+    "learning_enabled": false,
+    "residual_control_enabled": false,
+    "dcs_write_enabled": false
+  },
+  "notes": [
+    "Observed timing is evidence, not production calibration.",
+    "Equal-dose staircase is an offline comparison constraint only; online control has no dose debt.",
+    "Realtime pH remains excluded from Qbase/CaS and is used only for response learning/supervision/arbitration.",
+    "No runtime config may be generated from this profile without a separate reviewed approval artifact."
+  ]
+}
