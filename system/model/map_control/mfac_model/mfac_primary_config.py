@@ -15,6 +15,12 @@ MFAC_SNAPSHOTS_DIR = MFAC_OUTPUT_ROOT / "snapshots"
 MFAC_ACTIVE_VERSION_FILE = MFAC_OUTPUT_ROOT / "active_version.json"
 MFAC_RUNTIME_DIR = MFAC_OUTPUT_ROOT / "runtime"
 
+# Runtime calibration defaults are defined by runtime_config, but the production
+# runtime persistence path is an artifact path and therefore comes from this
+# module's single path tree.
+_PRIMARY_RUNTIME_CONFIG = deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG)
+_PRIMARY_RUNTIME_CONFIG["runtime_dir"] = str(MFAC_RUNTIME_DIR)
+
 
 MFAC_PRIMARY_ARTIFACT_CONFIG = {
     "output_root": str(MFAC_OUTPUT_ROOT),
@@ -26,7 +32,7 @@ MFAC_PRIMARY_ARTIFACT_CONFIG = {
     # Runtime permission facts live only inside runtime config. They are also
     # defensively re-validated by builder/coordinator/P4PC, but are not repeated
     # as a second configurable set at this artifact level.
-    "runtime": deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG),
+    "runtime": _PRIMARY_RUNTIME_CONFIG,
 }
 
 
