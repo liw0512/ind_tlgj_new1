@@ -1,6 +1,10 @@
 import tempfile
 import unittest
 
+from system.model.config.mfac_plant_contract import (
+    ph_arbitration_plant_values,
+    target_supply_flow_contract,
+)
 from system.model.map_control.mfac_model.runtime_config import (
     DEFAULT_MFAC_RUNTIME_CONFIG,
     build_mfac_runtime,
@@ -64,12 +68,8 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
                 "phi_upper_bound": 1.0,
                 "max_single_update_abs": 0.1,
             },
+            # pH ranges/guard band are plant facts and must not be copied here.
             "ph_arbitration": {
-                "operating_min": 5.4,
-                "operating_max": 6.2,
-                "safe_min": 5.0,
-                "safe_max": 6.5,
-                "guard_band": 0.1,
                 "min_confidence": 0.5,
             },
         }
@@ -95,14 +95,16 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
         self.assertIsNone(result.coordinator)
         self.assertEqual(result.status, "DISABLED_UNCALIBRATED")
 
-    def test_enabled_incomplete_config_does_not_guess_parameters(self):
+    def test_enabled_incomplete_config_does_not_guess_calibration(self):
         result = build_mfac_runtime({"enabled": True})
         self.assertFalse(result.configured)
         self.assertEqual(result.status, "INVALID_INCOMPLETE_CALIBRATION")
         self.assertIn("tracking.target_change_deadband", result.missing_fields)
         self.assertIn("so2_response.delay_onset_seconds", result.missing_fields)
         self.assertIn("ph_response.delay_onset_seconds", result.missing_fields)
-        self.assertIn("ph_arbitration.safe_min", result.missing_fields)
+        # Plant-owned pH facts are intentionally not part of missing MFAC
+        # calibration because they come from PLANT_CONFIG.
+        self.assertNotIn("ph_arbitration.safe_min", result.missing_fields)
 
     def test_current_activation_stage_rejects_unsafe_permissions(self):
         for field in (
@@ -114,19 +116,62 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     build_mfac_runtime({"enabled": True, field: True})
 
-    def test_complete_explicit_config_builds_dual_response_shadow(self):
+    def test_complete_config_derives_plant_owned_limits(self):
         with tempfile.TemporaryDirectory() as root:
             result = build_mfac_runtime(self.complete_config(root))
             self.assertTrue(result.configured)
             self.assertEqual(result.status, "CONFIGURED_SHADOW")
             self.assertIsNotNone(result.coordinator)
             coordinator = result.coordinator
+            target = target_supply_flow_contract()
+            ph = ph_arbitration_plant_values()
+            self.assertEqual(
+                coordinator.config.continuous_target.hard_min_supply_flow,
+                target["minimum"],
+            )
+            self.assertEqual(
+                coordinator.config.continuous_target.hard_max_supply_flow,
+                target["maximum"],
+            )
+            self.assertEqual(coordinator.config.ph_arbitration.safe_min, ph["safe_min"])
+            self.assertEqual(coordinator.config.ph_arbitration.safe_max, ph["safe_max"])
+            self.assertEqual(
+                coordinator.config.ph_arbitration.operating_min,
+                ph["operating_min"],
+            )
+            self.assertEqual(
+                coordinator.config.ph_arbitration.operating_max,
+                ph["operating_max"],
+            )
+            self.assertEqual(
+                coordinator.config.ph_arbitration.guard_band,
+                ph["guard_band"],
+            )
+            self.assertEqual(coordinator.config.ph_arbitration.min_confidence, 0.5)
             self.assertFalse(coordinator.config.learning_enabled)
             self.assertFalse(coordinator.config.residual_control_enabled)
             self.assertFalse(coordinator.dcs_write_enabled)
             self.assertIsNotNone(coordinator.ph_response_monitor)
             self.assertIsNotNone(coordinator.ph_online_adapter)
             self.assertIsNotNone(coordinator.ph_arbiter)
+
+    def test_runtime_cannot_override_plant_owned_target_bounds(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = self.complete_config(root)
+            config["continuous_target"] = {"hard_max_supply_flow": 65.0}
+            result = build_mfac_runtime(config)
+            self.assertFalse(result.configured)
+            self.assertEqual(result.status, "INVALID_CALIBRATION_CONFIG")
+            self.assertIn("cannot override plant-owned fields", result.error)
+
+    def test_runtime_cannot_override_plant_owned_ph_envelope(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = self.complete_config(root)
+            config["ph_arbitration"]["safe_max"] = 6.5
+            result = build_mfac_runtime(config)
+            self.assertFalse(result.configured)
+            self.assertEqual(result.status, "INVALID_CALIBRATION_CONFIG")
+            self.assertIn("cannot override plant-owned fields", result.error)
 
 
 if __name__ == "__main__":
