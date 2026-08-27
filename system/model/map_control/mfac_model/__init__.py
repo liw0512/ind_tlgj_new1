@@ -152,9 +152,11 @@ from .supply_flow_tracking import (
     SupplyFlowTrackingUpdate,
 )
 from .trajectory_calibration_profile import (
+    LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION,
     TRAJECTORY_CALIBRATION_PROFILE_VERSION,
     CalibrationQuantiles,
     HistoricalSafetyEvidenceSummary,
+    PHRecoveryCalibrationAudit,
     PendingDoseCalibrationCandidate,
     Scheme2TrajectoryCalibrationProfile,
     TrajectoryPlannerCalibrationCandidate,
@@ -195,6 +197,7 @@ __all__ = [
     "LOCAL_STEP_TRIAL_PROTOCOL_VERSION",
     "LOCAL_STEP_TRIAL_MATRIX_VERSION",
     "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
+    "LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION",
     "TRAJECTORY_COUNTERFACTUAL_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
@@ -281,6 +284,7 @@ __all__ = [
     "LocalStepTrialMatrix",
     "CalibrationQuantiles",
     "PendingDoseCalibrationCandidate",
+    "PHRecoveryCalibrationAudit",
     "TrajectoryPlannerCalibrationCandidate",
     "HistoricalSafetyEvidenceSummary",
     "Scheme2TrajectoryCalibrationProfile",
