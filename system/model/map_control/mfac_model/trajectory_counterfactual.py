@@ -14,7 +14,9 @@ import math
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 
-TRAJECTORY_COUNTERFACTUAL_VERSION = "SCHEME2_TRAJECTORY_COUNTERFACTUAL_V2_SUPPORT_GATED"
+TRAJECTORY_COUNTERFACTUAL_VERSION = (
+    "SCHEME2_TRAJECTORY_COUNTERFACTUAL_V3_EXTRA_FLOW_SUPPORT_GATED"
+)
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -27,7 +29,7 @@ def _finite(value: Any) -> Optional[float]:
 
 @dataclass(frozen=True)
 class StaircaseStage:
-    """One absolute extra-flow plateau above the pre-event baseline."""
+    """One extra-flow plateau above the pre-event actual-flow baseline."""
 
     extra_flow_m3_h: float
     hold_seconds: float
@@ -103,8 +105,10 @@ class StaircaseTrajectoryCandidate:
 
 @dataclass(frozen=True)
 class HistoricalTrajectorySupport:
-    sustained_flow_p05_m3_h: float
-    sustained_flow_p95_m3_h: float
+    """Observed support for *extra flow above baseline*, not absolute flow."""
+
+    sustained_extra_flow_p05_m3_h: float
+    sustained_extra_flow_p95_m3_h: float
     action_duration_p05_seconds: float
     action_duration_p95_seconds: float
     max_observed_proactive_advance_seconds: float = 0.0
@@ -112,13 +116,13 @@ class HistoricalTrajectorySupport:
     source: str = "HISTORICAL_DYNAMIC_EVIDENCE"
 
     def __post_init__(self) -> None:
-        flow_low = _finite(self.sustained_flow_p05_m3_h)
-        flow_high = _finite(self.sustained_flow_p95_m3_h)
+        flow_low = _finite(self.sustained_extra_flow_p05_m3_h)
+        flow_high = _finite(self.sustained_extra_flow_p95_m3_h)
         duration_low = _finite(self.action_duration_p05_seconds)
         duration_high = _finite(self.action_duration_p95_seconds)
         advance = _finite(self.max_observed_proactive_advance_seconds)
         if flow_low is None or flow_high is None or flow_low >= flow_high:
-            raise ValueError("invalid sustained-flow support")
+            raise ValueError("invalid sustained extra-flow support")
         if duration_low is None or duration_high is None or duration_low >= duration_high:
             raise ValueError("invalid duration support")
         if advance is None or advance < 0.0:
@@ -150,8 +154,8 @@ def assess_historical_support(
     candidate: StaircaseTrajectoryCandidate,
     support: HistoricalTrajectorySupport,
 ) -> CounterfactualSupportAssessment:
-    flow_low = float(support.sustained_flow_p05_m3_h)
-    flow_high = float(support.sustained_flow_p95_m3_h)
+    flow_low = float(support.sustained_extra_flow_p05_m3_h)
+    flow_high = float(support.sustained_extra_flow_p95_m3_h)
     supported_stages = [
         flow_low <= float(stage.extra_flow_m3_h) <= flow_high
         for stage in candidate.stages
@@ -170,7 +174,7 @@ def assess_historical_support(
     )
     reasons = []
     if not sustained_supported:
-        reasons.append("SUSTAINED_FLOW_LEVEL_OUT_OF_HISTORICAL_SUPPORT")
+        reasons.append("SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT")
     if not duration_supported:
         reasons.append("TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT")
     if not advance_supported:
@@ -186,7 +190,7 @@ def assess_historical_support(
         eligible_for_step_calibration_evidence=not extrapolation,
         reasons=tuple(reasons),
         metadata={
-            "sustained_flow_support_m3_h": [flow_low, flow_high],
+            "sustained_extra_flow_support_m3_h": [flow_low, flow_high],
             "duration_support_seconds": [
                 float(support.action_duration_p05_seconds),
                 float(support.action_duration_p95_seconds),
@@ -195,6 +199,7 @@ def assess_historical_support(
                 support.max_observed_proactive_advance_seconds
             ),
             "support_source_event_count": int(support.source_event_count),
+            "support_flow_semantics": "EXTRA_FLOW_ABOVE_EVENT_BASELINE",
         },
     )
 
