@@ -1,0 +1,315 @@
+# -*- coding: utf-8 -*-
+"""Explicit human review for LOCAL_GAIN_READY -> CALIBRATED channel promotion.
+
+A configured response window is not observed process timing.  This module only
+accepts timing evidence explicitly derived from observed process traces, bound
+to the same condition/context and to events from the reviewed LOCAL_GAIN cohort.
+
+The review can calibrate SO2 and pH independently.  It grants no runtime
+learning, residual-control or DCS authority.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
+import math
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+from .dual_response_calibration_profile import (
+    CHANNEL_CALIBRATED,
+    CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION,
+    CHANNEL_LOCAL_GAIN_READY,
+    OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION,
+    DualResponseCalibrationProfile,
+    DualResponseChannelCalibration,
+    _build_reviewed_calibrated_channel,
+    _validate_delay_profile,
+    _validate_response_config,
+)
+from .mfac_schema import DelayProfile
+
+
+CHANNEL_CALIBRATION_REVIEW_VERSION = (
+    CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION
+)
+TIMING_SOURCE_OBSERVED_PROCESS_TRACE = "OBSERVED_PROCESS_TRACE"
+
+
+def _finite(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _timestamp_text(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "to_pydatetime"):
+        converted = value.to_pydatetime()
+        if isinstance(converted, datetime):
+            return converted.isoformat()
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("review_time is required")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
+    except ValueError as exc:
+        raise ValueError("review_time must be a valid ISO timestamp") from exc
+
+
+@dataclass(frozen=True)
+class ObservedResponseTimingEvidence:
+    evidence_id: str
+    channel: str
+    condition_snapshot_version: str
+    mfac_context_id: str
+    delay_profile: DelayProfile
+    event_ids: Tuple[str, ...]
+    observed_event_count: int
+    independent_days: int
+    onset_source: str = TIMING_SOURCE_OBSERVED_PROCESS_TRACE
+    response_source: str = TIMING_SOURCE_OBSERVED_PROCESS_TRACE
+    configured_window_boundary_used_as_observed_timing: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    semantics_version: str = OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION
+
+    def __post_init__(self) -> None:
+        channel = str(self.channel or "").upper()
+        if channel not in {"SO2", "PH"}:
+            raise ValueError("timing evidence channel must be SO2 or PH")
+        if not str(self.evidence_id or "").strip():
+            raise ValueError("timing evidence_id is required")
+        if not str(self.condition_snapshot_version or "").strip():
+            raise ValueError("timing evidence condition snapshot is required")
+        if not str(self.mfac_context_id or "").strip():
+            raise ValueError("timing evidence MFAC context is required")
+        if self.semantics_version != OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION:
+            raise ValueError("unsupported observed timing evidence semantics")
+        if self.onset_source != TIMING_SOURCE_OBSERVED_PROCESS_TRACE:
+            raise ValueError("onset timing must come from observed process trace")
+        if self.response_source != TIMING_SOURCE_OBSERVED_PROCESS_TRACE:
+            raise ValueError("response timing must come from observed process trace")
+        if self.configured_window_boundary_used_as_observed_timing:
+            raise ValueError(
+                "configured response-window boundaries cannot be timing evidence"
+            )
+        event_ids = tuple(str(value or "").strip() for value in self.event_ids)
+        if not event_ids or any(not value for value in event_ids):
+            raise ValueError("observed timing evidence requires event IDs")
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("observed timing evidence contains duplicate event IDs")
+        if int(self.observed_event_count) != len(event_ids):
+            raise ValueError("observed_event_count must equal timing event ID count")
+        if int(self.observed_event_count) < 2:
+            raise ValueError("observed timing evidence requires at least two events")
+        if int(self.independent_days) <= 0:
+            raise ValueError("observed timing evidence requires independent days > 0")
+        if int(self.independent_days) > int(self.observed_event_count):
+            raise ValueError("independent days cannot exceed observed event count")
+        _validate_delay_profile(self.delay_profile)
+
+    def to_dict(self) -> Dict[str, Any]:
+        value = asdict(self)
+        value["delay_profile"] = self.delay_profile.to_dict()
+        value["event_ids"] = list(self.event_ids)
+        return value
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ObservedResponseTimingEvidence":
+        payload = dict(value or {})
+        payload["delay_profile"] = DelayProfile.from_dict(payload.get("delay_profile"))
+        payload["event_ids"] = tuple(payload.get("event_ids") or ())
+        return cls(**payload)
+
+
+@dataclass(frozen=True)
+class ChannelCalibrationReviewRecord:
+    review_id: str
+    profile_id: str
+    channel: str
+    status: str
+    reviewer_id: str
+    review_time: str
+    timing_evidence_id: str
+    timing_event_ids: Tuple[str, ...]
+    confidence: float
+    response_config: Dict[str, Any]
+    activation_status: str = "NOT_ACTIVATABLE"
+    learning_enabled: bool = False
+    residual_control_enabled: bool = False
+    dcs_write_enabled: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    semantics_version: str = CHANNEL_CALIBRATION_REVIEW_VERSION
+
+    def __post_init__(self) -> None:
+        if self.status != "CHANNEL_CALIBRATION_REVIEW_APPROVED":
+            raise ValueError("unsupported channel calibration review status")
+        if self.activation_status != "NOT_ACTIVATABLE":
+            raise ValueError("channel calibration review must remain NOT_ACTIVATABLE")
+        if self.learning_enabled or self.residual_control_enabled or self.dcs_write_enabled:
+            raise ValueError("channel calibration review cannot enable runtime permissions")
+        if self.semantics_version != CHANNEL_CALIBRATION_REVIEW_VERSION:
+            raise ValueError("unsupported channel calibration review semantics")
+
+    def to_dict(self) -> Dict[str, Any]:
+        value = asdict(self)
+        value["timing_event_ids"] = list(self.timing_event_ids)
+        return value
+
+
+@dataclass(frozen=True)
+class ChannelCalibrationReviewResult:
+    profile: DualResponseCalibrationProfile
+    review: ChannelCalibrationReviewRecord
+    semantics_version: str = CHANNEL_CALIBRATION_REVIEW_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "profile": self.profile.to_dict(),
+            "review": self.review.to_dict(),
+            "semantics_version": self.semantics_version,
+        }
+
+
+def approve_channel_calibration(
+    profile: DualResponseCalibrationProfile,
+    *,
+    channel: str,
+    timing_evidence: ObservedResponseTimingEvidence,
+    response_config: Mapping[str, Any],
+    confidence: float,
+    human_approved: bool,
+    reviewer_id: str,
+    review_time: Any,
+) -> ChannelCalibrationReviewResult:
+    """Review one channel and promote only that channel to CALIBRATED.
+
+    The function is deliberately non-activating.  A later activation review is
+    still required even when both channels eventually become CALIBRATED.
+    """
+
+    if not bool(human_approved):
+        raise ValueError("explicit human channel calibration approval is required")
+    reviewer = str(reviewer_id or "").strip()
+    if not reviewer:
+        raise ValueError("reviewer_id is required")
+    reviewed_at = _timestamp_text(review_time)
+    channel_name = str(channel or "").upper()
+    if channel_name not in {"SO2", "PH"}:
+        raise ValueError("channel must be SO2 or PH")
+
+    base: DualResponseChannelCalibration = (
+        profile.so2 if channel_name == "SO2" else profile.ph
+    )
+    if base.status != CHANNEL_LOCAL_GAIN_READY:
+        if base.status == CHANNEL_CALIBRATED:
+            raise ValueError("channel is already CALIBRATED")
+        raise ValueError("channel must be LOCAL_GAIN_READY before calibration review")
+
+    if timing_evidence.channel.upper() != channel_name:
+        raise ValueError("timing evidence channel mismatch")
+    if timing_evidence.condition_snapshot_version != profile.condition_snapshot_version:
+        raise ValueError("timing evidence condition snapshot mismatch")
+    if timing_evidence.mfac_context_id != profile.mfac_context_id:
+        raise ValueError("timing evidence MFAC context mismatch")
+
+    gain_ids = set(base.evidence_event_ids)
+    timing_ids = set(timing_evidence.event_ids)
+    if not timing_ids.issubset(gain_ids):
+        raise ValueError(
+            "observed timing evidence must come from the reviewed LOCAL_GAIN cohort"
+        )
+    if timing_evidence.independent_days > base.independent_days:
+        raise ValueError("timing independent days exceed LOCAL_GAIN evidence days")
+
+    confidence_value = _finite(confidence)
+    if confidence_value is None or not (0.0 < confidence_value <= 1.0):
+        raise ValueError("reviewed confidence must be finite within (0, 1]")
+
+    config = dict(response_config or {})
+    _validate_response_config(channel_name, config)
+    _validate_delay_profile(timing_evidence.delay_profile)
+
+    review_id = "CHANNEL-CAL-%s-%s-%s" % (
+        profile.profile_id,
+        channel_name,
+        reviewed_at.replace(":", "").replace("+", "P"),
+    )
+    review_metadata = {
+        "calibration_review_approved": True,
+        "calibration_review_semantics": CHANNEL_CALIBRATION_REVIEW_VERSION,
+        "calibration_review_id": review_id,
+        "calibration_reviewer_id": reviewer,
+        "calibration_review_time": reviewed_at,
+        "timing_evidence_review_approved": True,
+        "timing_evidence_id": timing_evidence.evidence_id,
+        "timing_evidence_semantics": timing_evidence.semantics_version,
+        "timing_evidence_event_ids": list(timing_evidence.event_ids),
+        "timing_observed_event_count": timing_evidence.observed_event_count,
+        "timing_independent_days": timing_evidence.independent_days,
+        "timing_onset_source": timing_evidence.onset_source,
+        "timing_response_source": timing_evidence.response_source,
+        "configured_window_boundary_used_as_observed_timing": False,
+        "response_config_review_approved": True,
+        "confidence_review_approved": True,
+        "automatic_online_adaptation_allowed": False,
+        "normal_runtime_activation_allowed": False,
+        "separate_activation_review_required": True,
+    }
+    calibrated = _build_reviewed_calibrated_channel(
+        base,
+        confidence=confidence_value,
+        delay_profile=timing_evidence.delay_profile,
+        response_config=config,
+        review_metadata=review_metadata,
+    )
+
+    profile_metadata = dict(profile.metadata or {})
+    profile_metadata.update(
+        {
+            "last_channel_calibration_review_id": review_id,
+            "last_calibrated_channel": channel_name,
+            "separate_activation_artifact_required": True,
+        }
+    )
+    if channel_name == "SO2":
+        updated_profile = replace(profile, so2=calibrated, metadata=profile_metadata)
+    else:
+        updated_profile = replace(profile, ph=calibrated, metadata=profile_metadata)
+
+    review = ChannelCalibrationReviewRecord(
+        review_id=review_id,
+        profile_id=profile.profile_id,
+        channel=channel_name,
+        status="CHANNEL_CALIBRATION_REVIEW_APPROVED",
+        reviewer_id=reviewer,
+        review_time=reviewed_at,
+        timing_evidence_id=timing_evidence.evidence_id,
+        timing_event_ids=tuple(timing_evidence.event_ids),
+        confidence=confidence_value,
+        response_config=config,
+        activation_status="NOT_ACTIVATABLE",
+        learning_enabled=False,
+        residual_control_enabled=False,
+        dcs_write_enabled=False,
+        metadata={
+            "local_gain_event_ids": list(base.evidence_event_ids),
+            "timing_event_ids_are_local_gain_subset": True,
+            "configured_window_is_not_observed_timing": True,
+            "other_channel_status_unchanged": True,
+        },
+    )
+    return ChannelCalibrationReviewResult(profile=updated_profile, review=review)
+
+
+__all__ = [
+    "CHANNEL_CALIBRATION_REVIEW_VERSION",
+    "TIMING_SOURCE_OBSERVED_PROCESS_TRACE",
+    "ObservedResponseTimingEvidence",
+    "ChannelCalibrationReviewRecord",
+    "ChannelCalibrationReviewResult",
+    "approve_channel_calibration",
+]
