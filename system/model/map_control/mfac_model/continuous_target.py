@@ -9,10 +9,11 @@ Core contract::
 
     Q_target_algorithm = clip(Qbase + residual_mfac_hold, hard_min, hard_max)
 
-The hard supply-flow bounds are not duplicated here: defaults are derived from
-``PLANT_CONFIG.scheme2.target_supply_flow`` through the canonical MFAC plant
-contract. Runtime code may pass an explicit config object for isolated tests,
-but the formal production builder rejects plant-bound overrides.
+The hard supply-flow bounds are not duplicated here: production defaults are
+resolved from ``PLANT_CONFIG.scheme2.target_supply_flow`` through the canonical
+MFAC plant contract. Runtime code may pass an explicit config object for isolated
+component tests, but the formal production builder/runtime rejects plant-bound
+overrides.
 """
 
 from __future__ import annotations
@@ -24,11 +25,9 @@ from typing import Any, Dict, Optional
 from system.model.config.mfac_plant_contract import target_supply_flow_contract
 
 
-CONTINUOUS_TARGET_SEMANTICS_VERSION = "SCHEME2_CONTINUOUS_TARGET_V2_PLANT_CONTRACT"
+CONTINUOUS_TARGET_SEMANTICS_VERSION = "SCHEME2_CONTINUOUS_TARGET_V3_LIVE_PLANT_CONTRACT"
 COUNTERFACTUAL_SHADOW = "COUNTERFACTUAL_SHADOW"
 ONLINE_SHADOW = "ONLINE_SHADOW"
-
-_PLANT_TARGET_CONTRACT = target_supply_flow_contract()
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -39,10 +38,18 @@ def _finite(value: Any) -> Optional[float]:
     return number if math.isfinite(number) else None
 
 
+def _plant_min() -> float:
+    return float(target_supply_flow_contract()["minimum"])
+
+
+def _plant_max() -> float:
+    return float(target_supply_flow_contract()["maximum"])
+
+
 @dataclass(frozen=True)
 class ContinuousTargetConfig:
-    hard_min_supply_flow: float = float(_PLANT_TARGET_CONTRACT["minimum"])
-    hard_max_supply_flow: float = float(_PLANT_TARGET_CONTRACT["maximum"])
+    hard_min_supply_flow: float = field(default_factory=_plant_min)
+    hard_max_supply_flow: float = field(default_factory=_plant_max)
 
     def __post_init__(self) -> None:
         lower = _finite(self.hard_min_supply_flow)
