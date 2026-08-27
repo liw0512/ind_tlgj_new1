@@ -22,11 +22,17 @@ class Scheme2MFACDatabaseSchemaTest(unittest.TestCase):
             "mfac_dcs_write_enabled",
             "mfac_runtime_config_status",
             "mfac_runtime_configured",
+            "mfac_runtime_config_version",
+            "mfac_runtime_config_missing_fields",
             "second_module_type",
         }
         self.assertTrue(required.issubset(columns))
         self.assertEqual(
             MFAC_MODEL_RESULT_FIELD_TYPES["mfac_runtime_cycle"],
+            "jsonb",
+        )
+        self.assertEqual(
+            MFAC_MODEL_RESULT_FIELD_TYPES["mfac_runtime_config_missing_fields"],
             "jsonb",
         )
         self.assertEqual(
