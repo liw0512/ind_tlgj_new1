@@ -1,0 +1,410 @@
+# -*- coding: utf-8 -*-
+"""Unified primary runtime policy for Scheme 2 MFAC.
+
+This module is the single second-module runtime facade used after
+``condition_model``.  It owns Dynamic Qbase calculation exactly once per
+10-second decision frame and then chooses one of two *mutually exclusive*
+execution modes:
+
+1. SAFE_PRIMARY_FALLBACK
+   No calibrated coordinator has been installed yet.  The runtime publishes
+   ``clip(Qbase + 0, 0, 70)`` and does not claim tracking, learning, residual
+   control or DCS application.
+2. COORDINATOR_SHADOW
+   A calibrated ``Scheme2RuntimeCoordinator`` has been installed.  The same
+   already-computed Qbase is passed into that coordinator, which becomes the
+   sole owner of target publication, flow tracking, SO2/pH response state,
+   online adaptation and residual HOLD semantics.
+
+The two paths never execute in the same cycle.  Historical/actual slurry flow
+is audit/response evidence only and is never an algorithm-target fallback.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import math
+from typing import Any, Dict, Mapping, Optional
+
+from .continuous_target import ONLINE_SHADOW, ContinuousTargetPublisher
+from .context_resolver import MFACContextResolver
+from .qbase import DynamicQbaseCalculator
+from .runtime_coordinator import Scheme2RuntimeCoordinator
+
+
+MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V2_UNIFIED"
+
+
+def _active_version(pointer: Optional[Mapping[str, Any]], fallback: str = "") -> str:
+    value = dict(pointer or {})
+    condition = value.get("condition")
+    if not isinstance(condition, dict):
+        condition = {}
+    mfac = value.get("mfac")
+    if not isinstance(mfac, dict):
+        mfac = {}
+    legacy = value.get("slurry_policy")
+    if not isinstance(legacy, dict):
+        legacy = {}
+    return str(
+        value.get("integrated_version")
+        or mfac.get("version")
+        or condition.get("version")
+        or legacy.get("version")
+        or fallback
+        or ""
+    ).strip()
+
+
+def _bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in {
+        "1", "true", "yes", "y", "on", "是"
+    }
+
+
+def _finite(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+class MFACUnifiedRuntimePolicy:
+    """Production-facing second-module policy with one MFAC runtime path."""
+
+    def __init__(
+        self,
+        config_spec: Optional[str] = None,
+        *,
+        external_version_management: bool = False,
+        active_pointer: Optional[Dict[str, Any]] = None,
+        initial_runtime_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        del config_spec
+        self.external_version_management = bool(external_version_management)
+        self.active_pointer = dict(active_pointer or {})
+        self.model_version = _active_version(self.active_pointer)
+        self.condition_snapshot_version = self.model_version
+
+        self.qbase_calculator = DynamicQbaseCalculator("xst")
+        self._fallback_target_publisher = ContinuousTargetPublisher()
+        self._runtime_coordinator: Optional[Scheme2RuntimeCoordinator] = None
+        self._configured_context_resolver: Optional[MFACContextResolver] = None
+        self._dynamic_context_resolver: Optional[MFACContextResolver] = None
+
+        self._last_decision: Dict[str, Any] = {}
+        self._reload_count = 0
+        self._qbase_calculation_count = 0
+        self._coordinator_cycle_count = 0
+        self._fallback_cycle_count = 0
+
+        runtime = dict(initial_runtime_state or {})
+        restored_target = runtime.get("last_valid_algorithm_target")
+        if restored_target is not None:
+            try:
+                self._fallback_target_publisher.restore_last_valid_algorithm_target(
+                    float(restored_target)
+                )
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def runtime_coordinator(self) -> Optional[Scheme2RuntimeCoordinator]:
+        return self._runtime_coordinator
+
+    @property
+    def runtime_mode(self) -> str:
+        return (
+            "COORDINATOR_SHADOW"
+            if self._runtime_coordinator is not None
+            else "SAFE_PRIMARY_FALLBACK"
+        )
+
+    def configure_runtime_coordinator(
+        self,
+        coordinator: Scheme2RuntimeCoordinator,
+        *,
+        context_resolver: Optional[MFACContextResolver] = None,
+    ) -> None:
+        """Install the calibrated coordinator as the unique target owner.
+
+        This production bridge is deliberately fail-closed at the current
+        activation stage.  Learning, non-zero residual control and DCS write
+        remain prohibited until those stages are separately reviewed.
+        """
+        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
+            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+        if coordinator.config.learning_enabled:
+            raise ValueError("primary MFAC runtime LEARN must remain 0")
+        if coordinator.config.residual_control_enabled:
+            raise ValueError("primary MFAC runtime Residual must remain 0")
+        if coordinator.dcs_write_enabled:
+            raise ValueError("primary MFAC runtime DCS write must remain off")
+        if context_resolver is not None and not isinstance(
+            context_resolver, MFACContextResolver
+        ):
+            raise TypeError("context_resolver must be MFACContextResolver")
+        self._runtime_coordinator = coordinator
+        self._configured_context_resolver = context_resolver
+
+    def clear_runtime_coordinator(self) -> None:
+        self._runtime_coordinator = None
+        self._configured_context_resolver = None
+
+    def _context(self, row: Mapping[str, Any]):
+        version = str(row.get("condition_snapshot_version") or "").strip()
+        if not version:
+            raise ValueError("condition_snapshot_version is required for MFAC runtime")
+        resolver = self._configured_context_resolver
+        if resolver is not None and resolver.condition_snapshot_version == version:
+            return resolver.resolve(row)
+        if (
+            self._dynamic_context_resolver is None
+            or self._dynamic_context_resolver.condition_snapshot_version != version
+        ):
+            self._dynamic_context_resolver = MFACContextResolver(version)
+        return self._dynamic_context_resolver.resolve(row)
+
+    def _run_target(
+        self,
+        row: Dict[str, Any],
+        *,
+        target: Any,
+        execution_context: Dict[str, Any],
+        qbase: Any,
+    ):
+        timestamp = row.get("date", row.get("timestamp", ""))
+        coordinator = self._runtime_coordinator
+        if coordinator is None:
+            self._fallback_cycle_count += 1
+            algorithm = self._fallback_target_publisher.publish(
+                qbase.qbase_effective,
+                0.0,
+                inputs_valid=bool(qbase.valid),
+                timestamp=str(timestamp or ""),
+                replay_semantics=ONLINE_SHADOW,
+            )
+            return algorithm, 0.0, None, "SAFE_PRIMARY_FALLBACK"
+
+        # The coordinator is the only target publisher in this branch.  Qbase
+        # has already been calculated above and is not recalculated here.
+        context = self._context(row)
+        self._coordinator_cycle_count += 1
+        cycle = coordinator.process_cycle(
+            timestamp=timestamp,
+            qbase_effective=qbase.qbase_effective,
+            qbase_inputs_valid=bool(qbase.valid),
+            outlet_so2=row.get("jyq_SO2"),
+            inlet_so2=row.get("yyq_SO2"),
+            ph=row.get("xstjy_PH"),
+            so2_target=target,
+            actual_supply_flow_feedback=row.get("xstshsjy_LL"),
+            condition_snapshot_version=context.condition_snapshot_version,
+            mfac_context_id=context.mfac_context_id,
+            condition_label=context.condition_label,
+            base_condition_id=context.base_condition_id,
+            grid_id=context.grid_id,
+            policy_region_id=context.policy_region_id,
+            # Current production integration cannot claim a DCS command was
+            # applied.  Formal application/readback remains a future adapter.
+            target_was_applied=False,
+            dcs_applied_target_supply_flow=None,
+            replay_semantics=ONLINE_SHADOW,
+            fast_active=_bool(row.get("fast_change_active"), False),
+            data_quality_ok=_bool(
+                execution_context.get("data_quality_ok"), True
+            ),
+            equipment_changed=_bool(
+                execution_context.get("equipment_changed"), False
+            ),
+        )
+        return (
+            cycle.algorithm_target,
+            float(cycle.residual_hold.held_residual),
+            cycle,
+            "COORDINATOR_SHADOW",
+        )
+
+    def evaluate(
+        self,
+        enriched_row: Dict[str, Any],
+        *,
+        target: Optional[Any] = None,
+        execution_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        row = dict(enriched_row)
+        execution = dict(execution_context or {})
+        timestamp = row.get("date", row.get("timestamp", ""))
+
+        # Single Qbase calculation per decision cycle.
+        qbase = self.qbase_calculator.calculate(row, target_so2=target)
+        self._qbase_calculation_count += 1
+        algorithm, residual_hold, cycle, runtime_mode = self._run_target(
+            row,
+            target=target,
+            execution_context=execution,
+            qbase=qbase,
+        )
+
+        target_value = algorithm.algorithm_target_supply_flow
+        reason_codes = list(qbase.reason_codes)
+        if algorithm.algorithm_target_status != "CALCULATED":
+            reason_codes.append(algorithm.algorithm_target_status)
+        if runtime_mode == "SAFE_PRIMARY_FALLBACK":
+            reason_codes.append("MFAC_COORDINATOR_NOT_CONFIGURED")
+        if not reason_codes:
+            reason_codes = ["MFAC_RUNTIME_CALCULATED"]
+
+        decision_status = (
+            "VALID"
+            if algorithm.algorithm_target_valid and target_value is not None
+            else "HOLD"
+        )
+        coordinator_payload = cycle.to_dict() if cycle is not None else None
+        decision = {
+            "decision_id": "MFAC-%s" % str(timestamp or ""),
+            "timestamp": str(timestamp or ""),
+            "model_type": "MFAC",
+            "runtime_version": MFAC_PRIMARY_RUNTIME_VERSION,
+            "model_version": self.model_version,
+            "condition_snapshot_version": row.get(
+                "condition_snapshot_version", self.condition_snapshot_version
+            ),
+            "condition_label": row.get("condition_label"),
+            "base_condition_id": row.get("base_condition_id"),
+            "grid_id": row.get("grid_id"),
+            "policy_region_id": row.get("policy_region_id"),
+            "control_mode": runtime_mode,
+            "runtime_mode": runtime_mode,
+            "disturbance_mode": row.get("fast_change_mode", "NORMAL"),
+            "current_so2": row.get("jyq_SO2"),
+            "commanded_target": target,
+            "effective_target": target,
+            "experience_source": "MFAC_RUNTIME",
+            "action_id": "MFAC_TARGET",
+            "action_family": "MFAC_TARGET",
+            "action_direction": "CONTINUOUS_TARGET",
+            "action_magnitude": "CONTINUOUS",
+            "decision_status": decision_status,
+            "reason_codes": reason_codes,
+            "qbase": qbase.to_dict(),
+            "qbase_source": "DYNAMIC_QBASE" if qbase.valid else "DYNAMIC_QBASE_INVALID",
+            "qbase_valid": bool(qbase.valid),
+            "qbase_raw": qbase.qbase_raw,
+            "qbase_effective": qbase.qbase_effective,
+            "residual_mfac_hold": residual_hold,
+            "algorithm_target_supply_flow": target_value,
+            "algorithm_target_valid": algorithm.algorithm_target_valid,
+            "algorithm_target_status": algorithm.algorithm_target_status,
+            "algorithm_target": algorithm.to_dict(),
+            "runtime_cycle": coordinator_payload,
+            "learn_enabled": False,
+            "residual_enabled": False,
+            "dcs_write_enabled": False,
+            "target_supply_flow": {
+                "mode": "TARGET_SUPPLY_FLOW",
+                "available": target_value is not None,
+                "value": target_value,
+                "valid": algorithm.algorithm_target_valid,
+                "status": algorithm.algorithm_target_status,
+                "unit": "m3/h",
+                "reason_codes": reason_codes,
+            },
+            "control_recommendation": {
+                "requested_mode": "TARGET_SUPPLY_FLOW",
+                "effective_mode": runtime_mode,
+                "primary": {
+                    "recommendation_type": "MFAC_TARGET_SUPPLY_FLOW",
+                    "actionable": False,
+                    "target_supply_flow": target_value,
+                },
+                "automatic_mode_switch": False,
+                "legacy_compatibility_fields_preserved": True,
+            },
+            "target_flow_execution_preview": {
+                "adapter_mode": "DRY_RUN",
+                "status": "SHADOW_ONLY",
+                "command_issued": False,
+                "dcs_write_attempted": False,
+                "reason_codes": ["MFAC_DCS_WRITE_DISABLED"],
+                "phases": [],
+            },
+            "debug": {
+                "actual_flow_used_as_algorithm_target": False,
+                "target_formula": "clip(qbase_effective + residual_mfac_hold)",
+                "legacy_second_module_executed": False,
+                "qbase_calculation_count": self._qbase_calculation_count,
+                "coordinator_cycle_count": self._coordinator_cycle_count,
+                "fallback_cycle_count": self._fallback_cycle_count,
+                "duplicate_runtime_path": False,
+            },
+        }
+        self._last_decision = deepcopy(decision)
+        return decision
+
+    def record_execution(self, feedback: Dict[str, Any]) -> Dict[str, Any]:
+        # Keep this fail-closed until a formal DCS application/readback adapter
+        # is reviewed and connected to the coordinator.
+        return {
+            "accepted": False,
+            "status": "MFAC_FORMAL_DCS_ADAPTER_NOT_ENABLED",
+            "feedback": dict(feedback or {}),
+            "dcs_write_attempted": False,
+        }
+
+    def export_runtime_state(self) -> Dict[str, Any]:
+        coordinator = self._runtime_coordinator
+        if coordinator is not None:
+            runtime_state = (
+                coordinator.runtime_state.to_dict()
+                if coordinator.runtime_state is not None
+                else None
+            )
+            return {
+                "last_valid_algorithm_target": (
+                    coordinator.target_publisher.last_valid_algorithm_target
+                ),
+                "runtime_state": runtime_state,
+                "residual_mfac_hold": coordinator.residual_mfac_hold,
+                "runtime_mode": self.runtime_mode,
+                "last_decision": deepcopy(self._last_decision),
+            }
+        return {
+            "last_valid_algorithm_target": (
+                self._fallback_target_publisher.last_valid_algorithm_target
+            ),
+            "runtime_state": None,
+            "residual_mfac_hold": 0.0,
+            "runtime_mode": self.runtime_mode,
+            "last_decision": deepcopy(self._last_decision),
+        }
+
+    def mark_external_reload(self) -> None:
+        self._reload_count += 1
+
+    def status(self) -> Dict[str, Any]:
+        coordinator = self._runtime_coordinator
+        return {
+            "model_type": "MFAC",
+            "model_version": self.model_version,
+            "condition_snapshot_version": self.condition_snapshot_version,
+            "runtime_version": MFAC_PRIMARY_RUNTIME_VERSION,
+            "runtime_mode": self.runtime_mode,
+            "coordinator_configured": coordinator is not None,
+            "learn_enabled": False,
+            "residual_enabled": False,
+            "dcs_write_enabled": False,
+            "reload_count": self._reload_count,
+            "qbase_calculation_count": self._qbase_calculation_count,
+            "coordinator_cycle_count": self._coordinator_cycle_count,
+            "fallback_cycle_count": self._fallback_cycle_count,
+        }
+
+
+# Temporary API alias.  New code should use MFACUnifiedRuntimePolicy.
+MFACPrimaryPolicy = MFACUnifiedRuntimePolicy
