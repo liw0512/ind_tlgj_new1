@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unified primary runtime policy for Scheme 2 MFAC.
 
-This is the single second-module runtime facade after ``condition_model``.  It
+This is the single second-module runtime facade after ``condition_model``. It
 calculates Dynamic Qbase exactly once per 10-second decision frame and executes
 one, and only one, target path:
 
@@ -9,8 +9,9 @@ one, and only one, target path:
 - COORDINATOR_SHADOW: the already-computed Qbase enters the dual-response
   ``Scheme2RuntimeCoordinator``, which becomes the sole target owner.
 
-Actual slurry flow remains tracking/response evidence only and is never an
-algorithm-target fallback.
+Formal primary runtime requires both SO2 and pH response channels. Actual
+slurry flow remains tracking/response evidence only and is never an algorithm-
+target fallback.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from .qbase import DynamicQbaseCalculator
 from .runtime_coordinator import Scheme2RuntimeCoordinator
 
 
-MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V3_UNIFIED"
+MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V4_DUAL_RESPONSE"
 
 
 def _active_version(pointer: Optional[Mapping[str, Any]], fallback: str = "") -> str:
@@ -118,26 +119,31 @@ class MFACUnifiedRuntimePolicy:
             else "SAFE_PRIMARY_FALLBACK"
         )
 
-    def configure_runtime_coordinator(
-        self,
-        coordinator: Scheme2RuntimeCoordinator,
-        *,
-        context_resolver: Optional[MFACContextResolver] = None,
-    ) -> None:
-        """Install the calibrated coordinator as the unique target owner.
-
-        Last-valid target continuity is transferred from the fallback publisher
-        into a newly installed coordinator.  This prevents an invalid-input
-        cycle at the mode boundary from losing HOLD_LAST state.
-        """
-        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
-            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+    @staticmethod
+    def _validate_formal_coordinator(coordinator: Scheme2RuntimeCoordinator) -> None:
         if coordinator.config.learning_enabled:
             raise ValueError("primary MFAC runtime LEARN must remain 0")
         if coordinator.config.residual_control_enabled:
             raise ValueError("primary MFAC runtime Residual must remain 0")
         if coordinator.dcs_write_enabled:
             raise ValueError("primary MFAC runtime DCS write must remain off")
+        if coordinator.config.ph_response is None:
+            raise ValueError("formal MFAC runtime requires independent pH response")
+        if coordinator.config.ph_online_adaptation is None:
+            raise ValueError("formal MFAC runtime requires independent phi_ph adaptation")
+        if coordinator.config.ph_arbitration is None:
+            raise ValueError("formal MFAC runtime requires pH residual arbitration")
+
+    def configure_runtime_coordinator(
+        self,
+        coordinator: Scheme2RuntimeCoordinator,
+        *,
+        context_resolver: Optional[MFACContextResolver] = None,
+    ) -> None:
+        """Install a calibrated dual-response coordinator as unique target owner."""
+        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
+            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+        self._validate_formal_coordinator(coordinator)
         if context_resolver is not None and not isinstance(
             context_resolver, MFACContextResolver
         ):
@@ -218,7 +224,6 @@ class MFACUnifiedRuntimePolicy:
             base_condition_id=context.base_condition_id,
             grid_id=context.grid_id,
             policy_region_id=context.policy_region_id,
-            # No formal DCS application/readback adapter is active yet.
             target_was_applied=False,
             dcs_applied_target_supply_flow=None,
             replay_semantics=ONLINE_SHADOW,
@@ -247,8 +252,6 @@ class MFACUnifiedRuntimePolicy:
         row = dict(enriched_row)
         execution = dict(execution_context or {})
         timestamp = row.get("date", row.get("timestamp", ""))
-
-        # Single Qbase calculation per decision cycle.
         qbase = self.qbase_calculator.calculate(row, target_so2=target)
         self._qbase_calculation_count += 1
         algorithm, residual_hold, cycle, runtime_mode = self._run_target(
@@ -401,6 +404,7 @@ class MFACUnifiedRuntimePolicy:
             "runtime_version": MFAC_PRIMARY_RUNTIME_VERSION,
             "runtime_mode": self.runtime_mode,
             "coordinator_configured": coordinator is not None,
+            "dual_response_required": True,
             "learn_enabled": False,
             "residual_enabled": False,
             "dcs_write_enabled": False,
@@ -411,5 +415,4 @@ class MFACUnifiedRuntimePolicy:
         }
 
 
-# Temporary API alias. New code should use MFACUnifiedRuntimePolicy.
 MFACPrimaryPolicy = MFACUnifiedRuntimePolicy
