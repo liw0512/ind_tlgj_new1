@@ -14,7 +14,7 @@
   "evidence_gap": {
     "historical_local_gain": "INSUFFICIENT_EVIDENCE",
     "low_flow_staircase_support": "OUT_OF_HISTORICAL_SUPPORT",
-    "ph_memory_upper_bound": "UNIDENTIFIED",
+    "pulse_recovery_to_quiet_time": "REVIEW_CANDIDATE_NOT_REVIEWED",
     "minimum_effect_multiplier": "REVIEW_REQUIRED",
     "qbase_proximity_without_historical_target": "UNIDENTIFIED"
   },
@@ -37,7 +37,7 @@
     "minimum_ph_observation_seconds": 900.0,
     "effect_timeout_seconds": 1800.0,
     "min_candidate_interval_seconds": 3600.0,
-    "min_quiet_seconds": null,
+    "min_quiet_seconds": 2700.0,
     "max_abs_inlet_so2_change": null,
     "max_ph_baseline_range": 0.05,
     "outlet_so2_headroom_to_safe_max": null,
@@ -49,7 +49,8 @@
       "30 s max_sample_gap is supported by the 10 s cadence audit: only 91 of 298874 adjacent intervals exceed 30 s; it remains a review candidate, not a reviewed value.",
       "0.05 pH baseline range is supported as approximately the median 2-minute pH range among stable-flow windows with outlet-SO2 first-last change <=2 mg/Nm3; it remains a review candidate.",
       "600 s is retained as an SO2 early-observation floor; dual-channel closure now requires at least 900 s so the pH P90 peak candidate near 886 s is not truncated.",
-      "1800 s remains an observation timeout candidate, not a proven pH memory constant; the current pH memory lower bound is >=1800 s.",
+      "1800 s remains an observation timeout candidate only; it is not a PendingDoseGuard response-memory constant.",
+      "2700 s min_quiet is a REVIEW_CANDIDATE rounded above the pulse-end-to-recovery-band P95 ~=2450 s from the separate recovery audit; baseline stability gates must still pass before another test.",
       "min_abs_delta_SO2/pH remain null because the CSV identifies an empirical noise floor but does not choose the engineering safety multiplier above that floor.",
       "Fields left null still require plant review or new evidence."
     ]
@@ -98,8 +99,18 @@
     "pH_onset_p90_seconds": 190.0,
     "pH_peak_p90_seconds": 886.0,
     "SO2_improvement_onset_p90_seconds": 310.0,
-    "pH_memory_lower_bound_seconds": 1800.0,
     "planner_hold_review_candidate_seconds": 360.0,
+    "pulse_recovery_analyzed_event_count": 918,
+    "pulse_end_to_ph_peak_p50_seconds": 220.0,
+    "peak_to_half_decay_p50_seconds": 590.0,
+    "peak_to_half_decay_p90_seconds": 970.0,
+    "peak_to_half_decay_p95_seconds": 1140.0,
+    "pulse_end_to_half_decay_p95_seconds": 1440.0,
+    "pulse_end_to_recovery_band_p50_seconds": 1030.0,
+    "pulse_end_to_recovery_band_p90_seconds": 2020.0,
+    "pulse_end_to_recovery_band_p95_seconds": 2450.0,
+    "recovery_band_definition": "pH <= pre-pulse baseline + 0.05 sustained for approximately 120 s; next pump action right-censors observation",
+    "min_quiet_review_candidate_seconds": 2700.0,
     "sustained_extra_flow_p05_m3_h": 51.0720,
     "sustained_extra_flow_p95_m3_h": 86.3891,
     "nominal_sample_cadence_seconds": 10.0,
@@ -109,7 +120,7 @@
     "ph_half_window_median_difference_p99": 0.0346,
     "outlet_so2_half_window_median_difference_p95_mg_nm3": 1.4098,
     "outlet_so2_half_window_median_difference_p99_mg_nm3": 2.1638,
-    "note": "Timing and noise values constrain review but do not fill reviewed identification parameters automatically. Minimum-effect thresholds must be explicitly chosen above the empirical noise floor."
+    "note": "Pending rise timing, pulse recovery, planner HOLD and noise are separate evidence classes. None fills reviewed identification parameters automatically."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
@@ -178,6 +189,7 @@
     "No numeric value from unit tests is a site calibration default.",
     "Review candidates are inherited engineering or data-derived candidates, not reviewed plant parameters.",
     "The +2.0 m3/h identification stimulus is not the runtime planner max_step_up and is never a 10-second recurrent increment.",
+    "PendingDoseGuard has no recovery-memory authority; trial quiet time is separately reviewed from pulse recovery evidence.",
     "A completed test must pass actual-flow tracking, independent SO2/pH response attribution and the trial evidence gate before it can inform phi.",
     "Production remains LEARN=0, Residual=0, DCS write=off."
   ]
