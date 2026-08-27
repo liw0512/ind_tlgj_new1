@@ -2,8 +2,10 @@
 """Production Process4MapControl runtime with one formal Scheme-2 MFAC path.
 
 The historical ``Process4MapControl.ProcessForMapConsole`` remains only as the
-shared data/training/thread shell.  This subclass makes MFAC canonical at the
-boundary without duplicating Qbase or target calculation.
+shared data/training/thread shell. This subclass makes MFAC canonical at the
+boundary without duplicating Qbase or target calculation. Formal manual runtime
+injection must include the delayed-pH memory and trajectory Shadow layer so it
+cannot bypass the same V4 contract used by ``build_mfac_runtime``.
 """
 
 from __future__ import annotations
@@ -31,9 +33,12 @@ from system.model.map_control.mfac_model.runtime_config import (
 from system.model.map_control.mfac_model.runtime_coordinator import (
     Scheme2RuntimeCoordinator,
 )
+from system.model.map_control.mfac_model.trajectory_coordinator import (
+    Scheme2TrajectoryShadowCoordinator,
+)
 
 
-UNIFIED_PROCESS4_MFAC_VERSION = "PROCESS4_SCHEME2_UNIFIED_RUNTIME_V4_PREVALIDATED"
+UNIFIED_PROCESS4_MFAC_VERSION = "PROCESS4_SCHEME2_UNIFIED_RUNTIME_V5_TRAJECTORY_SHADOW"
 _DATA_QUALITY_MARKER = "_mfac_data_quality_ok"
 
 
@@ -67,8 +72,6 @@ class ProcessForMapConsole(_LegacyShell):
 
         super().__init__(GLOBAL_DATA)
         self.slurry_core_config = deepcopy(MFAC_CORE_BRIDGE_CONFIG)
-        # Migration-only aliases for old introspection/tests. The inherited
-        # sidecar method is overridden below and never executes this object.
         self._scheme2_runtime_coordinator = self._mfac_primary_runtime_coordinator
         self._scheme2_context_resolver = self._mfac_primary_context_resolver
         self._scheme2_qbase_calculator = None
@@ -117,10 +120,25 @@ class ProcessForMapConsole(_LegacyShell):
             },
         }
 
+    @staticmethod
+    def _validate_formal_trajectory_runtime(coordinator) -> None:
+        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
+            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+        MFACUnifiedRuntimePolicy._validate_formal_coordinator(coordinator)
+        if not isinstance(coordinator, Scheme2TrajectoryShadowCoordinator):
+            raise ValueError(
+                "formal P4PC MFAC runtime requires PendingDoseGuard + FlowTrajectoryPlanner shadow"
+            )
+        if not hasattr(coordinator, "pending_dose_guard"):
+            raise ValueError("formal P4PC MFAC runtime missing pending_dose_guard")
+        if not hasattr(coordinator, "trajectory_planner"):
+            raise ValueError("formal P4PC MFAC runtime missing trajectory_planner")
+
     def _attach_primary_runtime_if_configured(self) -> bool:
         coordinator = self._mfac_primary_runtime_coordinator
         if coordinator is None:
             return True
+        self._validate_formal_trajectory_runtime(coordinator)
         pipeline = getattr(self, "_slurry_pipeline", None)
         if pipeline is None:
             return False
@@ -150,21 +168,17 @@ class ProcessForMapConsole(_LegacyShell):
             return False
 
     def configure_mfac_runtime(self, coordinator, context_resolver=None):
-        """Bind a calibrated dual-response Coordinator into the primary path.
+        """Bind a calibrated dual-response + trajectory Shadow runtime.
 
-        Validation is completed before any P4PC runtime field is changed, so a
-        rejected coordinator cannot leave a half-configured production object.
+        Validation completes before any P4PC runtime field changes, so a
+        rejected or legacy coordinator cannot leave a half-configured object.
         """
-        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
-            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
-        MFACUnifiedRuntimePolicy._validate_formal_coordinator(coordinator)
+        self._validate_formal_trajectory_runtime(coordinator)
         if context_resolver is not None and not isinstance(
             context_resolver, MFACContextResolver
         ):
             raise TypeError("context_resolver must be MFACContextResolver")
 
-        # Attach to the active policy first.  Only after that succeeds do we
-        # publish this coordinator as the P4PC runtime fact.
         pipeline = getattr(self, "_slurry_pipeline", None)
         if pipeline is None:
             if not self._ensure_slurry_pipeline():
@@ -186,7 +200,7 @@ class ProcessForMapConsole(_LegacyShell):
         self._mfac_primary_context_resolver = context_resolver
         self._mfac_runtime_build_result = MFACRuntimeBuildResult(
             configured=True,
-            status="CONFIGURED_SHADOW",
+            status="CONFIGURED_TRAJECTORY_SHADOW",
             coordinator=coordinator,
         )
         self._scheme2_runtime_coordinator = coordinator
