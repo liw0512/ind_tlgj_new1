@@ -1,0 +1,96 @@
+{
+  "semantics_version": "SCHEME2_LOCAL_STEP_OBSERVATION_PROFILE_V1_MANUAL_ONLY",
+  "profile_id": "MFAC-LOCAL-STEP-OBSERVATION-DESIGN-5553E529-20260827",
+  "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
+  "source_noise_audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
+  "status": "INCOMPLETE_REVIEW_REQUIRED",
+  "activation_status": "NOT_ACTIVATABLE",
+  "automatic_execution_allowed": false,
+  "dcs_write_enabled": false,
+  "review_candidate_parameters": {
+    "tracking": {
+      "target_change_deadband": null,
+      "reach_tolerance": 0.5,
+      "required_sustain_seconds": null,
+      "execution_timeout_seconds": 300.0,
+      "max_sample_gap_seconds": 30.0
+    },
+    "so2_response": {
+      "baseline_window_seconds": 300.0,
+      "delay_onset_seconds": 310.0,
+      "observation_seconds": null,
+      "measurement_window_seconds": null,
+      "max_sample_gap_seconds": 30.0,
+      "target_change_tolerance": null,
+      "min_baseline_samples": null,
+      "min_response_samples": null
+    },
+    "ph_response": {
+      "baseline_window_seconds": 300.0,
+      "delay_onset_seconds": 190.0,
+      "observation_seconds": null,
+      "measurement_window_seconds": null,
+      "max_sample_gap_seconds": 30.0,
+      "target_change_tolerance": null,
+      "min_baseline_samples": null,
+      "min_response_samples": null
+    }
+  },
+  "reviewed_parameters": {
+    "tracking": {
+      "target_change_deadband": null,
+      "reach_tolerance": null,
+      "required_sustain_seconds": null,
+      "execution_timeout_seconds": null,
+      "max_sample_gap_seconds": null
+    },
+    "so2_response": {
+      "baseline_window_seconds": null,
+      "delay_onset_seconds": null,
+      "observation_seconds": null,
+      "measurement_window_seconds": null,
+      "max_sample_gap_seconds": null,
+      "target_change_tolerance": null,
+      "min_baseline_samples": null,
+      "min_response_samples": null
+    },
+    "ph_response": {
+      "baseline_window_seconds": null,
+      "delay_onset_seconds": null,
+      "observation_seconds": null,
+      "measurement_window_seconds": null,
+      "max_sample_gap_seconds": null,
+      "target_change_tolerance": null,
+      "min_baseline_samples": null,
+      "min_response_samples": null
+    }
+  },
+  "candidate_basis": {
+    "reach_tolerance": "inherited +2 m3/h Phase-1 identification review candidate",
+    "execution_timeout_seconds": "inherited manual action timeout review candidate",
+    "max_sample_gap_seconds": "10 s cadence audit; 91 of 298874 adjacent intervals exceed 30 s",
+    "baseline_window_seconds": "inherited 300 s identification baseline review candidate",
+    "so2_delay_onset_seconds": "large-pulse SO2 improvement onset P90 ~=310 s; useful only as a review candidate because low-step timing is unobserved",
+    "ph_delay_onset_seconds": "large-pulse pH onset P90 ~=190 s; useful only as a review candidate because low-step timing is unobserved"
+  },
+  "unresolved_monitoring_fields": [
+    "tracking.target_change_deadband",
+    "tracking.required_sustain_seconds",
+    "so2_response.observation_seconds",
+    "so2_response.measurement_window_seconds",
+    "so2_response.target_change_tolerance",
+    "so2_response.min_baseline_samples",
+    "so2_response.min_response_samples",
+    "ph_response.observation_seconds",
+    "ph_response.measurement_window_seconds",
+    "ph_response.target_change_tolerance",
+    "ph_response.min_baseline_samples",
+    "ph_response.min_response_samples"
+  ],
+  "notes": [
+    "The manual identification subsystem must not borrow production runtime tracking/response parameters implicitly.",
+    "Large-pulse onset timings are review candidates only; the historical dataset does not prove identical low-step timing.",
+    "The observation profile can instantiate existing monitor classes only after every reviewed field is explicit.",
+    "This profile has no actuator API, no DCS write permission, and no normal runtime activation authority."
+  ]
+}
