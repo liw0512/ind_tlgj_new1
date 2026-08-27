@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """Audit-only counterfactual contracts for pulse-vs-staircase comparison.
 
-This module does not contain a learned process model.  It defines candidate
-trajectories and the metrics that any future replay model must report so that
-human pulses and staircase candidates are compared on the same basis.
+This module does not contain a learned process model. It defines candidate
+trajectories, historical-support checks and the metrics that any future replay
+model must report so human pulses and staircase candidates are compared on the
+same basis without turning extrapolation into calibration evidence.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import math
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 
-TRAJECTORY_COUNTERFACTUAL_VERSION = "SCHEME2_TRAJECTORY_COUNTERFACTUAL_V1_AUDIT_ONLY"
+TRAJECTORY_COUNTERFACTUAL_VERSION = "SCHEME2_TRAJECTORY_COUNTERFACTUAL_V2_SUPPORT_GATED"
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -101,6 +102,104 @@ class StaircaseTrajectoryCandidate:
 
 
 @dataclass(frozen=True)
+class HistoricalTrajectorySupport:
+    sustained_flow_p05_m3_h: float
+    sustained_flow_p95_m3_h: float
+    action_duration_p05_seconds: float
+    action_duration_p95_seconds: float
+    max_observed_proactive_advance_seconds: float = 0.0
+    source_event_count: int = 0
+    source: str = "HISTORICAL_DYNAMIC_EVIDENCE"
+
+    def __post_init__(self) -> None:
+        flow_low = _finite(self.sustained_flow_p05_m3_h)
+        flow_high = _finite(self.sustained_flow_p95_m3_h)
+        duration_low = _finite(self.action_duration_p05_seconds)
+        duration_high = _finite(self.action_duration_p95_seconds)
+        advance = _finite(self.max_observed_proactive_advance_seconds)
+        if flow_low is None or flow_high is None or flow_low >= flow_high:
+            raise ValueError("invalid sustained-flow support")
+        if duration_low is None or duration_high is None or duration_low >= duration_high:
+            raise ValueError("invalid duration support")
+        if advance is None or advance < 0.0:
+            raise ValueError("max_observed_proactive_advance_seconds must be >= 0")
+        if int(self.source_event_count) < 0:
+            raise ValueError("source_event_count must be >= 0")
+
+
+@dataclass(frozen=True)
+class CounterfactualSupportAssessment:
+    candidate_id: str
+    stage_level_support_fraction: float
+    sustained_level_supported: bool
+    duration_supported: bool
+    proactive_advance_supported: bool
+    extrapolation_required: bool
+    eligible_for_step_calibration_evidence: bool
+    reasons: Tuple[str, ...] = ()
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    semantics_version: str = TRAJECTORY_COUNTERFACTUAL_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        value = asdict(self)
+        value["reasons"] = list(self.reasons)
+        return value
+
+
+def assess_historical_support(
+    candidate: StaircaseTrajectoryCandidate,
+    support: HistoricalTrajectorySupport,
+) -> CounterfactualSupportAssessment:
+    flow_low = float(support.sustained_flow_p05_m3_h)
+    flow_high = float(support.sustained_flow_p95_m3_h)
+    supported_stages = [
+        flow_low <= float(stage.extra_flow_m3_h) <= flow_high
+        for stage in candidate.stages
+    ]
+    stage_fraction = float(sum(supported_stages) / len(supported_stages))
+    sustained_supported = bool(all(supported_stages))
+    duration = float(candidate.total_duration_seconds)
+    duration_supported = bool(
+        float(support.action_duration_p05_seconds)
+        <= duration
+        <= float(support.action_duration_p95_seconds)
+    )
+    advance_supported = bool(
+        float(candidate.advance_seconds)
+        <= float(support.max_observed_proactive_advance_seconds)
+    )
+    reasons = []
+    if not sustained_supported:
+        reasons.append("SUSTAINED_FLOW_LEVEL_OUT_OF_HISTORICAL_SUPPORT")
+    if not duration_supported:
+        reasons.append("TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT")
+    if not advance_supported:
+        reasons.append("PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT")
+    extrapolation = bool(reasons)
+    return CounterfactualSupportAssessment(
+        candidate_id=candidate.candidate_id,
+        stage_level_support_fraction=stage_fraction,
+        sustained_level_supported=sustained_supported,
+        duration_supported=duration_supported,
+        proactive_advance_supported=advance_supported,
+        extrapolation_required=extrapolation,
+        eligible_for_step_calibration_evidence=not extrapolation,
+        reasons=tuple(reasons),
+        metadata={
+            "sustained_flow_support_m3_h": [flow_low, flow_high],
+            "duration_support_seconds": [
+                float(support.action_duration_p05_seconds),
+                float(support.action_duration_p95_seconds),
+            ],
+            "max_observed_proactive_advance_seconds": float(
+                support.max_observed_proactive_advance_seconds
+            ),
+            "support_source_event_count": int(support.source_event_count),
+        },
+    )
+
+
+@dataclass(frozen=True)
 class TrajectoryCounterfactualMetrics:
     candidate_id: str
     model_id: str
@@ -135,11 +234,7 @@ class TrajectoryCounterfactualComparison:
             raise ValueError("counterfactual comparison cannot activate runtime control")
 
     def ranked_valid_candidates(self) -> Tuple[TrajectoryCounterfactualMetrics, ...]:
-        """Return deterministic safety-first ranking without claiming causality.
-
-        pH safe violation is ranked first, then operating violation, SO2
-        exceedance and total slurry. Missing metrics sort to +infinity.
-        """
+        """Return deterministic safety-first ranking without claiming causality."""
         def key(item: TrajectoryCounterfactualMetrics):
             def value(number: Optional[float]) -> float:
                 parsed = _finite(number)
@@ -189,6 +284,9 @@ __all__ = [
     "TRAJECTORY_COUNTERFACTUAL_VERSION",
     "StaircaseStage",
     "StaircaseTrajectoryCandidate",
+    "HistoricalTrajectorySupport",
+    "CounterfactualSupportAssessment",
+    "assess_historical_support",
     "TrajectoryCounterfactualMetrics",
     "TrajectoryCounterfactualComparison",
     "build_equal_dose_candidate",
