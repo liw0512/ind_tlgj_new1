@@ -9,6 +9,9 @@ from system.model.map_control.mfac_model.runtime_config import (
     DEFAULT_MFAC_RUNTIME_CONFIG,
     build_mfac_runtime,
 )
+from system.model.map_control.mfac_model.trajectory_coordinator import (
+    Scheme2TrajectoryShadowCoordinator,
+)
 
 
 class Scheme2RuntimeConfigTest(unittest.TestCase):
@@ -68,9 +71,24 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
                 "phi_upper_bound": 1.0,
                 "max_single_update_abs": 0.1,
             },
-            # pH ranges/guard band are plant facts and must not be copied here.
             "ph_arbitration": {
                 "min_confidence": 0.5,
+            },
+            # Test-only synthetic timings; production repository keeps these
+            # sections empty until historical/field calibration is reviewed.
+            "pending_dose": {
+                "flow_change_deadband": 1.0,
+                "response_onset_seconds": 10.0,
+                "response_peak_seconds": 30.0,
+                "response_memory_seconds": 60.0,
+                "max_sample_gap_seconds": 15.0,
+                "min_confidence": 0.5,
+            },
+            "trajectory_planner": {
+                "max_step_up": 2.0,
+                "max_step_down": 3.0,
+                "min_hold_seconds": 20.0,
+                "demand_deadband": 0.1,
             },
         }
 
@@ -88,6 +106,8 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
             "ph_response",
             "ph_adaptation",
             "ph_arbitration",
+            "pending_dose",
+            "trajectory_planner",
         ):
             self.assertEqual(DEFAULT_MFAC_RUNTIME_CONFIG[section], {})
         result = build_mfac_runtime(DEFAULT_MFAC_RUNTIME_CONFIG)
@@ -102,8 +122,8 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
         self.assertIn("tracking.target_change_deadband", result.missing_fields)
         self.assertIn("so2_response.delay_onset_seconds", result.missing_fields)
         self.assertIn("ph_response.delay_onset_seconds", result.missing_fields)
-        # Plant-owned pH facts are intentionally not part of missing MFAC
-        # calibration because they come from PLANT_CONFIG.
+        self.assertIn("pending_dose.response_peak_seconds", result.missing_fields)
+        self.assertIn("trajectory_planner.max_step_up", result.missing_fields)
         self.assertNotIn("ph_arbitration.safe_min", result.missing_fields)
 
     def test_current_activation_stage_rejects_unsafe_permissions(self):
@@ -120,8 +140,8 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             result = build_mfac_runtime(self.complete_config(root))
             self.assertTrue(result.configured)
-            self.assertEqual(result.status, "CONFIGURED_SHADOW")
-            self.assertIsNotNone(result.coordinator)
+            self.assertEqual(result.status, "CONFIGURED_TRAJECTORY_SHADOW")
+            self.assertIsInstance(result.coordinator, Scheme2TrajectoryShadowCoordinator)
             coordinator = result.coordinator
             target = target_supply_flow_contract()
             ph = ph_arbitration_plant_values()
@@ -154,6 +174,8 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
             self.assertIsNotNone(coordinator.ph_response_monitor)
             self.assertIsNotNone(coordinator.ph_online_adapter)
             self.assertIsNotNone(coordinator.ph_arbiter)
+            self.assertIsNotNone(coordinator.pending_dose_guard)
+            self.assertIsNotNone(coordinator.trajectory_planner)
 
     def test_runtime_cannot_override_plant_owned_target_bounds(self):
         with tempfile.TemporaryDirectory() as root:
