@@ -2,10 +2,10 @@
 """Shadow-only memory model for delayed pH response to recent slurry-flow changes.
 
 ``phi_ph`` is a step sensitivity (delta pH / delta flow), not a volume gain.
-This module therefore tracks recent actual-flow increments and estimates the
-part of their delayed pH response that has not appeared yet.  Delivered slurry
-volume is exposed for audit only; it is never treated as a quantity that must be
-"paid back" by later control moves.
+Recent actual-flow changes are superposed through a simple calibrated step
+response. Future extrema are evaluated at every onset/peak breakpoint, so a
+later flow reduction cannot incorrectly cancel the still-developing pH peak of
+an earlier positive pulse. Delivered volume is audit only and never dose debt.
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .mfac_schema import MFACRuntimeState
 from .ph_arbitration import PHResidualArbitrationConfig
 
 
-PENDING_DOSE_GUARD_SEMANTICS_VERSION = "SCHEME2_PENDING_DOSE_GUARD_V1_SHADOW"
+PENDING_DOSE_GUARD_SEMANTICS_VERSION = "SCHEME2_PENDING_DOSE_GUARD_V2_FUTURE_EXTREMA"
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -92,6 +92,12 @@ class PendingDoseGuardDecision:
     predicted_ph_after_pending: Optional[float]
     recent_slurry_volume_m3: Optional[float]
     active_contribution_count: int
+    pending_up_equivalent_delta_q: float = 0.0
+    pending_down_equivalent_delta_q: float = 0.0
+    predicted_ph_upper: Optional[float] = None
+    predicted_ph_lower: Optional[float] = None
+    predicted_peak_horizon_seconds: Optional[float] = None
+    predicted_trough_horizon_seconds: Optional[float] = None
     reason: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
     semantics_version: str = PENDING_DOSE_GUARD_SEMANTICS_VERSION
@@ -151,6 +157,51 @@ class PendingDoseGuard:
                 volume += 0.5 * (max(0.0, lf) + max(0.0, rf)) * hours
         return float(volume)
 
+    def _future_equivalent_range(
+        self,
+        now: datetime,
+    ) -> Tuple[float, float, float, float, List[Dict[str, Any]]]:
+        """Return future max/min equivalent step change relative to *now*.
+
+        The response function is piecewise linear, so future extrema can only
+        occur at the current instant or when a contribution reaches onset/peak.
+        Evaluating those breakpoints is exact for this V2 response model and
+        avoids an arbitrary simulation time step.
+        """
+        onset = float(self.config.response_onset_seconds)
+        peak = float(self.config.response_peak_seconds)
+        memory = float(self.config.response_memory_seconds)
+        ages: List[Tuple[datetime, float, float, float]] = []
+        horizons = {0.0}
+        details: List[Dict[str, Any]] = []
+        for event_time, delta_q in self._contributions:
+            age = max(0.0, (now - event_time).total_seconds())
+            current_fraction = self._response_fraction(age)
+            ages.append((event_time, float(delta_q), age, current_fraction))
+            for breakpoint in (onset, peak):
+                horizon = breakpoint - age
+                if 0.0 < horizon <= memory:
+                    horizons.add(float(horizon))
+            details.append({
+                "timestamp": event_time.isoformat(),
+                "age_seconds": age,
+                "delta_q_actual": float(delta_q),
+                "response_fraction_now": current_fraction,
+            })
+
+        values: List[Tuple[float, float]] = []
+        for horizon in sorted(horizons):
+            future_eq = 0.0
+            for _event_time, delta_q, age, current_fraction in ages:
+                future_fraction = self._response_fraction(age + horizon)
+                future_eq += delta_q * (future_fraction - current_fraction)
+            values.append((horizon, float(future_eq)))
+        if not values:
+            return 0.0, 0.0, 0.0, 0.0, details
+        peak_horizon, max_eq = max(values, key=lambda item: item[1])
+        trough_horizon, min_eq = min(values, key=lambda item: item[1])
+        return max_eq, min_eq, peak_horizon, trough_horizon, details
+
     def update(
         self,
         *,
@@ -185,28 +236,19 @@ class PendingDoseGuard:
         self._samples.append((now, flow))
         self._prune(now)
 
-        pending_eq = 0.0
-        realized_eq = 0.0
-        details: List[Dict[str, Any]] = []
-        for event_time, delta_q in self._contributions:
-            age = max(0.0, (now - event_time).total_seconds())
-            fraction = self._response_fraction(age)
-            pending_eq += float(delta_q) * (1.0 - fraction)
-            realized_eq += float(delta_q) * fraction
-            details.append({
-                "timestamp": event_time.isoformat(),
-                "age_seconds": age,
-                "delta_q_actual": float(delta_q),
-                "response_fraction": fraction,
-            })
-
+        max_eq, min_eq, peak_horizon, trough_horizon, details = (
+            self._future_equivalent_range(now)
+        )
+        # Backward-compatible scalar: keep the more extreme future equivalent
+        # change, while exposing signed upper/lower projections explicitly.
+        selected_eq = max_eq if abs(max_eq) >= abs(min_eq) else min_eq
         phi_ph = _finite(state.phi_ph_live) if state is not None else None
         confidence = _finite(state.confidence_ph_live) if state is not None else None
         common_metadata = {
-            "realized_equivalent_delta_q": realized_eq,
             "contributions": details,
             "last_reset_reason": self._last_reset_reason,
             "recent_volume_semantics": "AUDIT_ONLY_NOT_CONTROL_DEBT",
+            "future_extrema_method": "PIECEWISE_LINEAR_STEP_BREAKPOINTS",
         }
         if (
             ph is None or phi_ph is None or phi_ph <= 0.0
@@ -215,30 +257,53 @@ class PendingDoseGuard:
             return self._decision(
                 "MODEL_UNAVAILABLE", flow, ph, state,
                 "PH_MODEL_UNAVAILABLE_OR_LOW_CONFIDENCE",
-                pending_equivalent_delta_q=pending_eq,
+                pending_equivalent_delta_q=selected_eq,
+                pending_up_equivalent_delta_q=max_eq,
+                pending_down_equivalent_delta_q=min_eq,
+                predicted_peak_horizon_seconds=peak_horizon,
+                predicted_trough_horizon_seconds=trough_horizon,
                 recent_slurry_volume_m3=self._recent_volume(),
                 metadata=common_metadata,
             )
 
-        pending_delta_ph = float(phi_ph) * pending_eq
-        predicted = ph + pending_delta_ph
+        predicted_upper = ph + float(phi_ph) * max_eq
+        predicted_lower = ph + float(phi_ph) * min_eq
         upper_guard = float(self.ph_envelope.safe_max) - float(self.ph_envelope.guard_band)
         lower_guard = float(self.ph_envelope.safe_min) + float(self.ph_envelope.guard_band)
-        if predicted >= upper_guard:
+        if predicted_upper >= upper_guard:
             status, reason = "LIMIT_POSITIVE", "PENDING_PH_REACHES_UPPER_GUARD"
-        elif predicted > float(self.ph_envelope.operating_max):
+            selected_eq = max_eq
+            predicted = predicted_upper
+        elif predicted_upper > float(self.ph_envelope.operating_max):
             status, reason = "WATCH_HIGH", "PENDING_PH_EXCEEDS_OPERATING_MAX"
-        elif predicted <= lower_guard:
+            selected_eq = max_eq
+            predicted = predicted_upper
+        elif predicted_lower <= lower_guard:
             status, reason = "LIMIT_NEGATIVE", "PENDING_PH_REACHES_LOWER_GUARD"
-        elif predicted < float(self.ph_envelope.operating_min):
+            selected_eq = min_eq
+            predicted = predicted_lower
+        elif predicted_lower < float(self.ph_envelope.operating_min):
             status, reason = "WATCH_LOW", "PENDING_PH_BELOW_OPERATING_MIN"
+            selected_eq = min_eq
+            predicted = predicted_lower
         else:
             status, reason = "CLEAR", "PENDING_PH_WITHIN_OPERATING_ENVELOPE"
+            if abs(max_eq) >= abs(min_eq):
+                selected_eq, predicted = max_eq, predicted_upper
+            else:
+                selected_eq, predicted = min_eq, predicted_lower
+
         return self._decision(
             status, flow, ph, state, reason,
-            pending_equivalent_delta_q=pending_eq,
-            pending_delta_ph=pending_delta_ph,
+            pending_equivalent_delta_q=selected_eq,
+            pending_delta_ph=float(phi_ph) * selected_eq,
             predicted_ph_after_pending=predicted,
+            pending_up_equivalent_delta_q=max_eq,
+            pending_down_equivalent_delta_q=min_eq,
+            predicted_ph_upper=predicted_upper,
+            predicted_ph_lower=predicted_lower,
+            predicted_peak_horizon_seconds=peak_horizon,
+            predicted_trough_horizon_seconds=trough_horizon,
             recent_slurry_volume_m3=self._recent_volume(),
             metadata=common_metadata,
         )
@@ -255,6 +320,12 @@ class PendingDoseGuard:
         pending_delta_ph: Optional[float] = None,
         predicted_ph_after_pending: Optional[float] = None,
         recent_slurry_volume_m3: Optional[float] = None,
+        pending_up_equivalent_delta_q: float = 0.0,
+        pending_down_equivalent_delta_q: float = 0.0,
+        predicted_ph_upper: Optional[float] = None,
+        predicted_ph_lower: Optional[float] = None,
+        predicted_peak_horizon_seconds: Optional[float] = None,
+        predicted_trough_horizon_seconds: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> PendingDoseGuardDecision:
         return PendingDoseGuardDecision(
@@ -270,6 +341,12 @@ class PendingDoseGuard:
             predicted_ph_after_pending=predicted_ph_after_pending,
             recent_slurry_volume_m3=recent_slurry_volume_m3,
             active_contribution_count=len(self._contributions),
+            pending_up_equivalent_delta_q=float(pending_up_equivalent_delta_q),
+            pending_down_equivalent_delta_q=float(pending_down_equivalent_delta_q),
+            predicted_ph_upper=predicted_ph_upper,
+            predicted_ph_lower=predicted_ph_lower,
+            predicted_peak_horizon_seconds=predicted_peak_horizon_seconds,
+            predicted_trough_horizon_seconds=predicted_trough_horizon_seconds,
             reason=str(reason),
             metadata=dict(metadata or {}),
         )
