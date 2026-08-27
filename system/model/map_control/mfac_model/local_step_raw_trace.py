@@ -2,10 +2,11 @@
 """Manual-only raw trace capture for controlled LOCAL_GAIN trials.
 
 The existing SO2/pH response monitors summarize configured windows and therefore
-cannot prove observed onset timing.  This recorder preserves the raw 10-second
+cannot prove observed onset timing. This recorder preserves the raw 10-second
 process trajectory around a manually executed local-step trial so the separate
 ``observed_timing_extractor`` can later derive observed timing.
 
+Invalid trace bundles deliberately expose no extractable SO2/pH trace objects.
 It has no actuator, DCS-write, learning or runtime-control authority.
 """
 
@@ -24,7 +25,7 @@ from .observed_timing_extractor import (
 
 
 LOCAL_STEP_RAW_TRACE_VERSION = (
-    "SCHEME2_LOCAL_STEP_RAW_TRACE_V1_MANUAL_EVIDENCE_CAPTURE"
+    "SCHEME2_LOCAL_STEP_RAW_TRACE_V2_FAIL_CLOSED_EVIDENCE_CAPTURE"
 )
 
 
@@ -93,12 +94,32 @@ class LocalStepRawTraceBundle:
             raise ValueError("raw trace bundle cannot enable runtime permissions")
         if self.status not in {"TRACE_REVIEW_CANDIDATE", "INVALID_TRACE"}:
             raise ValueError("unsupported raw trace bundle status")
+        if self.status == "TRACE_REVIEW_CANDIDATE":
+            if self.reasons:
+                raise ValueError("review-candidate trace bundle cannot carry invalid reasons")
+            if self.so2_trace is None or self.ph_trace is None:
+                raise ValueError("review-candidate trace bundle requires both channel traces")
+            if not str(self.actual_flow_reached_time or "").strip():
+                raise ValueError("review-candidate trace bundle requires actual flow reach time")
+        else:
+            if self.so2_trace is not None or self.ph_trace is not None:
+                raise ValueError("invalid raw trace bundle must not expose extractable traces")
+
+    @property
+    def usable_for_timing_extraction(self) -> bool:
+        return (
+            self.status == "TRACE_REVIEW_CANDIDATE"
+            and not self.reasons
+            and self.so2_trace is not None
+            and self.ph_trace is not None
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
         value["reasons"] = list(self.reasons)
         value["so2_trace"] = asdict(self.so2_trace) if self.so2_trace is not None else None
         value["ph_trace"] = asdict(self.ph_trace) if self.ph_trace is not None else None
+        value["usable_for_timing_extraction"] = self.usable_for_timing_extraction
         return value
 
 
@@ -202,6 +223,13 @@ class LocalStepRawTraceRecorder:
 
         reached = _timestamp(self._actual_flow_reached_time) if self._actual_flow_reached_time else None
         if reached is not None and self._points:
+            first_time = _timestamp(self._points[0].timestamp)
+            last_time = _timestamp(self._points[-1].timestamp)
+            try:
+                if reached < first_time or reached > last_time:
+                    reasons.append("ACTUAL_FLOW_REACHED_OUTSIDE_TRACE_RANGE")
+            except TypeError:
+                reasons.append("TRACE_TIMEZONE_SEMANTICS_MISMATCH")
             before = [point for point in self._points if _timestamp(point.timestamp) <= reached]
             after = [point for point in self._points if _timestamp(point.timestamp) > reached]
             if not before:
@@ -232,10 +260,11 @@ class LocalStepRawTraceRecorder:
         if not ph_samples:
             reasons.append("PH_TRACE_EMPTY")
 
-        status = "TRACE_REVIEW_CANDIDATE" if not reasons else "INVALID_TRACE"
+        reasons = list(dict.fromkeys(reasons))
+        valid = not reasons
         so2_trace = None
         ph_trace = None
-        if canonical_event_id and self._actual_flow_reached_time and so2_samples:
+        if valid:
             so2_trace = ObservedProcessTrace(
                 trace_id="RAW-SO2-%s" % self.plan.trial_id,
                 event_id=canonical_event_id,
@@ -245,9 +274,11 @@ class LocalStepRawTraceRecorder:
                 mfac_context_id=self.plan.mfac_context_id,
                 actual_flow_reached_time=self._actual_flow_reached_time,
                 samples=so2_samples,
-                metadata={"tracking_event_id": self._tracking_event_id},
+                metadata={
+                    "tracking_event_id": self._tracking_event_id,
+                    "raw_trace_bundle_status": "TRACE_REVIEW_CANDIDATE",
+                },
             )
-        if canonical_event_id and self._actual_flow_reached_time and ph_samples:
             ph_trace = ObservedProcessTrace(
                 trace_id="RAW-PH-%s" % self.plan.trial_id,
                 event_id=canonical_event_id,
@@ -257,7 +288,10 @@ class LocalStepRawTraceRecorder:
                 mfac_context_id=self.plan.mfac_context_id,
                 actual_flow_reached_time=self._actual_flow_reached_time,
                 samples=ph_samples,
-                metadata={"tracking_event_id": self._tracking_event_id},
+                metadata={
+                    "tracking_event_id": self._tracking_event_id,
+                    "raw_trace_bundle_status": "TRACE_REVIEW_CANDIDATE",
+                },
             )
 
         return LocalStepRawTraceBundle(
@@ -269,8 +303,8 @@ class LocalStepRawTraceRecorder:
             actual_flow_reached_time=self._actual_flow_reached_time,
             so2_trace=so2_trace,
             ph_trace=ph_trace,
-            status=status,
-            reasons=tuple(dict.fromkeys(reasons)),
+            status="TRACE_REVIEW_CANDIDATE" if valid else "INVALID_TRACE",
+            reasons=tuple(reasons),
             sample_count=len(self._points),
             learning_enabled=False,
             residual_control_enabled=False,
@@ -280,6 +314,7 @@ class LocalStepRawTraceRecorder:
                 "configured_window_boundary_used_as_observed_timing": False,
                 "automatic_online_adaptation_allowed": False,
                 "normal_runtime_activation_allowed": False,
+                "invalid_trace_exposes_extractable_trace": False,
             },
         )
 
