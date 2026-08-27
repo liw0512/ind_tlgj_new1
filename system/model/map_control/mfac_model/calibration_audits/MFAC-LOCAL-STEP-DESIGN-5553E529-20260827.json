@@ -16,6 +16,7 @@
     "low_flow_staircase_support": "OUT_OF_HISTORICAL_SUPPORT",
     "pulse_recovery_to_quiet_time": "REVIEW_CANDIDATE_NOT_REVIEWED",
     "minimum_effect_multiplier": "REVIEW_REQUIRED",
+    "inlet_so2_5min_stability": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
     "qbase_proximity_without_historical_target": "UNIDENTIFIED"
   },
   "review_candidate_parameters": {
@@ -51,6 +52,7 @@
       "600 s is retained as an SO2 early-observation floor; dual-channel closure now requires at least 900 s so the pH P90 peak candidate near 886 s is not truncated.",
       "1800 s remains an observation timeout candidate only; it is not a PendingDoseGuard response-memory constant.",
       "2700 s min_quiet is a REVIEW_CANDIDATE rounded above the pulse-end-to-recovery-band P95 ~=2450 s from the separate recovery audit; baseline stability gates must still pass before another test.",
+      "A separate 300-second baseline audit found only three qualifying independent windows, so max_abs_inlet_so2_change remains null rather than publishing unstable quantiles.",
       "min_abs_delta_SO2/pH remain null because the CSV identifies an empirical noise floor but does not choose the engineering safety multiplier above that floor.",
       "Fields left null still require plant review or new evidence."
     ]
@@ -111,6 +113,8 @@
     "pulse_end_to_recovery_band_p95_seconds": 2450.0,
     "recovery_band_definition": "pH <= pre-pulse baseline + 0.05 sustained for approximately 120 s; next pump action right-censors observation",
     "min_quiet_review_candidate_seconds": 2700.0,
+    "five_minute_identification_baseline_window_count": 3,
+    "max_abs_inlet_so2_change_status": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
     "sustained_extra_flow_p05_m3_h": 51.0720,
     "sustained_extra_flow_p95_m3_h": 86.3891,
     "nominal_sample_cadence_seconds": 10.0,
@@ -120,7 +124,7 @@
     "ph_half_window_median_difference_p99": 0.0346,
     "outlet_so2_half_window_median_difference_p95_mg_nm3": 1.4098,
     "outlet_so2_half_window_median_difference_p99_mg_nm3": 2.1638,
-    "note": "Pending rise timing, pulse recovery, planner HOLD and noise are separate evidence classes. None fills reviewed identification parameters automatically."
+    "note": "Pending rise timing, pulse recovery, planner HOLD, 5-minute baseline evidence and noise are separate evidence classes. None fills reviewed identification parameters automatically."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
