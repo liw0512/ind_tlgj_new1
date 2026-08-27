@@ -1,0 +1,100 @@
+{
+  "semantics_version": "SCHEME2_TRAJECTORY_COUNTERFACTUAL_V1_AUDIT_ONLY",
+  "candidate_set_id": "MFAC-STAIRCASE-CANDIDATES-5553E529-20260827",
+  "activation_status": "NOT_ACTIVATABLE",
+  "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
+  "reference": {
+    "type": "VALIDATED_HISTORICAL_PULSE_MEDIAN",
+    "extra_volume_m3": 7.6087916667,
+    "note": "Equal-dose value is an offline fairness constraint, not online dose debt."
+  },
+  "candidates": [
+    {
+      "candidate_id": "ST3_20_30_40_ADV10",
+      "advance_seconds": 600.0,
+      "stages": [
+        {"extra_flow_m3_h": 20.0, "hold_seconds": 304.3517},
+        {"extra_flow_m3_h": 30.0, "hold_seconds": 304.3517},
+        {"extra_flow_m3_h": 40.0, "hold_seconds": 304.3517}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 40.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    },
+    {
+      "candidate_id": "ST3_20_30_40_ADV5",
+      "advance_seconds": 300.0,
+      "stages": [
+        {"extra_flow_m3_h": 20.0, "hold_seconds": 304.3517},
+        {"extra_flow_m3_h": 30.0, "hold_seconds": 304.3517},
+        {"extra_flow_m3_h": 40.0, "hold_seconds": 304.3517}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 40.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    },
+    {
+      "candidate_id": "ST3_15_25_35_ADV10",
+      "advance_seconds": 600.0,
+      "stages": [
+        {"extra_flow_m3_h": 15.0, "hold_seconds": 365.2220},
+        {"extra_flow_m3_h": 25.0, "hold_seconds": 365.2220},
+        {"extra_flow_m3_h": 35.0, "hold_seconds": 365.2220}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 35.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    },
+    {
+      "candidate_id": "ST4_10_20_30_40_ADV10",
+      "advance_seconds": 600.0,
+      "stages": [
+        {"extra_flow_m3_h": 10.0, "hold_seconds": 273.9165},
+        {"extra_flow_m3_h": 20.0, "hold_seconds": 273.9165},
+        {"extra_flow_m3_h": 30.0, "hold_seconds": 273.9165},
+        {"extra_flow_m3_h": 40.0, "hold_seconds": 273.9165}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 40.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    },
+    {
+      "candidate_id": "ST2_25_35_ADV10",
+      "advance_seconds": 600.0,
+      "stages": [
+        {"extra_flow_m3_h": 25.0, "hold_seconds": 456.5275},
+        {"extra_flow_m3_h": 35.0, "hold_seconds": 456.5275}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 35.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    },
+    {
+      "candidate_id": "FLAT_30_ADV10",
+      "advance_seconds": 600.0,
+      "stages": [
+        {"extra_flow_m3_h": 30.0, "hold_seconds": 913.0550}
+      ],
+      "total_extra_volume_m3": 7.60879,
+      "peak_extra_flow_m3_h": 30.0,
+      "status": "UNSCORED_SHADOW_CANDIDATE"
+    }
+  ],
+  "required_scoring_metrics": [
+    "outlet_so2_peak",
+    "outlet_so2_exceedance_seconds",
+    "outlet_so2_integral_error",
+    "ph_peak",
+    "ph_over_operating_max_seconds",
+    "ph_over_safe_max_seconds",
+    "max_supply_flow_m3_h",
+    "total_extra_volume_m3"
+  ],
+  "ranking_policy": "SAFETY_FIRST_THEN_SO2_EXCEEDANCE_THEN_SLURRY_VOLUME",
+  "notes": [
+    "No candidate is a runtime step limit.",
+    "The candidates are intentionally outside the historical operator pulse shape and therefore require counterfactual model validation.",
+    "Equal dose is used only to isolate action-shape effects during offline comparison.",
+    "Online control must stop adding slurry when process demand is satisfied; there is no remaining-dose obligation."
+  ]
+}
