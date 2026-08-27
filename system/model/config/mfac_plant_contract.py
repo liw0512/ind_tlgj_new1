@@ -11,6 +11,7 @@ import math
 from typing import Any, Dict, Mapping
 
 from system.model.config.plant_config import PLANT_CONFIG
+from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 
 def _finite(value: Any, field_name: str) -> float:
@@ -155,6 +156,78 @@ def ph_arbitration_plant_values(
     }
 
 
+def plant_contract_snapshot(
+    plant_config: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Return an audit-only snapshot of the current authoritative plant facts."""
+    target = target_supply_flow_contract(plant_config)
+    tower = primary_tower_contract(plant_config)
+    return {
+        "authority": "PLANT_CONFIG_SNAPSHOT",
+        "target_so2_column": TARGET_SO2_COLUMN,
+        "target_supply_flow": {
+            "minimum": float(target["minimum"]),
+            "maximum": float(target["maximum"]),
+            "feedback_column": str(target["feedback_column"]),
+            "unit": str(target["unit"]),
+        },
+        "primary_tower": {
+            "tower_id": str(tower["tower_id"]),
+            "ph_column": str(tower["ph_column"]),
+            "safe_min": float(tower["safe_min"]),
+            "safe_max": float(tower["safe_max"]),
+            "operating_min": float(tower["operating_min"]),
+            "operating_max": float(tower["operating_max"]),
+            "guard_band": float(tower["guard_band"]),
+        },
+    }
+
+
+def validate_plant_contract_snapshot(
+    snapshot: Mapping[str, Any],
+    plant_config: Mapping[str, Any] | None = None,
+) -> None:
+    """Reject an artifact snapshot that no longer matches current plant facts."""
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("plant contract snapshot must be a mapping")
+    current = plant_contract_snapshot(plant_config)
+    if str(snapshot.get("target_so2_column") or "") != current["target_so2_column"]:
+        raise ValueError("plant contract target_so2_column has changed")
+
+    observed_target = snapshot.get("target_supply_flow")
+    observed_tower = snapshot.get("primary_tower")
+    if not isinstance(observed_target, Mapping):
+        raise ValueError("plant contract target_supply_flow snapshot is missing")
+    if not isinstance(observed_tower, Mapping):
+        raise ValueError("plant contract primary_tower snapshot is missing")
+
+    for name in ("minimum", "maximum"):
+        if name not in observed_target or not _same(
+            observed_target[name], current["target_supply_flow"][name]
+        ):
+            raise ValueError("plant contract target_supply_flow.%s has changed" % name)
+    for name in ("feedback_column", "unit"):
+        if str(observed_target.get(name) or "") != str(
+            current["target_supply_flow"][name]
+        ):
+            raise ValueError("plant contract target_supply_flow.%s has changed" % name)
+
+    for name in ("tower_id", "ph_column"):
+        if str(observed_tower.get(name) or "") != str(current["primary_tower"][name]):
+            raise ValueError("plant contract primary_tower.%s has changed" % name)
+    for name in (
+        "safe_min",
+        "safe_max",
+        "operating_min",
+        "operating_max",
+        "guard_band",
+    ):
+        if name not in observed_tower or not _same(
+            observed_tower[name], current["primary_tower"][name]
+        ):
+            raise ValueError("plant contract primary_tower.%s has changed" % name)
+
+
 def validate_runtime_plant_contract(
     continuous_target_config: Any,
     ph_arbitration_config: Any,
@@ -191,5 +264,7 @@ __all__ = [
     "target_supply_flow_contract",
     "primary_tower_contract",
     "ph_arbitration_plant_values",
+    "plant_contract_snapshot",
+    "validate_plant_contract_snapshot",
     "validate_runtime_plant_contract",
 ]
