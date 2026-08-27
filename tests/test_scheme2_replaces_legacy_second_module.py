@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 
+from system.model.config.mfac_core_bridge_config import MFAC_CORE_BRIDGE_CONFIG
 from system.model.config.slurry_core_bridge_config import SLURRY_CORE_BRIDGE_CONFIG
 from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
@@ -23,18 +24,34 @@ class Scheme2LegacySecondModuleReplacementTest(unittest.TestCase):
         )
         self.assertFalse(legacy.exists())
 
-    def test_p4pc_legacy_lifecycle_keys_now_point_to_mfac(self):
+    def test_mfac_lifecycle_config_is_canonical(self):
         for key in (
-            "slurry_policy_initial_script",
-            "slurry_policy_incremental_script",
-            "slurry_policy_activate_script",
-            "slurry_policy_config",
-            "slurry_policy_output_root",
+            "mfac_initial_script",
+            "mfac_incremental_script",
+            "mfac_activate_script",
+            "mfac_config",
+            "mfac_output_root",
             "active_version_file",
         ):
-            value = str(SLURRY_CORE_BRIDGE_CONFIG[key]).replace("\\", "/")
+            value = str(MFAC_CORE_BRIDGE_CONFIG[key]).replace("\\", "/")
             self.assertIn("/mfac_model/", value)
             self.assertNotIn("/slurry_policy_model/", value)
+        self.assertEqual(MFAC_CORE_BRIDGE_CONFIG["second_module_backend"], "MFAC")
+        self.assertNotIn("slurry_policy_initial_script", MFAC_CORE_BRIDGE_CONFIG)
+
+    def test_legacy_lifecycle_config_is_only_a_mfac_compatibility_view(self):
+        mapping = {
+            "slurry_policy_initial_script": "mfac_initial_script",
+            "slurry_policy_incremental_script": "mfac_incremental_script",
+            "slurry_policy_activate_script": "mfac_activate_script",
+            "slurry_policy_config": "mfac_config",
+            "slurry_policy_output_root": "mfac_output_root",
+        }
+        for legacy, canonical in mapping.items():
+            self.assertEqual(
+                SLURRY_CORE_BRIDGE_CONFIG[legacy],
+                MFAC_CORE_BRIDGE_CONFIG[canonical],
+            )
         self.assertEqual(SLURRY_CORE_BRIDGE_CONFIG["second_module_backend"], "MFAC")
 
     def test_compatibility_bridge_backend_is_mfac(self):
