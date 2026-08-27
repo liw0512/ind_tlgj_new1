@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from system.model.config.mfac_paths import MFAC_RUNTIME_DIR
 from system.model.config.mfac_plant_contract import (
     ph_arbitration_plant_values,
     target_supply_flow_contract,
@@ -38,10 +38,8 @@ from .runtime_store import Scheme2RuntimeStore
 from .supply_flow_tracking import SupplyFlowTrackingConfig
 
 
-MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V2_PLANT_CONTRACT"
-DEFAULT_RUNTIME_DIR = (
-    Path(__file__).resolve().parent / "mfac_model_output" / "runtime"
-)
+MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V3_SINGLE_PATH_CONTRACT"
+DEFAULT_RUNTIME_DIR = MFAC_RUNTIME_DIR
 
 DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "config_version": MFAC_RUNTIME_CONFIG_VERSION,
