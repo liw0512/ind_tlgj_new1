@@ -5,9 +5,9 @@ This profile separates local-gain evidence from full channel calibration. A
 channel may have a reviewed bootstrap gain while still lacking reviewed timing,
 confidence or response-window parameters. SO2 and pH statuses are independent.
 
-V2 additionally seals ``CALIBRATED`` channel construction behind the package's
-explicit channel-calibration review path.  Merely constructing a dataclass with
-``status='CALIBRATED'`` is no longer an accepted calibration action.
+V3 seals ``CALIBRATED`` construction behind explicit observed-timing and
+confidence-evidence review. Merely constructing a dataclass with
+``status='CALIBRATED'`` is not an accepted calibration action.
 
 The profile remains deliberately non-activating: even two CALIBRATED channels
 cannot enable learning, residual control or DCS write without a later, separate
@@ -29,14 +29,20 @@ from .process_response import ProcessResponseConfig
 LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
     "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V1_FAIL_CLOSED"
 )
-DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
+LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_VERSION = (
     "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_REVIEW_SEALED_FAIL_CLOSED"
 )
+DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
+    "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V3_TIMING_CONFIDENCE_EVIDENCE_SEALED"
+)
 CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION = (
-    "SCHEME2_CHANNEL_CALIBRATION_REVIEW_V1_OBSERVED_TIMING"
+    "SCHEME2_CHANNEL_CALIBRATION_REVIEW_V2_OBSERVED_TIMING_AND_CONFIDENCE_EVIDENCE"
 )
 OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION = (
     "SCHEME2_OBSERVED_RESPONSE_TIMING_V1_PROCESS_TRACE"
+)
+CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION = (
+    "SCHEME2_CHANNEL_CONFIDENCE_EVIDENCE_V1_REVIEW_CANDIDATE"
 )
 
 CHANNEL_UNCONFIGURED = "UNCONFIGURED"
@@ -146,6 +152,7 @@ def _validate_calibration_review_metadata(value: Mapping[str, Any]) -> None:
         "calibration_reviewer_id",
         "calibration_review_time",
         "timing_evidence_id",
+        "confidence_evidence_id",
     )
     for key in required_text:
         if not str(metadata.get(key) or "").strip():
@@ -159,10 +166,19 @@ def _validate_calibration_review_metadata(value: Mapping[str, Any]) -> None:
         OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION
     ):
         raise ValueError("CALIBRATED channel requires observed timing evidence")
+    if metadata.get("confidence_evidence_semantics") != (
+        CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION
+    ):
+        raise ValueError("CALIBRATED channel requires confidence evidence")
     if metadata.get("configured_window_boundary_used_as_observed_timing") is not False:
         raise ValueError(
             "configured response-window boundaries cannot be used as observed timing"
         )
+    if metadata.get("confidence_candidate_is_probability") is not False:
+        raise ValueError("confidence candidate cannot be treated as a probability")
+    candidate = _finite(metadata.get("confidence_review_candidate"))
+    if candidate is None or not (0.0 <= candidate <= 1.0):
+        raise ValueError("CALIBRATED channel requires finite confidence review candidate")
     if metadata.get("automatic_online_adaptation_allowed") is not False:
         raise ValueError("channel calibration cannot enable online adaptation")
     if metadata.get("normal_runtime_activation_allowed") is not False:
@@ -309,7 +325,7 @@ class DualResponseCalibrationProfile:
         if self.so2.channel.upper() != "SO2" or self.ph.channel.upper() != "PH":
             raise ValueError("dual profile requires SO2 and PH channel sections")
         if self.activation_status != "NOT_ACTIVATABLE":
-            raise ValueError("V2 dual calibration profile must remain NOT_ACTIVATABLE")
+            raise ValueError("V3 dual calibration profile must remain NOT_ACTIVATABLE")
         if self.learning_enabled or self.residual_control_enabled or self.dcs_write_enabled:
             raise ValueError("dual calibration profile cannot enable production permissions")
         if self.semantics_version != DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION:
@@ -373,12 +389,15 @@ class DualResponseCalibrationProfile:
     def from_dict(cls, value: Mapping[str, Any]) -> "DualResponseCalibrationProfile":
         payload = dict(value or {})
         semantics = str(payload.get("semantics_version") or "")
-        if semantics == LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION:
+        if semantics in {
+            LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION,
+            LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_VERSION,
+        }:
             if (payload.get("so2") or {}).get("status") == CHANNEL_CALIBRATED or (
                 payload.get("ph") or {}
             ).get("status") == CHANNEL_CALIBRATED:
                 raise ValueError(
-                    "legacy CALIBRATED profile lacks V2 channel-review seal and must be re-reviewed"
+                    "legacy CALIBRATED profile lacks V3 timing/confidence-evidence seal and must be re-reviewed"
                 )
             payload["semantics_version"] = DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION
         payload["so2"] = DualResponseChannelCalibration.from_dict(payload.get("so2") or {})
@@ -456,9 +475,11 @@ def build_calibration_profile_from_dual_bootstrap(
 
 __all__ = [
     "LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
+    "LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_VERSION",
     "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
     "CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION",
     "OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION",
+    "CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION",
     "CHANNEL_UNCONFIGURED",
     "CHANNEL_INSUFFICIENT_EVIDENCE",
     "CHANNEL_REVIEW_REQUIRED",
