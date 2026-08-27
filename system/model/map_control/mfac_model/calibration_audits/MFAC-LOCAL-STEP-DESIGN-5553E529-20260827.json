@@ -1,10 +1,13 @@
 {
-  "semantics_version": "SCHEME2_LOCAL_STEP_IDENTIFICATION_V1_MANUAL_ONLY",
+  "semantics_version": "SCHEME2_LOCAL_STEP_IDENTIFICATION_V2_BASELINE_STABILITY",
+  "trial_protocol_version": "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V1_MANUAL_REVIEW",
+  "trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
   "design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
   "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
   "status": "INCOMPLETE_REVIEW_REQUIRED",
   "activation_status": "NOT_ACTIVATABLE",
   "automatic_execution_allowed": false,
+  "automatic_escalation_allowed": false,
   "dcs_write_enabled": false,
   "learning_permission": false,
   "evidence_gap": {
@@ -12,17 +15,71 @@
     "low_flow_staircase_support": "OUT_OF_HISTORICAL_SUPPORT",
     "ph_memory_upper_bound": "UNIDENTIFIED"
   },
+  "review_candidate_parameters": {
+    "step_up_m3_h": 2.0,
+    "max_step_up_m3_h": 2.0,
+    "reach_tolerance_m3_h": 0.5,
+    "baseline_seconds": 300.0,
+    "max_actual_flow_baseline_range_m3_h": 1.0,
+    "max_abs_qbase_drift_m3_h": 2.0,
+    "max_relative_qbase_drift": 0.06,
+    "max_outlet_so2_baseline_range_mg_nm3": 2.0,
+    "ph_lower_margin_inside_operating": 0.05,
+    "ph_upper_margin_inside_operating": 0.05,
+    "action_timeout_seconds": 300.0,
+    "minimum_so2_observation_seconds": 600.0,
+    "minimum_ph_observation_seconds": 900.0,
+    "effect_timeout_seconds": 1800.0,
+    "min_candidate_interval_seconds": 3600.0,
+    "min_quiet_seconds": null,
+    "max_abs_inlet_so2_change": null,
+    "max_ph_baseline_range": null,
+    "outlet_so2_headroom_to_safe_max": null,
+    "min_abs_delta_so2": null,
+    "min_abs_delta_ph": null,
+    "notes": [
+      "2.0 m3/h is the inherited first-phase manual identification candidate from the 2026-08-25 design; it is not a control step limit.",
+      "600 s is retained as an SO2 early-observation floor; dual-channel closure now requires at least 900 s so the pH P90 peak candidate near 886 s is not truncated.",
+      "1800 s remains an observation timeout candidate, not a proven pH memory constant; the current pH memory lower bound is >=1800 s.",
+      "Fields left null still require plant review or new evidence."
+    ]
+  },
   "reviewed_parameters": {
     "step_up_m3_h": null,
+    "max_step_up_m3_h": null,
+    "reach_tolerance_m3_h": null,
+    "baseline_seconds": null,
+    "max_actual_flow_baseline_range_m3_h": null,
+    "max_abs_qbase_drift_m3_h": null,
+    "max_relative_qbase_drift": null,
+    "max_outlet_so2_baseline_range_mg_nm3": null,
     "ph_lower_margin_inside_operating": null,
     "ph_upper_margin_inside_operating": null,
-    "outlet_so2_headroom_to_safe_max": null,
-    "min_quiet_seconds": null,
+    "action_timeout_seconds": null,
+    "minimum_so2_observation_seconds": null,
+    "minimum_ph_observation_seconds": null,
+    "effect_timeout_seconds": null,
     "min_candidate_interval_seconds": null,
-    "max_abs_actual_minus_qbase": null,
-    "max_abs_qbase_drift": null,
+    "min_quiet_seconds": null,
     "max_abs_inlet_so2_change": null,
-    "max_outlet_so2_baseline_range": null
+    "max_ph_baseline_range": null,
+    "outlet_so2_headroom_to_safe_max": null,
+    "min_abs_delta_so2": null,
+    "min_abs_delta_ph": null
+  },
+  "trial_matrix": {
+    "phase_1": {
+      "level_id": "PHASE1_STEP_2",
+      "step_up_m3_h": 2.0,
+      "max_step_up_m3_h": 2.0,
+      "review_status": "REVIEW_REQUIRED",
+      "required_valid_trials": null,
+      "required_independent_days": null,
+      "ready_for_manual_session": false,
+      "automatic_escalation_allowed": false
+    },
+    "later_levels": "NOT_DEFINED_UNTIL_PHASE1_REVIEWED_EVIDENCE",
+    "rule": "No automatic 2->4->6 m3/h escalation. A later step level requires a separate human design review after Phase-1 evidence is complete."
   },
   "historical_constraints": {
     "pH_onset_p90_seconds": 190.0,
@@ -32,7 +89,7 @@
     "planner_hold_review_candidate_seconds": 360.0,
     "sustained_extra_flow_p05_m3_h": 51.0720,
     "sustained_extra_flow_p95_m3_h": 86.3891,
-    "note": "These values constrain review but do not fill identification parameters automatically."
+    "note": "These values constrain review but do not fill reviewed identification parameters automatically."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
@@ -41,24 +98,65 @@
     "equipment unchanged",
     "condition snapshot and MFAC context available",
     "actual flow and Qbase valid and sufficiently close",
-    "pH inside a reviewed sub-band of the plant operating envelope",
+    "actual-flow baseline range stable",
+    "Qbase absolute and relative drift stable",
+    "pH inside a reviewed sub-band of the plant operating envelope and pH baseline stable",
     "outlet SO2 retains a reviewed headroom to the plant safe maximum",
     "no recent supply-flow action inside a reviewed quiet interval",
-    "Qbase, inlet SO2 and outlet SO2 baseline sufficiently stable",
+    "inlet SO2 and outlet SO2 baseline sufficiently stable",
     "proposed positive step remains inside plant supply-flow bounds"
   ],
+  "in_trial_abort_recommendations": [
+    "data quality invalid",
+    "FAST becomes active",
+    "equipment changes",
+    "condition snapshot or MFAC context changes",
+    "an unexpected target change occurs",
+    "pH leaves the plant operating envelope",
+    "outlet SO2 reaches the reviewed abort headroom threshold",
+    "Qbase drift exceeds the reviewed trial limit",
+    "inlet SO2 change exceeds the reviewed trial limit",
+    "sample gap exceeds the reviewed maximum"
+  ],
+  "dual_response_success_criteria": [
+    "SO2 response status is COMPLETED",
+    "pH response status is COMPLETED",
+    "SO2 and pH responses belong to the same actual-flow tracking event",
+    "actual positive delta-Q matches the approved test step within reviewed tolerance",
+    "condition/context/target remain stable and there is no FAST overlap",
+    "data quality remains valid",
+    "SO2 response observation meets the reviewed minimum duration",
+    "pH response observation meets the reviewed minimum duration",
+    "pH remains inside the operating envelope throughout the monitored trial",
+    "phi_so2_event = delta_SO2/delta_Q_actual is negative",
+    "phi_ph_event = delta_pH/delta_Q_actual is positive",
+    "SO2 and pH response magnitudes exceed separately reviewed minimum-effect thresholds",
+    "Qbase and inlet SO2 drift remain inside reviewed evidence limits"
+  ],
+  "evidence_promotion_contract": {
+    "trial_success_status": "LOCAL_GAIN_EVIDENCE_CANDIDATE",
+    "trial_success_grants_learning_permission": false,
+    "second_human_evidence_review_required": true,
+    "only_after_second_review": "ActionResponseEvent.learning_eligible=true",
+    "action_source": "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
+    "evidence_role": "LOCAL_GAIN",
+    "automatic_online_adaptation_allowed": false,
+    "offline_bootstrap_evidence_allowed": true
+  },
   "execution_contract": {
-    "proposal_only": true,
+    "proposal_only_until_human_approval": true,
     "manual_review_required": true,
     "manual_execution_required": true,
     "normal_algorithm_target_replaced": false,
     "automatic_dcs_adapter": false,
-    "post_execution_learning": "SEPARATE_EVIDENCE_REVIEW_REQUIRED"
+    "abort_is_recommendation_only": true,
+    "post_execution_learning": "SECOND_EVIDENCE_REVIEW_REQUIRED"
   },
   "notes": [
     "No numeric value from unit tests is a site calibration default.",
-    "The first controlled step magnitude must be separately reviewed; it is not inferred from historical operator pulses.",
-    "A completed test must still pass actual-flow tracking, independent SO2/pH response attribution and LOCAL_GAIN eligibility before it can inform phi.",
+    "Review candidates are inherited engineering candidates, not reviewed plant parameters.",
+    "The +2.0 m3/h identification stimulus is not the runtime planner max_step_up and is never a 10-second recurrent increment.",
+    "A completed test must pass actual-flow tracking, independent SO2/pH response attribution and the trial evidence gate before it can inform phi.",
     "Production remains LEARN=0, Residual=0, DCS write=off."
   ]
 }
