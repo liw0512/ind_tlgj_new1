@@ -23,6 +23,7 @@ from typing import Any, Dict, Mapping, Optional
 from system.model.config.mfac_plant_contract import (
     primary_tower_contract,
     target_supply_flow_contract,
+    validate_runtime_plant_contract,
 )
 from system.model.config.standard_fields import OUTLET_SO2_COLUMN
 
@@ -32,7 +33,7 @@ from .qbase import DynamicQbaseCalculator
 from .runtime_coordinator import Scheme2RuntimeCoordinator
 
 
-MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V5_PLANT_CONTRACT"
+MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V6_PLANT_VALIDATED"
 
 
 def _active_version(pointer: Optional[Mapping[str, Any]], fallback: str = "") -> str:
@@ -143,6 +144,12 @@ class MFACUnifiedRuntimePolicy:
             raise ValueError("formal MFAC runtime requires independent phi_ph adaptation")
         if coordinator.config.ph_arbitration is None:
             raise ValueError("formal MFAC runtime requires pH residual arbitration")
+        # Manual coordinator injection cannot bypass the plant-owned hard bounds
+        # or pH safety envelope enforced by the formal builder.
+        validate_runtime_plant_contract(
+            coordinator.config.continuous_target,
+            coordinator.config.ph_arbitration,
+        )
 
     def configure_runtime_coordinator(
         self,
