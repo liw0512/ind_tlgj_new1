@@ -69,6 +69,34 @@ class Scheme2LocalStepDesignProfileTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             profile.to_runtime_config()
 
+    def test_protected_permission_flags_cannot_be_enabled(self):
+        protected = (
+            "automatic_execution_allowed",
+            "automatic_escalation_allowed",
+            "dcs_write_enabled",
+            "learning_permission",
+        )
+        for field in protected:
+            with self.subTest(field=field):
+                payload = {
+                    "design_id": "BAD-PERMISSION",
+                    "status": "INCOMPLETE_REVIEW_REQUIRED",
+                    "activation_status": "NOT_ACTIVATABLE",
+                    field: True,
+                }
+                with self.assertRaises(ValueError):
+                    LocalStepIdentificationDesignProfile.from_mapping(payload)
+
+    def test_activation_status_cannot_be_changed(self):
+        with self.assertRaises(ValueError):
+            LocalStepIdentificationDesignProfile.from_mapping(
+                {
+                    "design_id": "BAD-ACTIVATION",
+                    "status": "REVIEWED_MANUAL_ONLY",
+                    "activation_status": "ACTIVATABLE",
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
