@@ -7,6 +7,7 @@ import pandas as pd
 
 from .data_loader import assign_continuous_segments, load_input_data
 from .episode_extractor import extract_decision_episodes
+from .historical_evidence import enrich_historical_episode_frame
 from .schema import freeze_condition_axes
 from .signal_processing import add_clean_supply_flow_columns
 
@@ -98,8 +99,17 @@ def run_episode_pipeline(
         progress(0.02, "读取上游 fast_change_mode 因果标签")
 
     episodes, _actions = extract_decision_episodes(
-        raw_df, plant, training, progress=_emit_range(progress, 0.02, 0.68)
+        raw_df, plant, training, progress=_emit_range(progress, 0.02, 0.62)
     )
+    if not episodes.empty:
+        if progress:
+            progress(0.64, "生成MFAC历史剂量指标并执行LOCAL/DYNAMIC/SAFETY证据分流")
+        episodes = enrich_historical_episode_frame(
+            episodes,
+            raw_df,
+            plant,
+            routing_config=training.get("mfac_historical_evidence", {}),
+        )
 
     if progress:
         progress(0.70, "准备供浆流量动作响应参数")
@@ -123,18 +133,40 @@ def run_episode_pipeline(
         valid = pd.DataFrame()
         invalid = pd.DataFrame()
     if progress:
-        progress(0.84, f"决策片段校验完成：VALID={len(valid)}，INVALID={len(invalid)}")
+        local_gain_count = (
+            int(valid["mfac_local_gain_eligible"].fillna(False).sum())
+            if not valid.empty and "mfac_local_gain_eligible" in valid.columns
+            else 0
+        )
+        dynamic_count = (
+            int(valid["mfac_dynamic_evidence_eligible"].fillna(False).sum())
+            if not valid.empty and "mfac_dynamic_evidence_eligible" in valid.columns
+            else 0
+        )
+        safety_count = (
+            int(valid["mfac_safety_evidence"].fillna(False).sum())
+            if not valid.empty and "mfac_safety_evidence" in valid.columns
+            else 0
+        )
+        progress(
+            0.84,
+            "决策片段校验完成：VALID=%d，INVALID=%d，LOCAL_GAIN=%d，DYNAMIC=%d，SAFETY=%d"
+            % (len(valid), len(invalid), local_gain_count, dynamic_count, safety_count),
+        )
 
     aggregated = {
         "conditions": {},
     }
     if progress:
-        progress(1.0, "供浆流量动作提取完成，等待生成流量原型")
+        progress(1.0, "供浆流量动作提取完成，等待生成MFAC历史证据")
 
     effective = {
         "plant": copy.deepcopy(plant),
         "training": copy.deepcopy(training),
         "action_magnitude": effective_action,
         "response": effective_response,
+        "mfac_historical_evidence": copy.deepcopy(
+            training.get("mfac_historical_evidence", {})
+        ),
     }
     return valid, invalid, effective, aggregated
