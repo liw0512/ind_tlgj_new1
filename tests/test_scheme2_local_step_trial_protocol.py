@@ -221,6 +221,19 @@ class Scheme2LocalStepTrialProtocolTest(unittest.TestCase):
         self.assertEqual(outcome.status, "REJECTED")
         self.assertIn("DUAL_RESPONSE_TRACKING_EVENT_MISMATCH", outcome.reasons)
 
+    def test_mismatched_safety_summary_rejects_trial(self):
+        safety = self.safety_clear()
+        safety.trial_id = "TRIAL-OTHER"
+        outcome = evaluate_local_step_trial(
+            self.plan(),
+            self.config(),
+            self.so2_response(),
+            self.ph_response(),
+            safety,
+        )
+        self.assertEqual(outcome.status, "REJECTED")
+        self.assertIn("SAFETY_TRIAL_ID_MISMATCH", outcome.reasons)
+
     def test_short_ph_observation_rejects_trial(self):
         outcome = evaluate_local_step_trial(
             self.plan(),
@@ -262,6 +275,9 @@ class Scheme2LocalStepTrialProtocolTest(unittest.TestCase):
         self.assertEqual(event.action_source, "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED")
         self.assertEqual(event.metadata["evidence_role"], "LOCAL_GAIN")
         self.assertFalse(event.metadata["automatic_online_adaptation_allowed"])
+        self.assertFalse(event.metadata["return_to_baseline_learning_allowed"])
+        self.assertEqual(event.so2_target, 15.0)
+        self.assertEqual(event.inlet_so2_change, 20.0)
         self.assertGreater(event.metadata["phi_ph_event"], 0.0)
 
 
