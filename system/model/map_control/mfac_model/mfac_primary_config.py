@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Artifact and runtime configuration for MFAC as the formal second module."""
+"""Single artifact/runtime configuration source for formal Scheme-2 MFAC."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -11,20 +11,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
 MFAC_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "mfac_model"
 MFAC_OUTPUT_ROOT = MFAC_ROOT / "mfac_model_output"
+MFAC_SNAPSHOTS_DIR = MFAC_OUTPUT_ROOT / "snapshots"
+MFAC_ACTIVE_VERSION_FILE = MFAC_OUTPUT_ROOT / "active_version.json"
+MFAC_RUNTIME_DIR = MFAC_OUTPUT_ROOT / "runtime"
 
 
 MFAC_PRIMARY_ARTIFACT_CONFIG = {
     "output_root": str(MFAC_OUTPUT_ROOT),
-    "snapshots_dir": str(MFAC_OUTPUT_ROOT / "snapshots"),
-    "active_version_file": str(MFAC_OUTPUT_ROOT / "active_version.json"),
+    "snapshots_dir": str(MFAC_SNAPSHOTS_DIR),
+    "active_version_file": str(MFAC_ACTIVE_VERSION_FILE),
     "condition_snapshots_dir": str(CONDITION_ROOT / "snapshots"),
-    "runtime_dir": str(MFAC_OUTPUT_ROOT / "runtime"),
+    "runtime_dir": str(MFAC_RUNTIME_DIR),
     "primary_mode": "MFAC_PRIMARY_SHADOW",
-    "learn_enabled": False,
-    "residual_enabled": False,
-    "dcs_write_enabled": False,
-    # Formal coordinator construction is fail-closed until real plant
-    # calibration values are supplied.  Empty sections are intentional.
+    # Runtime permission facts live only inside runtime config. They are also
+    # defensively re-validated by builder/coordinator/P4PC, but are not repeated
+    # as a second configurable set at this artifact level.
     "runtime": deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG),
 }
 
@@ -34,5 +35,8 @@ __all__ = [
     "CONDITION_ROOT",
     "MFAC_ROOT",
     "MFAC_OUTPUT_ROOT",
+    "MFAC_SNAPSHOTS_DIR",
+    "MFAC_ACTIVE_VERSION_FILE",
+    "MFAC_RUNTIME_DIR",
     "MFAC_PRIMARY_ARTIFACT_CONFIG",
 ]
