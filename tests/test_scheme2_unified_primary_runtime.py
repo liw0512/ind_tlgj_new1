@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 
+from system.model.config.mfac_plant_contract import ph_arbitration_plant_values
 from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
 )
@@ -44,9 +45,13 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
         }
 
     @staticmethod
-    def config(*, learning=False, residual=False, dual=True):
+    def config(*, learning=False, residual=False, dual=True, drift_ph=False):
         kwargs = {}
         if dual:
+            ph = ph_arbitration_plant_values()
+            if drift_ph:
+                ph = dict(ph)
+                ph["safe_max"] = float(ph["safe_max"]) - 0.1
             kwargs.update(
                 ph_response=PHResponseConfig(
                     baseline_window_seconds=20.0,
@@ -65,13 +70,7 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
                     phi_upper_bound=1.0,
                     max_single_update_abs=0.1,
                 ),
-                ph_arbitration=PHResidualArbitrationConfig(
-                    operating_min=5.4,
-                    operating_max=6.2,
-                    safe_min=5.0,
-                    safe_max=6.5,
-                    guard_band=0.1,
-                ),
+                ph_arbitration=PHResidualArbitrationConfig(**ph),
             )
         return Scheme2RuntimeCoordinatorConfig(
             tracking=SupplyFlowTrackingConfig(
@@ -131,6 +130,7 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
         self.assertEqual(decision["debug"]["coordinator_cycle_count"], 0)
         self.assertEqual(decision["debug"]["fallback_cycle_count"], 1)
         self.assertFalse(decision["debug"]["duplicate_runtime_path"])
+        self.assertEqual(decision["debug"]["plant_contract_source"], "PLANT_CONFIG")
         self.assertEqual(decision["residual_mfac_hold"], 0.0)
 
     def test_dual_response_coordinator_becomes_unique_target_owner(self):
@@ -165,6 +165,18 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             coordinator = Scheme2RuntimeCoordinator(
                 self.config(dual=False),
+                Scheme2RuntimeStore(root),
+            )
+            policy = MFACUnifiedRuntimePolicy(
+                active_pointer={"integrated_version": "v001"}
+            )
+            with self.assertRaises(ValueError):
+                policy.configure_runtime_coordinator(coordinator)
+
+    def test_manual_ph_contract_drift_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            coordinator = Scheme2RuntimeCoordinator(
+                self.config(drift_ph=True),
                 Scheme2RuntimeStore(root),
             )
             policy = MFACUnifiedRuntimePolicy(
