@@ -1,41 +1,43 @@
 # -*- coding: utf-8 -*-
-"""First-module output -> MFAC primary second-module bridge.
+"""First-module output -> unified Scheme-2 MFAC runtime bridge.
 
-The historical class name ``SlurryPolicyOnlineBridge`` is retained only as a
-short-lived compatibility API for ``OnlineConditionPolicyPipeline`` and
-``Process4MapControl``.  It no longer imports or executes the removed
-``slurry_policy_model`` implementation.
+``SlurryPolicyOnlineBridge`` is retained only as a temporary compatibility API
+for the existing condition pipeline and UI/DB field names.  It does not own an
+algorithm and never imports the removed ``slurry_policy_model`` package.
 
-Primary runtime chain::
+Runtime chain::
 
     condition_model output
-    -> DynamicQbaseCalculator
-    -> ContinuousTargetPublisher
-    -> MFAC algorithm target
+    -> SlurryPolicyOnlineBridge (compatibility only)
+    -> MFACUnifiedRuntimePolicy
+       -> Dynamic Qbase (exactly once)
+       -> either SAFE_PRIMARY_FALLBACK or Scheme2RuntimeCoordinator
+       -> one algorithm_target_supply_flow
 
-The bridge deliberately keeps production permissions closed.  Actual slurry
-flow may be exposed as audit evidence by downstream tracking, but it is never a
-fallback source for the algorithm target.  Full SO2/pH response learning and
-residual arbitration remain owned by ``mfac_model.Scheme2RuntimeCoordinator``.
+When a calibrated coordinator is installed, the bridge keeps that same
+coordinator attached across integrated version hot reloads.  The production
+permission boundary remains fail closed: LEARN=0, Residual=0, DCS write=off.
 """
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import math
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
-from system.model.map_control.mfac_model.continuous_target import (
-    ONLINE_SHADOW,
-    ContinuousTargetPublisher,
+from system.model.map_control.mfac_model.context_resolver import MFACContextResolver
+from system.model.map_control.mfac_model.primary_runtime import (
+    MFACPrimaryPolicy,
+    MFACUnifiedRuntimePolicy,
 )
-from system.model.map_control.mfac_model.qbase import DynamicQbaseCalculator
+from system.model.map_control.mfac_model.runtime_coordinator import (
+    Scheme2RuntimeCoordinator,
+)
 
 
-MFAC_PRIMARY_BRIDGE_VERSION = "SCHEME2_MFAC_PRIMARY_BRIDGE_V1"
+MFAC_PRIMARY_BRIDGE_VERSION = "SCHEME2_MFAC_PRIMARY_BRIDGE_V2_UNIFIED_RUNTIME"
 
 
 def _is_missing(value: Any) -> bool:
@@ -110,210 +112,8 @@ def csv_safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return output
 
 
-def _active_version(pointer: Optional[Dict[str, Any]], fallback: str = "") -> str:
-    value = dict(pointer or {})
-    condition = value.get("condition")
-    if not isinstance(condition, dict):
-        condition = {}
-    mfac = value.get("mfac")
-    if not isinstance(mfac, dict):
-        mfac = {}
-    legacy = value.get("slurry_policy")
-    if not isinstance(legacy, dict):
-        legacy = {}
-    return str(
-        value.get("integrated_version")
-        or mfac.get("version")
-        or condition.get("version")
-        or legacy.get("version")
-        or fallback
-        or ""
-    ).strip()
-
-
-class MFACPrimaryPolicy:
-    """Compatibility policy object backed only by Scheme-2 MFAC primitives.
-
-    At the current activation stage the residual is intentionally fixed at
-    zero.  Therefore the primary second-module target is Dynamic Qbase.  The
-    full coordinator may later provide a non-zero held residual after formal
-    calibration/activation without changing this bridge contract.
-    """
-
-    def __init__(
-        self,
-        config_spec: Optional[str] = None,
-        *,
-        external_version_management: bool = False,
-        active_pointer: Optional[Dict[str, Any]] = None,
-        initial_runtime_state: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        del config_spec
-        self.external_version_management = bool(external_version_management)
-        self.active_pointer = dict(active_pointer or {})
-        self.model_version = _active_version(self.active_pointer)
-        self.condition_snapshot_version = self.model_version
-        self.qbase_calculator = DynamicQbaseCalculator("xst")
-        self.target_publisher = ContinuousTargetPublisher()
-        self._last_decision: Dict[str, Any] = {}
-        self._reload_count = 0
-        runtime = dict(initial_runtime_state or {})
-        restored_target = runtime.get("last_valid_algorithm_target")
-        if restored_target is not None:
-            try:
-                self.target_publisher.restore_last_valid_algorithm_target(
-                    float(restored_target)
-                )
-            except (TypeError, ValueError):
-                pass
-
-    def evaluate(
-        self,
-        enriched_row: Dict[str, Any],
-        *,
-        target: Optional[Any] = None,
-        execution_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        del execution_context
-        timestamp = enriched_row.get("date", enriched_row.get("timestamp", ""))
-        qbase = self.qbase_calculator.calculate(
-            enriched_row,
-            target_so2=target,
-        )
-        algorithm = self.target_publisher.publish(
-            qbase.qbase_effective,
-            0.0,
-            inputs_valid=bool(qbase.valid),
-            timestamp=str(timestamp or ""),
-            replay_semantics=ONLINE_SHADOW,
-        )
-        target_value = algorithm.algorithm_target_supply_flow
-        reason_codes = list(qbase.reason_codes)
-        if algorithm.algorithm_target_status != "CALCULATED":
-            reason_codes.append(algorithm.algorithm_target_status)
-        if not reason_codes:
-            reason_codes = ["MFAC_PRIMARY_CALCULATED"]
-
-        decision_status = (
-            "VALID"
-            if algorithm.algorithm_target_valid and target_value is not None
-            else "HOLD"
-        )
-        decision = {
-            "decision_id": "MFAC-%s" % str(timestamp or ""),
-            "timestamp": str(timestamp or ""),
-            "model_type": "MFAC",
-            "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
-            "model_version": self.model_version,
-            "condition_snapshot_version": enriched_row.get(
-                "condition_snapshot_version",
-                self.condition_snapshot_version,
-            ),
-            "condition_label": enriched_row.get("condition_label"),
-            "base_condition_id": enriched_row.get("base_condition_id"),
-            "grid_id": enriched_row.get("grid_id"),
-            "policy_region_id": enriched_row.get("policy_region_id"),
-            "control_mode": "MFAC_PRIMARY_SHADOW",
-            "disturbance_mode": enriched_row.get(
-                "fast_change_mode", "NORMAL"
-            ),
-            "current_so2": enriched_row.get("jyq_SO2"),
-            "commanded_target": target,
-            "effective_target": target,
-            "experience_source": "MFAC_RUNTIME",
-            "action_id": "MFAC_TARGET",
-            "action_family": "MFAC_TARGET",
-            "action_direction": "CONTINUOUS_TARGET",
-            "action_magnitude": "CONTINUOUS",
-            "decision_status": decision_status,
-            "reason_codes": reason_codes,
-            "qbase": qbase.to_dict(),
-            "qbase_raw": qbase.qbase_raw,
-            "qbase_effective": qbase.qbase_effective,
-            "residual_mfac_hold": 0.0,
-            "algorithm_target_supply_flow": target_value,
-            "algorithm_target_valid": algorithm.algorithm_target_valid,
-            "algorithm_target_status": algorithm.algorithm_target_status,
-            "algorithm_target": algorithm.to_dict(),
-            "learn_enabled": False,
-            "residual_enabled": False,
-            "dcs_write_enabled": False,
-            "target_supply_flow": {
-                "mode": "TARGET_SUPPLY_FLOW",
-                "available": target_value is not None,
-                "value": target_value,
-                "valid": algorithm.algorithm_target_valid,
-                "status": algorithm.algorithm_target_status,
-                "unit": "m3/h",
-                "reason_codes": reason_codes,
-            },
-            "control_recommendation": {
-                "requested_mode": "TARGET_SUPPLY_FLOW",
-                "effective_mode": "MFAC_PRIMARY_SHADOW",
-                "primary": {
-                    "recommendation_type": "MFAC_TARGET_SUPPLY_FLOW",
-                    "actionable": False,
-                    "target_supply_flow": target_value,
-                },
-                "automatic_mode_switch": False,
-                "legacy_compatibility_fields_preserved": True,
-            },
-            "target_flow_execution_preview": {
-                "adapter_mode": "DRY_RUN",
-                "status": "SHADOW_ONLY",
-                "command_issued": False,
-                "dcs_write_attempted": False,
-                "reason_codes": ["MFAC_DCS_WRITE_DISABLED"],
-                "phases": [],
-            },
-            "debug": {
-                "actual_flow_used_as_algorithm_target": False,
-                "target_formula": "clip(qbase_effective + residual_mfac_hold)",
-                "legacy_second_module_executed": False,
-            },
-        }
-        self._last_decision = deepcopy(decision)
-        return decision
-
-    def record_execution(self, feedback: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "accepted": False,
-            "status": "MFAC_FORMAL_DCS_ADAPTER_NOT_ENABLED",
-            "feedback": dict(feedback or {}),
-            "dcs_write_attempted": False,
-        }
-
-    def export_runtime_state(self) -> Dict[str, Any]:
-        return {
-            "last_valid_algorithm_target": (
-                self.target_publisher.last_valid_algorithm_target
-            ),
-            "last_decision": deepcopy(self._last_decision),
-        }
-
-    def mark_external_reload(self) -> None:
-        self._reload_count += 1
-
-    def status(self) -> Dict[str, Any]:
-        return {
-            "model_type": "MFAC",
-            "model_version": self.model_version,
-            "condition_snapshot_version": self.condition_snapshot_version,
-            "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
-            "learn_enabled": False,
-            "residual_enabled": False,
-            "dcs_write_enabled": False,
-            "reload_count": self._reload_count,
-        }
-
-
 class SlurryPolicyOnlineBridge:
-    """Deprecated name for the MFAC primary second-module bridge.
-
-    The object intentionally preserves the methods expected by the existing
-    condition pipeline so the algorithm can be replaced before UI/DB field
-    names are fully migrated.
-    """
+    """Deprecated name for the thin unified-MFAC runtime bridge."""
 
     def __init__(
         self,
@@ -346,7 +146,10 @@ class SlurryPolicyOnlineBridge:
         self.external_version_management = bool(
             self.config.get("external_version_management", False)
         )
+        self._runtime_coordinator: Optional[Scheme2RuntimeCoordinator] = None
+        self._context_resolver: Optional[MFACContextResolver] = None
         self._initialization_error: Optional[str] = None
+
         if self.enabled and bool(self.config.get("initialize_on_start", True)):
             self._ensure_policy()
 
@@ -358,12 +161,30 @@ class SlurryPolicyOnlineBridge:
     def initialization_error(self) -> Optional[str]:
         return self._initialization_error
 
+    @property
+    def runtime_coordinator(self) -> Optional[Scheme2RuntimeCoordinator]:
+        return self._runtime_coordinator
+
     def _default_factory(
         self,
         config_spec: Optional[str],
         **kwargs: Any,
     ) -> Any:
-        return MFACPrimaryPolicy(config_spec=config_spec, **kwargs)
+        return MFACUnifiedRuntimePolicy(config_spec=config_spec, **kwargs)
+
+    def _attach_runtime(self, policy: Any) -> Any:
+        if self._runtime_coordinator is None:
+            return policy
+        configure = getattr(policy, "configure_runtime_coordinator", None)
+        if not callable(configure):
+            raise TypeError(
+                "MFAC policy does not expose configure_runtime_coordinator"
+            )
+        configure(
+            self._runtime_coordinator,
+            context_resolver=self._context_resolver,
+        )
+        return policy
 
     def _build_policy(
         self,
@@ -378,14 +199,22 @@ class SlurryPolicyOnlineBridge:
             "initial_runtime_state": initial_runtime_state,
         }
         try:
-            return factory(self.config_spec, **kwargs)
+            policy = factory(self.config_spec, **kwargs)
         except TypeError:
-            return factory(self.config_spec)
+            policy = factory(self.config_spec)
+        return self._attach_runtime(policy)
 
     def _ensure_policy(self) -> Optional[Any]:
         if not self.enabled:
             return None
         if self._policy is not None:
+            try:
+                self._attach_runtime(self._policy)
+            except Exception as exc:
+                self._initialization_error = str(exc)
+                if self.failure_mode == "RAISE":
+                    raise
+                return None
             return self._policy
         try:
             self._policy = self._build_policy(
@@ -398,6 +227,43 @@ class SlurryPolicyOnlineBridge:
             if self.failure_mode == "RAISE":
                 raise
             return None
+
+    def configure_runtime_coordinator(
+        self,
+        coordinator: Scheme2RuntimeCoordinator,
+        *,
+        context_resolver: Optional[MFACContextResolver] = None,
+    ) -> None:
+        """Attach the coordinator to the active and all future hot-reload policies."""
+        if not isinstance(coordinator, Scheme2RuntimeCoordinator):
+            raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
+        if coordinator.config.learning_enabled:
+            raise ValueError("primary MFAC runtime LEARN must remain 0")
+        if coordinator.config.residual_control_enabled:
+            raise ValueError("primary MFAC runtime Residual must remain 0")
+        if coordinator.dcs_write_enabled:
+            raise ValueError("primary MFAC runtime DCS write must remain off")
+        if context_resolver is not None and not isinstance(
+            context_resolver, MFACContextResolver
+        ):
+            raise TypeError("context_resolver must be MFACContextResolver")
+        self._runtime_coordinator = coordinator
+        self._context_resolver = context_resolver
+        policy = self._ensure_policy()
+        if policy is None:
+            raise RuntimeError(
+                self._initialization_error or "MFAC primary policy unavailable"
+            )
+        self._attach_runtime(policy)
+
+    def clear_runtime_coordinator(self) -> None:
+        policy = self._policy
+        if policy is not None:
+            clear = getattr(policy, "clear_runtime_coordinator", None)
+            if callable(clear):
+                clear()
+        self._runtime_coordinator = None
+        self._context_resolver = None
 
     def reload(self) -> bool:
         self._policy = None
@@ -422,6 +288,7 @@ class SlurryPolicyOnlineBridge:
         )
 
     def replace_policy(self, policy: Any, *, mark_reloaded: bool = True) -> None:
+        policy = self._attach_runtime(policy)
         self._policy = policy
         self._initial_active_pointer = None
         self._initialization_error = None
@@ -467,6 +334,8 @@ class SlurryPolicyOnlineBridge:
         scalar_bool_fields = {
             "automatic_control_allowed",
             "supply_pump_state_changing",
+            "data_quality_ok",
+            "equipment_changed",
         }
         list_fields = {"manual_valves", "faulted_valves"}
         for context_key, column_name in columns.items():
@@ -490,6 +359,12 @@ class SlurryPolicyOnlineBridge:
         context["supply_pump_state_changing"] = _as_bool(
             context.get("supply_pump_state_changing"), False
         )
+        context["data_quality_ok"] = _as_bool(
+            context.get("data_quality_ok"), True
+        )
+        context["equipment_changed"] = _as_bool(
+            context.get("equipment_changed"), False
+        )
         context["manual_valves"] = _as_list(context.get("manual_valves"))
         context["faulted_valves"] = _as_list(context.get("faulted_valves"))
         return context
@@ -504,12 +379,14 @@ class SlurryPolicyOnlineBridge:
             "decision_id": None,
             "timestamp": enriched_row.get("date", enriched_row.get("timestamp")),
             "model_type": "MFAC",
+            "runtime_version": None,
             "model_version": None,
             "condition_snapshot_version": enriched_row.get(
                 "condition_snapshot_version"
             ),
             "condition_label": enriched_row.get("condition_label"),
             "control_mode": "BLOCKED",
+            "runtime_mode": "BLOCKED",
             "commanded_target": target,
             "effective_target": target,
             "action_id": "HOLD",
@@ -543,7 +420,10 @@ class SlurryPolicyOnlineBridge:
                 "reason_codes": ["MFAC_PRIMARY_INTEGRATION_ERROR"],
                 "phases": [],
             },
-            "debug": {"integration_error": str(error)},
+            "debug": {
+                "integration_error": str(error),
+                "duplicate_runtime_path": False,
+            },
         }
 
     def evaluate(
@@ -571,13 +451,15 @@ class SlurryPolicyOnlineBridge:
                 resolved_target,
             )
         try:
-            return dict(
+            decision = dict(
                 policy.evaluate(
                     dict(enriched_row),
                     target=resolved_target,
                     execution_context=resolved_execution,
                 )
             )
+            decision["bridge_version"] = MFAC_PRIMARY_BRIDGE_VERSION
+            return decision
         except Exception as exc:
             if self.failure_mode == "RAISE":
                 raise
@@ -622,11 +504,7 @@ class SlurryPolicyOnlineBridge:
         output["%soutput_json" % self.output_prefix] = compact_json(decision)
 
         if self.emit_legacy_compatibility and self.legacy_output_prefix:
-            self._append_prefixed(
-                output,
-                self.legacy_output_prefix,
-                decision,
-            )
+            self._append_prefixed(output, self.legacy_output_prefix, decision)
             output["%sintegration_valid" % self.legacy_output_prefix] = (
                 decision.get("decision_status") != "BLOCKED"
             )
@@ -638,6 +516,7 @@ class SlurryPolicyOnlineBridge:
             output["slurry_policy_backend"] = "MFAC"
 
         output["second_module_type"] = "MFAC"
+        output["second_module_runtime_mode"] = decision.get("runtime_mode")
         output["second_module_algorithm_target_supply_flow"] = decision.get(
             "algorithm_target_supply_flow"
         )
@@ -673,6 +552,7 @@ class SlurryPolicyOnlineBridge:
                 "enabled": self.enabled,
                 "ready": False,
                 "backend": "MFAC",
+                "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
                 "initialization_error": self._initialization_error,
             }
         value = dict(policy.status())
@@ -681,8 +561,19 @@ class SlurryPolicyOnlineBridge:
                 "enabled": self.enabled,
                 "ready": True,
                 "backend": "MFAC",
+                "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
                 "external_version_management": self.external_version_management,
                 "legacy_name_only": True,
             }
         )
         return value
+
+
+__all__ = [
+    "MFACPrimaryPolicy",
+    "MFACUnifiedRuntimePolicy",
+    "SlurryPolicyOnlineBridge",
+    "MFAC_PRIMARY_BRIDGE_VERSION",
+    "compact_json",
+    "csv_safe_row",
+]
