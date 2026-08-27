@@ -11,8 +11,8 @@ remaining duplicate MFAC sidecar semantics without rewriting that large shell:
   from the already computed ``mfac_*`` output, never recalculate Qbase/target;
 - current production permissions remain LEARN=0 / Residual=0 / DCS write=off.
 
-``scheme2_shadow_*`` fields are temporarily retained as compatibility aliases
-for UI/database consumers.  Their source is the single MFAC runtime decision.
+``scheme2_shadow_*`` fields and ``configure_scheme2_shadow`` are temporarily
+retained as compatibility aliases.  New code should use ``configure_mfac_runtime``.
 """
 
 from __future__ import annotations
@@ -74,13 +74,11 @@ class ProcessForMapConsole(_LegacyShell):
             self._slurry_pipeline_error = str(exc)
             return False
 
-    def configure_scheme2_shadow(self, coordinator, context_resolver=None):
-        """Compatibility name: bind Coordinator into the *primary* MFAC path.
+    def configure_mfac_runtime(self, coordinator, context_resolver=None):
+        """Bind a calibrated Coordinator into the unique primary MFAC path.
 
-        The old implementation stored a separate sidecar coordinator and then
-        ran it after primary policy evaluation.  This override instead injects
-        the coordinator into ``MFACUnifiedRuntimePolicy`` so only one target is
-        calculated per cycle.
+        Current production integration is intentionally fail closed.  This API
+        accepts only a coordinator with LEARN=0, Residual=0 and DCS write=off.
         """
         if not isinstance(coordinator, Scheme2RuntimeCoordinator):
             raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
@@ -111,6 +109,13 @@ class ProcessForMapConsole(_LegacyShell):
         if not self._attach_primary_runtime_if_configured():
             raise RuntimeError("failed to bind coordinator to primary MFAC runtime")
         return True
+
+    def configure_scheme2_shadow(self, coordinator, context_resolver=None):
+        """Deprecated compatibility alias for ``configure_mfac_runtime``."""
+        return self.configure_mfac_runtime(
+            coordinator,
+            context_resolver=context_resolver,
+        )
 
     @staticmethod
     def _runtime_execution_context(data):
