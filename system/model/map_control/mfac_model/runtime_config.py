@@ -1,19 +1,13 @@
 # -*- coding: utf-8 -*-
 """Fail-closed configuration/builder for the formal Scheme-2 MFAC runtime.
 
-No plant timing, sensitivity or pH safety threshold is guessed here.  The
-repository default is explicitly ``enabled=False`` / ``DISABLED_UNCALIBRATED``.
-A coordinator can be constructed only after every plant-specific section is
-supplied and validates through the component dataclasses.
+Plant calibration parameters live here, but plant *facts* do not. Supply-flow
+hard bounds/feedback mapping and pH safety/operating envelopes are owned only by
+``PLANT_CONFIG`` and are injected through ``mfac_plant_contract``. Runtime
+configuration is therefore unable to silently override those physical facts.
 
-Current production permission remains fixed at:
-
-    LEARN = 0
-    Residual = 0
-    DCS write = off
-
-Those permissions are deliberately checked again by this builder even though
-the coordinator itself also carries enable flags.
+Repository default remains ``enabled=False`` / ``DISABLED_UNCALIBRATED`` and
+production permission remains fixed at LEARN=0, Residual=0, DCS write=off.
 """
 
 from __future__ import annotations
@@ -22,6 +16,11 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
+
+from system.model.config.mfac_plant_contract import (
+    ph_arbitration_plant_values,
+    target_supply_flow_contract,
+)
 
 from .continuous_target import ContinuousTargetConfig
 from .mfac_eligibility import MFACEligibilityConfig
@@ -39,13 +38,11 @@ from .runtime_store import Scheme2RuntimeStore
 from .supply_flow_tracking import SupplyFlowTrackingConfig
 
 
-MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V1"
+MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V2_PLANT_CONTRACT"
 DEFAULT_RUNTIME_DIR = (
     Path(__file__).resolve().parent / "mfac_model_output" / "runtime"
 )
 
-# Empty plant-specific sections are intentional.  They make the absence of
-# calibration visible instead of silently substituting test/example values.
 DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "config_version": MFAC_RUNTIME_CONFIG_VERSION,
     "enabled": False,
@@ -56,6 +53,8 @@ DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "persist_runtime": True,
     "runtime_dir": str(DEFAULT_RUNTIME_DIR),
     "startup_setpoint_target": None,
+    # Plant-owned hard bounds must not be repeated here. Empty means derive
+    # entirely from PLANT_CONFIG.scheme2.target_supply_flow.
     "continuous_target": {},
     "tracking": {},
     "so2_response": {},
@@ -63,6 +62,8 @@ DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "residual": {},
     "ph_response": {},
     "ph_adaptation": {},
+    # Plant-owned safe/operating ranges and guard band are injected from the
+    # selected tower. Only algorithmic knobs such as min_confidence belong here.
     "ph_arbitration": {},
     "eligibility": {},
 }
@@ -116,13 +117,18 @@ _REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
         "phi_upper_bound",
         "max_single_update_abs",
     ),
-    "ph_arbitration": (
-        "operating_min",
-        "operating_max",
-        "safe_min",
-        "safe_max",
-        "guard_band",
-    ),
+}
+
+_PLANT_OWNED_TARGET_FIELDS = {
+    "hard_min_supply_flow",
+    "hard_max_supply_flow",
+}
+_PLANT_OWNED_PH_FIELDS = {
+    "operating_min",
+    "operating_max",
+    "safe_min",
+    "safe_max",
+    "guard_band",
 }
 
 
@@ -177,15 +183,43 @@ def _eligibility_config(value: Mapping[str, Any]) -> MFACEligibilityConfig:
     return MFACEligibilityConfig(**payload)
 
 
+def _continuous_target_config(value: Mapping[str, Any]) -> ContinuousTargetConfig:
+    payload = dict(value or {})
+    overrides = sorted(_PLANT_OWNED_TARGET_FIELDS.intersection(payload))
+    if overrides:
+        raise ValueError(
+            "continuous_target cannot override plant-owned fields: %s"
+            % ", ".join(overrides)
+        )
+    contract = target_supply_flow_contract()
+    return ContinuousTargetConfig(
+        hard_min_supply_flow=float(contract["minimum"]),
+        hard_max_supply_flow=float(contract["maximum"]),
+    )
+
+
+def _ph_arbitration_config(value: Mapping[str, Any]) -> PHResidualArbitrationConfig:
+    payload = dict(value or {})
+    overrides = sorted(_PLANT_OWNED_PH_FIELDS.intersection(payload))
+    if overrides:
+        raise ValueError(
+            "ph_arbitration cannot override plant-owned fields: %s"
+            % ", ".join(overrides)
+        )
+    plant_values = ph_arbitration_plant_values()
+    plant_values.update(payload)
+    return PHResidualArbitrationConfig(**plant_values)
+
+
 def build_mfac_runtime(
     config: Optional[Mapping[str, Any]] = None,
 ) -> MFACRuntimeBuildResult:
     """Build a calibrated Shadow coordinator or return an explicit safe state.
 
-    ``enabled=False`` is a normal production-safe state and returns without
-    validating plant-specific sections.  ``enabled=True`` requires a complete
-    dual-response calibration and still refuses any request to enable learning,
-    non-zero residual control or DCS writing at the current activation stage.
+    ``enabled=False`` is a normal production-safe state. When enabled, all
+    response/adaptation calibration fields must be explicit, while plant-owned
+    physical limits are resolved from ``PLANT_CONFIG`` and cannot be overridden
+    in this runtime mapping.
     """
 
     value = deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG)
@@ -211,7 +245,7 @@ def build_mfac_runtime(
         return MFACRuntimeBuildResult(
             configured=False,
             status="INVALID_INCOMPLETE_CALIBRATION",
-            error="required plant calibration is incomplete",
+            error="required MFAC calibration is incomplete",
             missing_fields=missing,
         )
 
@@ -234,11 +268,11 @@ def build_mfac_runtime(
         ph_adaptation = PHOnlineAdaptationConfig(
             **_as_mapping(value.get("ph_adaptation"), "ph_adaptation")
         )
-        ph_arbitration = PHResidualArbitrationConfig(
-            **_as_mapping(value.get("ph_arbitration"), "ph_arbitration")
+        ph_arbitration = _ph_arbitration_config(
+            _as_mapping(value.get("ph_arbitration"), "ph_arbitration")
         )
-        continuous_target = ContinuousTargetConfig(
-            **_as_mapping(value.get("continuous_target"), "continuous_target")
+        continuous_target = _continuous_target_config(
+            _as_mapping(value.get("continuous_target"), "continuous_target")
         )
         eligibility = _eligibility_config(
             _as_mapping(value.get("eligibility"), "eligibility")
@@ -248,10 +282,7 @@ def build_mfac_runtime(
         if not runtime_dir:
             raise ValueError("runtime_dir cannot be empty")
         persist_runtime = bool(value.get("persist_runtime", True))
-        store = Scheme2RuntimeStore(
-            runtime_dir,
-            enabled=persist_runtime,
-        )
+        store = Scheme2RuntimeStore(runtime_dir, enabled=persist_runtime)
         coordinator_config = Scheme2RuntimeCoordinatorConfig(
             tracking=tracking,
             response=so2_response,
