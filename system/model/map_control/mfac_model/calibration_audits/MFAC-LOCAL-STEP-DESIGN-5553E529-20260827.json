@@ -3,6 +3,7 @@
   "trial_protocol_version": "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V2_SINGLE_ACTION_BINDING",
   "trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
   "observation_profile_id": "MFAC-LOCAL-STEP-OBSERVATION-DESIGN-5553E529-20260827",
+  "cohort_profile_id": "MFAC-LOCAL-GAIN-COHORT-DESIGN-5553E529-20260827",
   "design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
   "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
   "source_noise_audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
@@ -45,6 +46,10 @@
       "required_independent_days",
       "level review status"
     ],
+    "local_gain_cohort_profile": [
+      "relative MAD limits for delta_Q_actual/phi_so2/phi_ph",
+      "max relative deviation limits for delta_Q_actual/phi_so2/phi_ph"
+    ],
     "shared_safety_check": "max_sample_gap_seconds is repeated defensively between trial safety and observation monitors, but LocalStepSessionReadiness requires exact equality"
   },
   "evidence_gap": {
@@ -54,7 +59,8 @@
     "minimum_effect_multiplier": "REVIEW_REQUIRED",
     "inlet_so2_5min_stability": "INSUFFICIENT_5MIN_STABLE_BASELINE_EVIDENCE",
     "qbase_proximity_without_historical_target": "UNIDENTIFIED",
-    "observation_profile": "INCOMPLETE_REVIEW_REQUIRED"
+    "observation_profile": "INCOMPLETE_REVIEW_REQUIRED",
+    "local_gain_cohort_consistency_profile": "INCOMPLETE_REVIEW_REQUIRED"
   },
   "review_candidate_parameters": {
     "step_up_m3_h": 2.0,
@@ -80,6 +86,7 @@
       "2.0 m3/h is the inherited first-phase manual identification candidate; it is not the runtime planner step cap.",
       "Tracking reach tolerance, response baseline/window/delay parameters and action timeout are owned by the separate Observation Profile and are no longer duplicated here.",
       "Trial-matrix max_step and trial-count/day requirements are owned by the Trial Matrix and are no longer duplicated here.",
+      "Cross-trial consistency thresholds are owned by the LocalGainCohortReviewProfile and are not duplicated here.",
       "30 s max_sample_gap remains here only as a trial-safety check; readiness requires equality with all observation-monitor gap settings.",
       "2700 s min_quiet is a REVIEW_CANDIDATE rounded above pulse-end-to-recovery-band P95 ~=2450 s; all fresh baseline gates must still pass.",
       "A 300-second baseline audit found only three qualifying independent windows, so max_abs_inlet_so2_change remains null.",
@@ -149,7 +156,7 @@
     "ph_half_window_median_difference_p99": 0.0346,
     "outlet_so2_half_window_median_difference_p95_mg_nm3": 1.4098,
     "outlet_so2_half_window_median_difference_p99_mg_nm3": 2.1638,
-    "note": "Pending rise, pulse recovery, Planner HOLD, observation-monitor design, trial-matrix design and noise evidence have separate parameter ownership."
+    "note": "Pending rise, pulse recovery, Planner HOLD, observation-monitor design, trial-matrix design, cohort consistency and noise evidence have separate parameter ownership."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
@@ -185,11 +192,18 @@
     "trial_success_status": "LOCAL_GAIN_EVIDENCE_CANDIDATE",
     "trial_success_grants_learning_permission": false,
     "second_human_evidence_review_required": true,
-    "only_after_second_review": "ActionResponseEvent.learning_eligible=true",
+    "second_review_output": "INDIVIDUALLY_REVIEWED_LOCAL_GAIN_EVENT",
+    "single_event_learning_eligible_field_is_not_bootstrap_authority": true,
+    "manual_bootstrap_requires_cohort_approval_metadata": true,
+    "cohort_count_and_days_source": "REVIEWED_TRIAL_MATRIX_LEVEL",
+    "cohort_consistency_source": "LocalGainCohortReviewProfile",
+    "cohort_quantitative_pass_status": "ADEQUATE_FOR_BOOTSTRAP_REVIEW",
+    "cohort_quantitative_pass_grants_learning_permission": false,
+    "third_human_cohort_review_required": true,
+    "after_cohort_review": "BOOTSTRAP_ELIGIBLE_COPIES_WITH_COHORT_APPROVAL_METADATA",
     "action_source": "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
     "evidence_role": "LOCAL_GAIN",
     "automatic_online_adaptation_allowed": false,
-    "offline_bootstrap_evidence_allowed": true,
     "return_to_baseline_learning_allowed": false
   },
   "execution_contract": {
@@ -199,11 +213,12 @@
     "normal_algorithm_target_replaced": false,
     "automatic_dcs_adapter": false,
     "abort_is_recommendation_only": true,
-    "post_execution_learning": "SECOND_EVIDENCE_REVIEW_REQUIRED"
+    "post_execution_learning": "INDIVIDUAL_EVIDENCE_REVIEW_THEN_MULTI_TRIAL_COHORT_REVIEW"
   },
   "notes": [
     "No numeric value from unit tests is a site calibration default.",
     "Identification Design, Observation Profile and Trial Matrix must all be reviewed and cross-profile consistent before a session is considered ready.",
+    "A successful single trial cannot seed phi_so2 or phi_ph; bootstrap trainers require explicit cohort approval for manual local-step events.",
     "The +2.0 m3/h identification stimulus is never a 10-second recurrent increment.",
     "PendingDoseGuard has no recovery-memory authority; trial quiet time is separately reviewed from pulse recovery evidence.",
     "Production remains LEARN=0, Residual=0, DCS write=off."
