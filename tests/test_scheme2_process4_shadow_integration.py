@@ -9,12 +9,12 @@ from system.model.map_control.condition_model.online_condition_policy_bridge imp
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )
-from system.model.map_control.mfac_model.process_response import (
-    ProcessResponseConfig,
-)
-from system.model.map_control.mfac_model.residual_control import (
-    MFACResidualConfig,
-)
+from system.model.map_control.mfac_model.ph_adaptation import PHOnlineAdaptationConfig
+from system.model.map_control.mfac_model.ph_arbitration import PHResidualArbitrationConfig
+from system.model.map_control.mfac_model.ph_response import PHResponseConfig
+from system.model.map_control.mfac_model.process_response import ProcessResponseConfig
+from system.model.map_control.mfac_model.residual_control import MFACResidualConfig
+from system.model.map_control.mfac_model.runtime_config import MFACRuntimeBuildResult
 from system.model.map_control.mfac_model.runtime_coordinator import (
     Scheme2RuntimeCoordinator,
     Scheme2RuntimeCoordinatorConfig,
@@ -26,8 +26,6 @@ from system.model.map_control.mfac_model.supply_flow_tracking import (
 
 
 class _UnifiedPipeline:
-    """Minimal condition -> MFAC pipeline used without starting P4PC threads."""
-
     def __init__(self, bridge):
         self.policy_bridge = bridge
 
@@ -50,7 +48,35 @@ class _UnifiedPipeline:
 
 class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
     @staticmethod
-    def config(*, learning=False, residual=False):
+    def config(*, learning=False, residual=False, dual=True):
+        kwargs = {}
+        if dual:
+            kwargs.update(
+                ph_response=PHResponseConfig(
+                    baseline_window_seconds=20.0,
+                    delay_onset_seconds=5.0,
+                    observation_seconds=15.0,
+                    measurement_window_seconds=5.0,
+                    max_sample_gap_seconds=15.0,
+                    target_change_tolerance=0.0,
+                    min_baseline_samples=2,
+                    min_response_samples=2,
+                ),
+                ph_online_adaptation=PHOnlineAdaptationConfig(
+                    eta=0.2,
+                    mu=1.0,
+                    phi_lower_bound=0.01,
+                    phi_upper_bound=1.0,
+                    max_single_update_abs=0.1,
+                ),
+                ph_arbitration=PHResidualArbitrationConfig(
+                    operating_min=5.4,
+                    operating_max=6.2,
+                    safe_min=5.0,
+                    safe_max=6.5,
+                    guard_band=0.1,
+                ),
+            )
         return Scheme2RuntimeCoordinatorConfig(
             tracking=SupplyFlowTrackingConfig(
                 target_change_deadband=0.5,
@@ -84,6 +110,7 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
             ),
             learning_enabled=learning,
             residual_control_enabled=residual,
+            **kwargs,
         )
 
     @staticmethod
@@ -104,6 +131,10 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
     @classmethod
     def bare_console(cls):
         console = ProcessForMapConsole.__new__(ProcessForMapConsole)
+        console._mfac_runtime_build_result = MFACRuntimeBuildResult(
+            configured=False,
+            status="DISABLED_UNCALIBRATED",
+        )
         console._mfac_primary_runtime_coordinator = None
         console._mfac_primary_context_resolver = None
         console._scheme2_runtime_coordinator = None
@@ -143,9 +174,9 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(result["mfac_runtime_mode"], "SAFE_PRIMARY_FALLBACK")
         self.assertEqual(result["scheme2_shadow_status"], "DISABLED")
-        self.assertEqual(
-            result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME"
-        )
+        self.assertEqual(result["mfac_runtime_config_status"], "DISABLED_UNCALIBRATED")
+        self.assertFalse(result["mfac_runtime_configured"])
+        self.assertEqual(result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME")
         self.assertFalse(result["scheme2_duplicate_runtime_path"])
         self.assertFalse(result["mfac_learn_enabled"])
         self.assertFalse(result["mfac_residual_enabled"])
@@ -159,33 +190,39 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
             41.20592948717949,
         )
 
-    def test_process4_rejects_unsafe_coordinator_activation(self):
+    def test_process4_rejects_unsafe_or_single_response_activation(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             with self.assertRaises(ValueError):
-                console.configure_scheme2_shadow(
+                console.configure_mfac_runtime(
                     self.coordinator(root + "/learn", learning=True)
                 )
             with self.assertRaises(ValueError):
-                console.configure_scheme2_shadow(
+                console.configure_mfac_runtime(
                     self.coordinator(root + "/residual", residual=True)
                 )
+            with self.assertRaises(ValueError):
+                console.configure_mfac_runtime(
+                    self.coordinator(root + "/single", dual=False)
+                )
 
-    def test_coordinator_is_injected_into_primary_policy_not_sidecar(self):
+    def test_dual_coordinator_is_injected_into_primary_policy_not_sidecar(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             coordinator = self.coordinator(root)
-            self.assertTrue(console.configure_scheme2_shadow(coordinator))
-
+            self.assertTrue(console.configure_mfac_runtime(coordinator))
             policy = console._slurry_pipeline.policy_bridge.policy
             self.assertIs(policy.runtime_coordinator, coordinator)
             self.assertEqual(policy.runtime_mode, "COORDINATOR_SHADOW")
+            self.assertEqual(
+                console._mfac_runtime_build_result.status,
+                "CONFIGURED_SHADOW",
+            )
 
     def test_insert_mod_uses_one_qbase_and_one_target_path(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
-            console.configure_scheme2_shadow(self.coordinator(root))
-
+            console.configure_mfac_runtime(self.coordinator(root))
             result = console.insert_Mod(
                 {
                     "date": "2026-08-27T09:10:00+08:00",
@@ -197,20 +234,15 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
                     "yyq_LL": 2200000.0,
                     "xstjy_PH": 6.2,
                     "outlet_so2_target": 20.0,
-                    # These fields must not make the current integration claim
-                    # that DCS applied the command.
                     "target_was_applied": True,
                     "dcs_applied_target_supply_flow": 31.0,
                 },
                 20.0,
                 store_to_db=False,
             )
-
             self.assertEqual(result["mfac_runtime_mode"], "COORDINATOR_SHADOW")
             self.assertEqual(result["scheme2_shadow_status"], "ACTIVE")
-            self.assertEqual(
-                result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME"
-            )
+            self.assertEqual(result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME")
             self.assertFalse(result["scheme2_duplicate_runtime_path"])
             self.assertEqual(result["mfac_debug"]["qbase_calculation_count"], 1)
             self.assertEqual(result["mfac_debug"]["coordinator_cycle_count"], 1)
@@ -228,10 +260,7 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
                 result["scheme2_algorithm_target_supply_flow"],
                 result["mfac_algorithm_target_supply_flow"],
             )
-            self.assertIs(
-                result["scheme2_shadow"],
-                result["mfac_runtime_cycle"],
-            )
+            self.assertIs(result["scheme2_shadow"], result["mfac_runtime_cycle"])
             self.assertFalse(result["mfac_learn_enabled"])
             self.assertFalse(result["mfac_residual_enabled"])
             self.assertFalse(result["mfac_dcs_write_enabled"])
