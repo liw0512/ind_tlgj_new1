@@ -12,10 +12,10 @@ from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
 from system.model.config.database_schema import (
     ensure_filter_table,
-    ensure_model_result_table,
     latest_monthly_table,
     monthly_table_name,
 )
+from system.model.config.mfac_database_schema import ensure_mfac_model_result_table
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 
 logging = setup_log("wc")
@@ -24,11 +24,10 @@ logging = setup_log("wc")
 class DataHandler:
     """当前数据库历史数据读取器。
 
-    只认识两类正式月表：t_data1_filter_rt_* 与 t_model_result_*。
-    旧 t_data1_rt_*、cluster_label、推荐泵/推荐 pH 等历史 schema 已移除。
+    正式月表只有 t_data1_filter_rt_* 与 t_model_result_*。第二模块新数据优先
+    查询 canonical ``mfac_*`` 字段；旧 ``slurry_policy_*`` 仅用于历史行兼容。
     """
 
-    # 兼容旧页面 chart key，同时全部映射到当前真实数据库字段。
     BASE_SERIES: Dict[str, Tuple[str, str]] = {
         "yyq_so2": ("yyq_SO2", "原烟气SO2"),
         "jyq_so2": ("jyq_SO2", "净烟气SO2"),
@@ -46,18 +45,38 @@ class DataHandler:
         "xstgjb_adl": ("xstgjb_ADL", "供浆泵A电流"),
         "xstgjb_bdl": ("xstgjb_BDL", "供浆泵B电流"),
         "xst_fmkd1": ("xst_FMKD", "供浆阀开度"),
-        # "xst_fmkd2": ("xst_FMKD2", "供浆阀2开度"),
         "liquid_gas_ratio": ("liquid_gas_ratio", "液气比"),
     }
 
-    MODEL_SERIES: Dict[str, Tuple[str, str]] = {
-        "condition_label": ("condition_label", "工况标签"),
-        "stable_condition_label": ("stable_condition_label", "稳定工况标签"),
-        "action_family": ("slurry_policy_action_family", "供浆动作族"),
-        "action_direction": ("slurry_policy_action_direction", "动作方向"),
-        "action_magnitude": ("slurry_policy_action_magnitude", "动作强度"),
-        "decision_status": ("slurry_policy_decision_status", "决策状态"),
-        "effective_target": ("slurry_policy_effective_target", "有效SO2目标"),
+    # chart key is kept stable for the UI.  Tuple = canonical, title, legacy
+    # fallback.  Fallback is used only when canonical query cannot be served.
+    MODEL_SERIES: Dict[str, Tuple[str, str, str]] = {
+        "condition_label": ("condition_label", "工况标签", ""),
+        "stable_condition_label": ("stable_condition_label", "稳定工况标签", ""),
+        "action_family": (
+            "mfac_action_family", "MFAC供浆动作族", "slurry_policy_action_family"
+        ),
+        "action_direction": (
+            "mfac_action_direction", "MFAC动作方向", "slurry_policy_action_direction"
+        ),
+        "action_magnitude": (
+            "mfac_action_magnitude", "MFAC动作强度", "slurry_policy_action_magnitude"
+        ),
+        "decision_status": (
+            "mfac_decision_status", "MFAC决策状态", "slurry_policy_decision_status"
+        ),
+        "effective_target": (
+            "mfac_effective_target", "有效SO2目标", "slurry_policy_effective_target"
+        ),
+        "algorithm_target_supply_flow": (
+            "mfac_algorithm_target_supply_flow", "MFAC目标供浆量", ""
+        ),
+        "qbase_effective": (
+            "mfac_qbase_effective", "MFAC动态Qbase", ""
+        ),
+        "residual_mfac_hold": (
+            "mfac_residual_mfac_hold", "MFAC保持修正量", ""
+        ),
     }
 
     def __init__(self, GLOBAL_DATA):
@@ -99,13 +118,12 @@ class DataHandler:
             return self.filter_table_name, self.contro_table_name
 
     def table_update(self):
-        # 与 P4PC 共用同一 schema，调用是幂等的，不再由 DataHandler 定义第二套 CREATE TABLE。
         persistence = PROCESS4MAP_CONFIG.persistence
         try:
             self.filter_table_name = ensure_filter_table(
                 self.engine, persistence.filter_table_prefix
             )
-            self.contro_table_name = ensure_model_result_table(
+            self.contro_table_name = ensure_mfac_model_result_table(
                 self.engine, persistence.model_result_table_prefix
             )
             self._schema_ready = True
@@ -133,23 +151,54 @@ class DataHandler:
             f'SELECT "date", "{safe_column}" AS value FROM "{table_name}" '
             'WHERE "date" BETWEEN %s AND %s ORDER BY "date"'
         )
+        rows = self.engine.execute(sql, (start_time, end_time)).fetchall()
+        return [
+            {
+                "date": row[0].strftime("%Y-%m-%d %H:%M:%S") if hasattr(row[0], "strftime") else str(row[0]),
+                "value": row[1],
+            }
+            for row in rows
+        ]
+
+    def _query_model_series(
+        self,
+        canonical: str,
+        legacy: str,
+        start_time,
+        end_time,
+    ):
         try:
-            rows = self.engine.execute(sql, (start_time, end_time)).fetchall()
-            return [
-                {
-                    "date": row[0].strftime("%Y-%m-%d %H:%M:%S") if hasattr(row[0], "strftime") else str(row[0]),
-                    "value": row[1],
-                }
-                for row in rows
-            ]
+            return self._query_series(
+                self.contro_table_name, canonical, start_time, end_time
+            )
         except Exception as exc:
-            logging.warning("历史序列读取失败 table=%s column=%s: %s", table_name, column, exc)
-            return []
+            if not legacy:
+                logging.warning(
+                    "历史MFAC序列读取失败 column=%s: %s", canonical, exc
+                )
+                return []
+            logging.info(
+                "canonical MFAC字段不可用，回退历史兼容字段: %s -> %s",
+                canonical,
+                legacy,
+            )
+            try:
+                return self._query_series(
+                    self.contro_table_name, legacy, start_time, end_time
+                )
+            except Exception as legacy_exc:
+                logging.warning(
+                    "历史兼容序列读取失败 column=%s: %s", legacy, legacy_exc
+                )
+                return []
 
     def get_send_data(self):
         now = datetime.datetime.now()
         with self.lock:
-            start = self._parse_time(self.mark.get("start_time"), now - datetime.timedelta(hours=1))
+            start = self._parse_time(
+                self.mark.get("start_time"),
+                now - datetime.timedelta(hours=1),
+            )
             end = self._parse_time(self.mark.get("end_time"), now)
             args = list(self.mark.get("args") or [])
 
@@ -162,14 +211,23 @@ class DataHandler:
             key = str(key)
             if key in self.BASE_SERIES:
                 column, title = self.BASE_SERIES[key]
-                table = self.filter_table_name
+                try:
+                    points = self._query_series(
+                        self.filter_table_name, column, start, end
+                    )
+                except Exception as exc:
+                    logging.warning(
+                        "历史基础序列读取失败 column=%s: %s", column, exc
+                    )
+                    points = []
             elif key in self.MODEL_SERIES:
-                column, title = self.MODEL_SERIES[key]
-                table = self.contro_table_name
+                column, title, legacy = self.MODEL_SERIES[key]
+                points = self._query_model_series(
+                    column, legacy, start, end
+                )
             else:
-                logging.info("DataHandler 已忽略旧/未知图表字段: %s", key)
+                logging.info("DataHandler 已忽略未知图表字段: %s", key)
                 continue
-            points = self._query_series(table, column, start, end)
             charts.append({
                 "name": key,
                 "title": title,
@@ -194,11 +252,10 @@ class DataHandler:
             time.sleep(60)
 
     def timing_clean_data(self):
-        # 新版图表直接按需查数据库，不再维护几十个内存 map，因此无需逐 map 清理。
         return None
 
     def start(self):
-        logging.info("start datahandler (filter/model tables only)")
+        logging.info("start datahandler (filter/MFAC model tables only)")
         threading.Thread(target=self.miniotor, daemon=True).start()
         while True:
             try:
