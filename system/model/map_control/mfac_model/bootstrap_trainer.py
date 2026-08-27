@@ -5,6 +5,10 @@ Historical operator actions are never treated as demonstrations to imitate.
 Only reviewed LOCAL_GAIN events may seed the local ``phi_so2`` sensitivity;
 large pulses/boosts remain available to the separate dynamic/safety evidence
 path without contaminating the controller gain.
+
+Manual local-step evidence has an additional defense-in-depth rule: an
+individually reviewed trial is still insufficient.  It must carry explicit
+multi-trial cohort bootstrap approval before this trainer may consume it.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -109,6 +113,22 @@ def _historical_local_gain_allowed(event: ActionResponseEvent) -> bool:
     return metadata.get("historical_local_gain_eligible") is True
 
 
+def _manual_local_gain_bootstrap_allowed(event: ActionResponseEvent) -> bool:
+    """Require explicit cohort approval for supervised manual local-step data."""
+    if str(event.action_source or "").upper() != (
+        "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED"
+    ):
+        return True
+    metadata = dict(event.metadata or {})
+    return (
+        metadata.get("evidence_role") == "LOCAL_GAIN"
+        and metadata.get("manual_evidence_review_approved") is True
+        and metadata.get("cohort_bootstrap_review_approved") is True
+        and metadata.get("offline_bootstrap_evidence_allowed") is True
+        and metadata.get("automatic_online_adaptation_allowed") is False
+    )
+
+
 def _quality_weight(event: ActionResponseEvent) -> float:
     value = _finite(event.quality_score)
     if value is None:
@@ -203,6 +223,8 @@ def build_bootstrap_evidence(
             continue
         if not _historical_local_gain_allowed(event):
             continue
+        if not _manual_local_gain_bootstrap_allowed(event):
+            continue
         phi = _event_phi(event)
         if phi is None or phi >= 0.0:
             continue
@@ -257,6 +279,7 @@ def build_bootstrap_evidence(
                 metadata={
                     "confidence_status": "NOT_CALIBRATED",
                     "evidence_role_required": "LOCAL_GAIN",
+                    "manual_local_gain_requires_cohort_review": True,
                     "operator_action_imitation": False,
                     "replay_eta": float(replay_config.eta),
                     "replay_mu": float(replay_config.mu),
