@@ -1,0 +1,48 @@
+{
+  "semantics_version": "SCHEME2_DUAL_RESPONSE_ACTIVATION_REVIEW_V1_NO_PERMISSION",
+  "review_id": "MFAC-DUAL-ACTIVATION-REVIEW-DESIGN-5553E529-20260827",
+  "status": "NOT_READY",
+  "activation_status": "NOT_APPROVED",
+  "learning_enabled": false,
+  "residual_control_enabled": false,
+  "dcs_write_enabled": false,
+  "required_calibration_state": {
+    "so2_channel": "CALIBRATED",
+    "ph_channel": "CALIBRATED",
+    "same_local_gain_cohort_binding": true,
+    "calibration_profile_activation_status": "NOT_ACTIVATABLE"
+  },
+  "engineering_review_checklist": {
+    "condition_snapshot_binding_reviewed": false,
+    "mfac_context_binding_reviewed": false,
+    "plant_contract_match_reviewed": false,
+    "runtime_parameter_reviewed": false,
+    "shadow_validation_reviewed": false,
+    "causal_target_application_reviewed": false,
+    "persistence_restore_reviewed": false,
+    "rollback_plan_reviewed": false
+  },
+  "readiness_contract": {
+    "maximum_status_from_this_artifact": "READY_FOR_HUMAN_ACTIVATION_REVIEW",
+    "ready_status_grants_learning_permission": false,
+    "ready_status_grants_residual_permission": false,
+    "ready_status_grants_dcs_permission": false,
+    "runtime_config_generation_allowed": false,
+    "separate_future_activation_approval_required": true
+  },
+  "current_blockers": [
+    "DUAL_CHANNEL_CALIBRATION_NOT_COMPLETED",
+    "PLANT_CONTRACT_MATCH_NOT_REVIEWED",
+    "RUNTIME_PARAMETER_REVIEW_NOT_COMPLETE",
+    "SHADOW_VALIDATION_NOT_REVIEWED",
+    "CAUSAL_TARGET_APPLICATION_NOT_REVIEWED",
+    "PERSISTENCE_RESTORE_NOT_REVIEWED",
+    "ROLLBACK_PLAN_NOT_REVIEWED"
+  ],
+  "notes": [
+    "This is a design/checklist artifact, not an activation approval artifact.",
+    "Even a future READY_FOR_HUMAN_ACTIVATION_REVIEW result must keep LEARN=0, Residual=0 and DCS write=off until a separately implemented and reviewed approval stage exists.",
+    "The current Scheme2 application still fixes target_was_applied=false in the formal shadow path, so causal target-application review is unresolved.",
+    "Calibration evidence and activation authority remain separate facts."
+  ]
+}
