@@ -23,6 +23,12 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .local_step_design_profile import (
+    LOCAL_STEP_DESIGN_PROFILE_VERSION,
+    LocalStepIdentificationDesignProfile,
+    LocalStepManualConfigs,
+    load_local_step_design_profile,
+)
 from .local_step_identification import (
     LOCAL_STEP_IDENTIFICATION_VERSION,
     LocalStepIdentificationConfig,
@@ -184,6 +190,7 @@ __all__ = [
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
+    "LOCAL_STEP_DESIGN_PROFILE_VERSION",
     "LOCAL_STEP_IDENTIFICATION_VERSION",
     "LOCAL_STEP_TRIAL_PROTOCOL_VERSION",
     "LOCAL_STEP_TRIAL_MATRIX_VERSION",
@@ -256,6 +263,9 @@ __all__ = [
     "FlowTrajectoryPlannerConfig",
     "FlowTrajectoryPlan",
     "FlowTrajectoryPlanner",
+    "LocalStepManualConfigs",
+    "LocalStepIdentificationDesignProfile",
+    "load_local_step_design_profile",
     "LocalStepIdentificationConfig",
     "LocalStepIdentificationProposal",
     "LocalStepIdentificationGate",
