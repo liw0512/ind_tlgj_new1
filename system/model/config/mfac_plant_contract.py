@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Canonical plant facts consumed by the formal Scheme-2 MFAC runtime.
 
-This module does not define a second set of plant parameters.  It only validates
+This module does not define a second set of plant parameters. It only validates
 and exposes values already owned by ``plant_config.PLANT_CONFIG`` so the MFAC
 runtime cannot silently drift from the plant topology/safety configuration.
 """
@@ -21,6 +21,10 @@ def _finite(value: Any, field_name: str) -> float:
     if not math.isfinite(number):
         raise ValueError("%s must be finite" % field_name)
     return number
+
+
+def _same(left: Any, right: Any) -> bool:
+    return math.isclose(float(left), float(right), rel_tol=0.0, abs_tol=1e-12)
 
 
 def target_supply_flow_contract(
@@ -54,7 +58,7 @@ def primary_tower_contract(
 ) -> Dict[str, Any]:
     """Resolve the tower associated with the canonical supply-flow feedback.
 
-    If exactly one enabled tower exists it is accepted directly.  With multiple
+    If exactly one enabled tower exists it is accepted directly. With multiple
     enabled towers the supply-flow feedback column must identify exactly one
     tower, otherwise formal MFAC startup fails closed instead of guessing.
     """
@@ -140,8 +144,41 @@ def ph_arbitration_plant_values(
     }
 
 
+def validate_runtime_plant_contract(
+    continuous_target_config: Any,
+    ph_arbitration_config: Any,
+    plant_config: Mapping[str, Any] | None = None,
+) -> None:
+    """Reject manually constructed runtime configs that drift from plant facts."""
+    target = target_supply_flow_contract(plant_config)
+    expected_ph = ph_arbitration_plant_values(plant_config)
+
+    target_fields = {
+        "hard_min_supply_flow": target["minimum"],
+        "hard_max_supply_flow": target["maximum"],
+    }
+    for name, expected in target_fields.items():
+        actual = getattr(continuous_target_config, name, None)
+        if actual is None or not _same(actual, expected):
+            raise ValueError(
+                "formal MFAC %s must match PLANT_CONFIG (%s)"
+                % (name, expected)
+            )
+
+    if ph_arbitration_config is None:
+        raise ValueError("formal MFAC runtime requires pH residual arbitration")
+    for name, expected in expected_ph.items():
+        actual = getattr(ph_arbitration_config, name, None)
+        if actual is None or not _same(actual, expected):
+            raise ValueError(
+                "formal MFAC ph_arbitration.%s must match PLANT_CONFIG (%s)"
+                % (name, expected)
+            )
+
+
 __all__ = [
     "target_supply_flow_contract",
     "primary_tower_contract",
     "ph_arbitration_plant_values",
+    "validate_runtime_plant_contract",
 ]
