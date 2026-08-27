@@ -5,13 +5,13 @@ This is the single second-module runtime facade after ``condition_model``. It
 calculates Dynamic Qbase exactly once per 10-second decision frame and executes
 one, and only one, target path:
 
-- SAFE_PRIMARY_FALLBACK: ``clip(Qbase + 0, 0, 70)``;
+- SAFE_PRIMARY_FALLBACK: ``clip(Qbase + 0, plant_min, plant_max)``;
 - COORDINATOR_SHADOW: the already-computed Qbase enters the dual-response
   ``Scheme2RuntimeCoordinator``, which becomes the sole target owner.
 
-Formal primary runtime requires both SO2 and pH response channels. Actual
-slurry flow remains tracking/response evidence only and is never an algorithm-
-target fallback.
+Formal primary runtime requires both SO2 and pH response channels. Plant-owned
+supply-flow bounds, actual-flow feedback field, primary tower and pH field are
+resolved from ``PLANT_CONFIG`` through the canonical MFAC plant contract.
 """
 
 from __future__ import annotations
@@ -20,13 +20,19 @@ from copy import deepcopy
 import math
 from typing import Any, Dict, Mapping, Optional
 
+from system.model.config.mfac_plant_contract import (
+    primary_tower_contract,
+    target_supply_flow_contract,
+)
+from system.model.config.standard_fields import OUTLET_SO2_COLUMN
+
 from .continuous_target import ONLINE_SHADOW, ContinuousTargetPublisher
 from .context_resolver import MFACContextResolver
 from .qbase import DynamicQbaseCalculator
 from .runtime_coordinator import Scheme2RuntimeCoordinator
 
 
-MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V4_DUAL_RESPONSE"
+MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V5_PLANT_CONTRACT"
 
 
 def _active_version(pointer: Optional[Mapping[str, Any]], fallback: str = "") -> str:
@@ -85,7 +91,11 @@ class MFACUnifiedRuntimePolicy:
         self.model_version = _active_version(self.active_pointer)
         self.condition_snapshot_version = self.model_version
 
-        self.qbase_calculator = DynamicQbaseCalculator("xst")
+        self._target_contract = target_supply_flow_contract()
+        self._tower_contract = primary_tower_contract()
+        self.qbase_calculator = DynamicQbaseCalculator(
+            str(self._tower_contract["tower_id"])
+        )
         self._fallback_target_publisher = ContinuousTargetPublisher()
         self._runtime_coordinator: Optional[Scheme2RuntimeCoordinator] = None
         self._configured_context_resolver: Optional[MFACContextResolver] = None
@@ -209,15 +219,17 @@ class MFACUnifiedRuntimePolicy:
 
         context = self._context(row)
         self._coordinator_cycle_count += 1
+        ph_column = str(self._tower_contract["ph_column"])
+        feedback_column = str(self._target_contract["feedback_column"])
         cycle = coordinator.process_cycle(
             timestamp=timestamp,
             qbase_effective=qbase.qbase_effective,
             qbase_inputs_valid=bool(qbase.valid),
-            outlet_so2=row.get("jyq_SO2"),
+            outlet_so2=row.get(OUTLET_SO2_COLUMN),
             inlet_so2=row.get("yyq_SO2"),
-            ph=row.get("xstjy_PH"),
+            ph=row.get(ph_column),
             so2_target=target,
-            actual_supply_flow_feedback=row.get("xstshsjy_LL"),
+            actual_supply_flow_feedback=row.get(feedback_column),
             condition_snapshot_version=context.condition_snapshot_version,
             mfac_context_id=context.mfac_context_id,
             condition_label=context.condition_label,
@@ -292,7 +304,7 @@ class MFACUnifiedRuntimePolicy:
             "control_mode": runtime_mode,
             "runtime_mode": runtime_mode,
             "disturbance_mode": row.get("fast_change_mode", "NORMAL"),
-            "current_so2": row.get("jyq_SO2"),
+            "current_so2": row.get(OUTLET_SO2_COLUMN),
             "commanded_target": target,
             "effective_target": target,
             "experience_source": "MFAC_RUNTIME",
@@ -322,7 +334,7 @@ class MFACUnifiedRuntimePolicy:
                 "value": target_value,
                 "valid": algorithm.algorithm_target_valid,
                 "status": algorithm.algorithm_target_status,
-                "unit": "m3/h",
+                "unit": str(self._target_contract["unit"]),
                 "reason_codes": reason_codes,
             },
             "control_recommendation": {
@@ -347,6 +359,14 @@ class MFACUnifiedRuntimePolicy:
             "debug": {
                 "actual_flow_used_as_algorithm_target": False,
                 "target_formula": "clip(qbase_effective + residual_mfac_hold)",
+                "target_hard_min": float(self._target_contract["minimum"]),
+                "target_hard_max": float(self._target_contract["maximum"]),
+                "actual_flow_feedback_column": str(
+                    self._target_contract["feedback_column"]
+                ),
+                "primary_tower_id": str(self._tower_contract["tower_id"]),
+                "ph_column": str(self._tower_contract["ph_column"]),
+                "plant_contract_source": "PLANT_CONFIG",
                 "legacy_second_module_executed": False,
                 "qbase_calculation_count": self._qbase_calculation_count,
                 "coordinator_cycle_count": self._coordinator_cycle_count,
@@ -408,6 +428,13 @@ class MFACUnifiedRuntimePolicy:
             "learn_enabled": False,
             "residual_enabled": False,
             "dcs_write_enabled": False,
+            "target_hard_min": float(self._target_contract["minimum"]),
+            "target_hard_max": float(self._target_contract["maximum"]),
+            "actual_flow_feedback_column": str(
+                self._target_contract["feedback_column"]
+            ),
+            "primary_tower_id": str(self._tower_contract["tower_id"]),
+            "ph_column": str(self._tower_contract["ph_column"]),
             "reload_count": self._reload_count,
             "qbase_calculation_count": self._qbase_calculation_count,
             "coordinator_cycle_count": self._coordinator_cycle_count,
