@@ -123,6 +123,14 @@ from .supply_flow_tracking import (
     SupplyFlowTrackingMonitor,
     SupplyFlowTrackingUpdate,
 )
+from .trajectory_calibration_profile import (
+    TRAJECTORY_CALIBRATION_PROFILE_VERSION,
+    CalibrationQuantiles,
+    HistoricalSafetyEvidenceSummary,
+    PendingDoseCalibrationCandidate,
+    Scheme2TrajectoryCalibrationProfile,
+    TrajectoryPlannerCalibrationCandidate,
+)
 from .trajectory_coordinator import (
     TRAJECTORY_SHADOW_COORDINATOR_VERSION,
     Scheme2TrajectoryShadowCoordinator,
@@ -143,6 +151,7 @@ __all__ = [
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
+    "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
     "TRAJECTORY_SHADOW_COORDINATOR_VERSION",
@@ -210,6 +219,11 @@ __all__ = [
     "FlowTrajectoryPlannerConfig",
     "FlowTrajectoryPlan",
     "FlowTrajectoryPlanner",
+    "CalibrationQuantiles",
+    "PendingDoseCalibrationCandidate",
+    "TrajectoryPlannerCalibrationCandidate",
+    "HistoricalSafetyEvidenceSummary",
+    "Scheme2TrajectoryCalibrationProfile",
     "Scheme2RuntimeRestore",
     "Scheme2RuntimeStore",
     "Scheme2RuntimeCoordinatorConfig",
