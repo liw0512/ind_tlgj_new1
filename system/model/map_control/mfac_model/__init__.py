@@ -23,6 +23,15 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .local_gain_cohort_review import (
+    LOCAL_GAIN_COHORT_PROFILE_VERSION,
+    LOCAL_GAIN_COHORT_REVIEW_VERSION,
+    LocalGainCohortConsistencyConfig,
+    LocalGainCohortReview,
+    LocalGainCohortReviewProfile,
+    approve_local_gain_cohort_for_bootstrap,
+    evaluate_local_gain_cohort,
+)
 from .local_step_design_profile import (
     LOCAL_STEP_DESIGN_PROFILE_VERSION,
     LocalStepIdentificationDesignProfile,
@@ -203,6 +212,8 @@ __all__ = [
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
+    "LOCAL_GAIN_COHORT_PROFILE_VERSION",
+    "LOCAL_GAIN_COHORT_REVIEW_VERSION",
     "LOCAL_STEP_DESIGN_PROFILE_VERSION",
     "LOCAL_STEP_IDENTIFICATION_VERSION",
     "LOCAL_STEP_OBSERVATION_PROFILE_VERSION",
@@ -279,6 +290,11 @@ __all__ = [
     "FlowTrajectoryPlannerConfig",
     "FlowTrajectoryPlan",
     "FlowTrajectoryPlanner",
+    "LocalGainCohortConsistencyConfig",
+    "LocalGainCohortReviewProfile",
+    "LocalGainCohortReview",
+    "evaluate_local_gain_cohort",
+    "approve_local_gain_cohort_for_bootstrap",
     "LocalStepManualConfigs",
     "LocalStepIdentificationDesignProfile",
     "load_local_step_design_profile",
