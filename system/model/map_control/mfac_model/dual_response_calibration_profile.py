@@ -5,14 +5,18 @@ This profile separates local-gain evidence from full channel calibration. A
 channel may have a reviewed bootstrap gain while still lacking reviewed timing,
 confidence or response-window parameters. SO2 and pH statuses are independent.
 
-The profile is deliberately non-activating in this stage: even two CALIBRATED
-channels cannot enable learning, residual control or DCS write without a later,
-separate activation artifact.
+V2 additionally seals ``CALIBRATED`` channel construction behind the package's
+explicit channel-calibration review path.  Merely constructing a dataclass with
+``status='CALIBRATED'`` is no longer an accepted calibration action.
+
+The profile remains deliberately non-activating: even two CALIBRATED channels
+cannot enable learning, residual control or DCS write without a later, separate
+activation artifact.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import InitVar, asdict, dataclass, field
 import math
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -22,8 +26,17 @@ from .ph_response import PHResponseConfig
 from .process_response import ProcessResponseConfig
 
 
-DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
+LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
     "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V1_FAIL_CLOSED"
+)
+DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
+    "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_REVIEW_SEALED_FAIL_CLOSED"
+)
+CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION = (
+    "SCHEME2_CHANNEL_CALIBRATION_REVIEW_V1_OBSERVED_TIMING"
+)
+OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION = (
+    "SCHEME2_OBSERVED_RESPONSE_TIMING_V1_PROCESS_TRACE"
 )
 
 CHANNEL_UNCONFIGURED = "UNCONFIGURED"
@@ -58,6 +71,8 @@ _DELAY_PROFILE_KEYS: Tuple[str, ...] = (
     "response_p90_seconds",
 )
 
+_CALIBRATION_REVIEW_AUTHORITY = object()
+
 
 def _finite(value: Any) -> Optional[float]:
     try:
@@ -75,7 +90,7 @@ def _valid_confidence(value: Optional[float]) -> bool:
 
 
 def _validate_response_config(channel: str, value: Mapping[str, Any]) -> None:
-    """Reuse the canonical online monitor validation instead of duplicating it."""
+    """Reuse canonical online-monitor validation instead of duplicating it."""
     payload = dict(value or {})
     missing = [key for key in _REQUIRED_RESPONSE_KEYS if payload.get(key) is None]
     if missing:
@@ -114,6 +129,46 @@ def _validate_delay_profile(value: DelayProfile) -> None:
         raise ValueError("response P90 cannot precede onset P90")
 
 
+def _validate_calibration_review_metadata(value: Mapping[str, Any]) -> None:
+    metadata = dict(value or {})
+    required_true = (
+        "calibration_review_approved",
+        "timing_evidence_review_approved",
+        "response_config_review_approved",
+        "confidence_review_approved",
+    )
+    for key in required_true:
+        if metadata.get(key) is not True:
+            raise ValueError("CALIBRATED channel is missing approved %s" % key)
+
+    required_text = (
+        "calibration_review_id",
+        "calibration_reviewer_id",
+        "calibration_review_time",
+        "timing_evidence_id",
+    )
+    for key in required_text:
+        if not str(metadata.get(key) or "").strip():
+            raise ValueError("CALIBRATED channel is missing %s" % key)
+
+    if metadata.get("calibration_review_semantics") != (
+        CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION
+    ):
+        raise ValueError("CALIBRATED channel review semantics are invalid")
+    if metadata.get("timing_evidence_semantics") != (
+        OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION
+    ):
+        raise ValueError("CALIBRATED channel requires observed timing evidence")
+    if metadata.get("configured_window_boundary_used_as_observed_timing") is not False:
+        raise ValueError(
+            "configured response-window boundaries cannot be used as observed timing"
+        )
+    if metadata.get("automatic_online_adaptation_allowed") is not False:
+        raise ValueError("channel calibration cannot enable online adaptation")
+    if metadata.get("normal_runtime_activation_allowed") is not False:
+        raise ValueError("channel calibration cannot enable normal runtime")
+
+
 @dataclass(frozen=True)
 class DualResponseChannelCalibration:
     channel: str
@@ -128,8 +183,9 @@ class DualResponseChannelCalibration:
     evidence_event_ids: Tuple[str, ...] = ()
     reason_codes: Tuple[str, ...] = ()
     metadata: Dict[str, Any] = field(default_factory=dict)
+    _calibration_authority: InitVar[Any] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _calibration_authority: Any) -> None:
         channel = str(self.channel or "").upper()
         if channel not in {"SO2", "PH"}:
             raise ValueError("channel must be SO2 or PH")
@@ -161,10 +217,15 @@ class DualResponseChannelCalibration:
                 raise ValueError("local-gain-ready channel requires evidence event IDs")
 
         if self.status == CHANNEL_CALIBRATED:
+            if _calibration_authority is not _CALIBRATION_REVIEW_AUTHORITY:
+                raise ValueError(
+                    "CALIBRATED channel must be created by explicit channel calibration review"
+                )
             if not _valid_confidence(self.confidence):
                 raise ValueError("CALIBRATED channel requires reviewed confidence")
             _validate_delay_profile(self.delay_profile)
             _validate_response_config(channel, self.response_config)
+            _validate_calibration_review_metadata(self.metadata)
 
     @property
     def is_calibrated(self) -> bool:
@@ -187,7 +248,39 @@ class DualResponseChannelCalibration:
         payload["delay_profile"] = DelayProfile.from_dict(payload.get("delay_profile"))
         payload["evidence_event_ids"] = tuple(payload.get("evidence_event_ids") or ())
         payload["reason_codes"] = tuple(payload.get("reason_codes") or ())
+        if payload.get("status") == CHANNEL_CALIBRATED:
+            payload["_calibration_authority"] = _CALIBRATION_REVIEW_AUTHORITY
         return cls(**payload)
+
+
+def _build_reviewed_calibrated_channel(
+    base: DualResponseChannelCalibration,
+    *,
+    confidence: float,
+    delay_profile: DelayProfile,
+    response_config: Mapping[str, Any],
+    review_metadata: Mapping[str, Any],
+) -> DualResponseChannelCalibration:
+    """Package-private constructor used only by explicit review workflows."""
+    if base.status != CHANNEL_LOCAL_GAIN_READY:
+        raise ValueError("channel must be LOCAL_GAIN_READY before calibration review")
+    metadata = dict(base.metadata or {})
+    metadata.update(dict(review_metadata or {}))
+    return DualResponseChannelCalibration(
+        channel=base.channel,
+        status=CHANNEL_CALIBRATED,
+        phi_prior=base.phi_prior,
+        phi_live0=base.phi_live0,
+        confidence=float(confidence),
+        valid_event_count=base.valid_event_count,
+        independent_days=base.independent_days,
+        delay_profile=delay_profile,
+        response_config=dict(response_config or {}),
+        evidence_event_ids=tuple(base.evidence_event_ids),
+        reason_codes=("CHANNEL_CALIBRATION_REVIEWED",),
+        metadata=metadata,
+        _calibration_authority=_CALIBRATION_REVIEW_AUTHORITY,
+    )
 
 
 @dataclass(frozen=True)
@@ -216,7 +309,7 @@ class DualResponseCalibrationProfile:
         if self.so2.channel.upper() != "SO2" or self.ph.channel.upper() != "PH":
             raise ValueError("dual profile requires SO2 and PH channel sections")
         if self.activation_status != "NOT_ACTIVATABLE":
-            raise ValueError("V1 dual calibration profile must remain NOT_ACTIVATABLE")
+            raise ValueError("V2 dual calibration profile must remain NOT_ACTIVATABLE")
         if self.learning_enabled or self.residual_control_enabled or self.dcs_write_enabled:
             raise ValueError("dual calibration profile cannot enable production permissions")
         if self.semantics_version != DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION:
@@ -279,6 +372,15 @@ class DualResponseCalibrationProfile:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "DualResponseCalibrationProfile":
         payload = dict(value or {})
+        semantics = str(payload.get("semantics_version") or "")
+        if semantics == LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION:
+            if (payload.get("so2") or {}).get("status") == CHANNEL_CALIBRATED or (
+                payload.get("ph") or {}
+            ).get("status") == CHANNEL_CALIBRATED:
+                raise ValueError(
+                    "legacy CALIBRATED profile lacks V2 channel-review seal and must be re-reviewed"
+                )
+            payload["semantics_version"] = DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION
         payload["so2"] = DualResponseChannelCalibration.from_dict(payload.get("so2") or {})
         payload["ph"] = DualResponseChannelCalibration.from_dict(payload.get("ph") or {})
         return cls(**payload)
@@ -353,7 +455,10 @@ def build_calibration_profile_from_dual_bootstrap(
 
 
 __all__ = [
+    "LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
     "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
+    "CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION",
+    "OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION",
     "CHANNEL_UNCONFIGURED",
     "CHANNEL_INSUFFICIENT_EVIDENCE",
     "CHANNEL_REVIEW_REQUIRED",
