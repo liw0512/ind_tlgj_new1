@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from system.model.map_control.mfac_model.mfac_primary_config import (
     MFAC_PRIMARY_ARTIFACT_CONFIG,
+    MFAC_PRIMARY_MODE,
 )
 from system.model.map_control.mfac_model.version_artifacts import sha256_file
 
@@ -53,8 +54,14 @@ def activate(version: str) -> Path:
             "MFAC/condition version mismatch: %s != %s"
             % (version, condition_version)
         )
+    manifest_mode = str(manifest.get("primary_mode") or "").strip()
+    if manifest_mode and manifest_mode != MFAC_PRIMARY_MODE:
+        raise ValueError(
+            "MFAC primary mode mismatch: %s != %s"
+            % (manifest_mode, MFAC_PRIMARY_MODE)
+        )
 
-    # Canonical pointer: module 2 is MFAC.  No slurry_policy compatibility
+    # Canonical pointer: module 2 is MFAC. No slurry_policy compatibility
     # block is emitted anymore; IntegratedVersionManager can still read older
     # migration pointers, but all newly activated versions are MFAC-native.
     pointer = {
@@ -71,7 +78,7 @@ def activate(version: str) -> Path:
             "source_condition_version": version,
             "snapshot_path": str(manifest_path),
             "manifest_sha256": sha256_file(manifest_path),
-            "mode": "MFAC_PRIMARY_SHADOW",
+            "mode": MFAC_PRIMARY_MODE,
             "learn_enabled": False,
             "residual_enabled": False,
             "dcs_write_enabled": False,
