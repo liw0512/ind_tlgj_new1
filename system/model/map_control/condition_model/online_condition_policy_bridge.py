@@ -38,6 +38,8 @@ from system.model.map_control.mfac_model.runtime_coordinator import (
 
 
 MFAC_PRIMARY_BRIDGE_VERSION = "SCHEME2_MFAC_PRIMARY_BRIDGE_V2_UNIFIED_RUNTIME"
+CANONICAL_MFAC_OUTPUT_PREFIX = "mfac_"
+LEGACY_SLURRY_POLICY_OUTPUT_PREFIX = "slurry_policy_"
 
 
 def _is_missing(value: Any) -> bool:
@@ -125,10 +127,27 @@ class SlurryPolicyOnlineBridge:
     ) -> None:
         self.config = dict(integration_config or {})
         self.enabled = bool(self.config.get("enabled", True))
-        self.output_prefix = str(self.config.get("output_prefix", "mfac_"))
-        self.legacy_output_prefix = str(
-            self.config.get("legacy_output_prefix", "slurry_policy_")
+
+        # Historical condition_config.py explicitly used output_prefix=
+        # "slurry_policy_".  Treat that as a legacy alias request rather than
+        # allowing it to replace the canonical MFAC namespace.  This keeps old
+        # standalone configs working while guaranteeing that every current
+        # runtime emits mfac_* as the primary contract.
+        requested_output_prefix = str(
+            self.config.get("output_prefix", CANONICAL_MFAC_OUTPUT_PREFIX)
         )
+        configured_legacy_prefix = str(
+            self.config.get(
+                "legacy_output_prefix", LEGACY_SLURRY_POLICY_OUTPUT_PREFIX
+            )
+        )
+        if requested_output_prefix == configured_legacy_prefix:
+            self.output_prefix = CANONICAL_MFAC_OUTPUT_PREFIX
+            self.legacy_output_prefix = configured_legacy_prefix
+        else:
+            self.output_prefix = requested_output_prefix
+            self.legacy_output_prefix = configured_legacy_prefix
+
         self.emit_legacy_compatibility = bool(
             self.config.get("emit_legacy_compatibility", True)
         )
@@ -553,6 +572,8 @@ class SlurryPolicyOnlineBridge:
                 "ready": False,
                 "backend": "MFAC",
                 "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
+                "canonical_output_prefix": self.output_prefix,
+                "legacy_output_prefix": self.legacy_output_prefix,
                 "initialization_error": self._initialization_error,
             }
         value = dict(policy.status())
@@ -562,6 +583,8 @@ class SlurryPolicyOnlineBridge:
                 "ready": True,
                 "backend": "MFAC",
                 "bridge_version": MFAC_PRIMARY_BRIDGE_VERSION,
+                "canonical_output_prefix": self.output_prefix,
+                "legacy_output_prefix": self.legacy_output_prefix,
                 "external_version_management": self.external_version_management,
                 "legacy_name_only": True,
             }
@@ -574,6 +597,8 @@ __all__ = [
     "MFACUnifiedRuntimePolicy",
     "SlurryPolicyOnlineBridge",
     "MFAC_PRIMARY_BRIDGE_VERSION",
+    "CANONICAL_MFAC_OUTPUT_PREFIX",
+    "LEGACY_SLURRY_POLICY_OUTPUT_PREFIX",
     "compact_json",
     "csv_safe_row",
 ]
