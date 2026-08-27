@@ -7,6 +7,7 @@ import math
 from typing import Any, Mapping, Optional, Sequence
 
 from system.model.config.plant_config import PLANT_CONFIG
+from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
 from ..mfac_schema import QbaseResult
 
@@ -22,8 +23,10 @@ def _finite(value: Any) -> Optional[float]:
 class DynamicQbaseCalculator:
     """Calculate one tower's theoretical slurry-flow centre in m3/h.
 
-    This component is calculation-only.  It never reads actual slurry flow,
+    This component is calculation-only. It never reads actual slurry flow,
     writes DCS state, enables MFAC learning, or applies a residual correction.
+    The outlet-SO2 target field is a standard system contract and therefore
+    cannot be remapped independently inside the plant Qbase configuration.
     """
 
     def __init__(
@@ -62,12 +65,19 @@ class DynamicQbaseCalculator:
     def _validate_config(self) -> None:
         for key in (
             "inlet_so2_column",
-            "target_so2_column",
             "gas_flow_column",
             "formula_version",
         ):
             if not str(self.config.get(key, "")).strip():
                 raise ValueError("qbase config is missing %s" % key)
+        legacy_target_column = str(
+            self.config.get("target_so2_column") or TARGET_SO2_COLUMN
+        ).strip()
+        if legacy_target_column != TARGET_SO2_COLUMN:
+            raise ValueError(
+                "qbase target_so2_column conflicts with standard field %s"
+                % TARGET_SO2_COLUMN
+            )
         curve = self._curve()
         if len(curve) < 2:
             raise ValueError("ca_s_curve requires at least two points")
@@ -134,7 +144,7 @@ class DynamicQbaseCalculator:
         target_so2: Optional[float] = None,
     ) -> QbaseResult:
         inlet_column = str(self.config["inlet_so2_column"])
-        target_column = str(self.config["target_so2_column"])
+        target_column = TARGET_SO2_COLUMN
         gas_flow_column = str(self.config["gas_flow_column"])
         ph_column = str(self.tower.get("ph_column", ""))
         density_column = str(self.tower.get("slurry_density_column", ""))
@@ -239,6 +249,7 @@ class DynamicQbaseCalculator:
                 "density_source": density_column,
                 "inlet_so2_column": inlet_column,
                 "target_so2_column": target_column,
+                "target_so2_column_source": "STANDARD_FIELDS",
                 "gas_flow_column": gas_flow_column,
                 "ph_column": ph_column,
                 "ca_s_ph_source": "CONFIG_REFERENCE",
