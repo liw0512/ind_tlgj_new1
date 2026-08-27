@@ -10,7 +10,16 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from .mfac_primary_config import MFAC_PRIMARY_ARTIFACT_CONFIG
+from system.model.config.mfac_plant_contract import (
+    primary_tower_contract,
+    target_supply_flow_contract,
+)
+from system.model.config.standard_fields import TARGET_SO2_COLUMN
+
+from .mfac_primary_config import (
+    MFAC_PRIMARY_ARTIFACT_CONFIG,
+    MFAC_PRIMARY_MODE,
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -39,6 +48,30 @@ def _time_text(value: Any) -> str:
     return pd.Timestamp(timestamp).isoformat()
 
 
+def _plant_contract_snapshot() -> Dict[str, Any]:
+    target = target_supply_flow_contract()
+    tower = primary_tower_contract()
+    return {
+        "authority": "PLANT_CONFIG_SNAPSHOT",
+        "target_so2_column": TARGET_SO2_COLUMN,
+        "target_supply_flow": {
+            "minimum": float(target["minimum"]),
+            "maximum": float(target["maximum"]),
+            "feedback_column": str(target["feedback_column"]),
+            "unit": str(target["unit"]),
+        },
+        "primary_tower": {
+            "tower_id": str(tower["tower_id"]),
+            "ph_column": str(tower["ph_column"]),
+            "safe_min": float(tower["safe_min"]),
+            "safe_max": float(tower["safe_max"]),
+            "operating_min": float(tower["operating_min"]),
+            "operating_max": float(tower["operating_max"]),
+            "guard_band": float(tower["guard_band"]),
+        },
+    }
+
+
 def build_mfac_version_artifact(
     *,
     input_csv: str,
@@ -62,6 +95,13 @@ def build_mfac_version_artifact(
     root = Path(output_root).resolve()
     snapshot_dir = root / "snapshots" / version
     snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    plant_snapshot = _plant_contract_snapshot()
+    target_contract = plant_snapshot["target_supply_flow"]
+    runtime_semantics = (
+        "Q_TARGET=CLIP(QBASE+RESIDUAL_HOLD,%s,%s)"
+        % (target_contract["minimum"], target_contract["maximum"])
+    )
 
     summary = {
         "artifact_type": "MFAC_SECOND_MODULE_VERSION",
@@ -90,9 +130,10 @@ def build_mfac_version_artifact(
         "condition_snapshot_path": str(condition_path),
         "condition_snapshot_sha256": summary["condition_snapshot_sha256"],
         "training_summary_path": str(summary_path),
-        "runtime_semantics": "Q_TARGET=CLIP(QBASE+RESIDUAL_HOLD,0,70)",
+        "runtime_semantics": runtime_semantics,
+        "plant_contract_snapshot": plant_snapshot,
         "legacy_second_module_present": False,
-        "primary_mode": "MFAC_PRIMARY_SHADOW",
+        "primary_mode": MFAC_PRIMARY_MODE,
         "learn_enabled": False,
         "residual_enabled": False,
         "dcs_write_enabled": False,
