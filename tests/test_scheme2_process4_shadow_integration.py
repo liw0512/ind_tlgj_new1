@@ -1,8 +1,11 @@
 import tempfile
 import unittest
 
-from system.model.Process4MapControl import ProcessForMapConsole
+from system.model.Process4MapControlMFAC import ProcessForMapConsole
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
+from system.model.map_control.condition_model.online_condition_policy_bridge import (
+    SlurryPolicyOnlineBridge,
+)
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )
@@ -22,10 +25,15 @@ from system.model.map_control.mfac_model.supply_flow_tracking import (
 )
 
 
-class _Pipeline:
+class _UnifiedPipeline:
+    """Minimal condition -> MFAC pipeline used without starting P4PC threads."""
+
+    def __init__(self, bridge):
+        self.policy_bridge = bridge
+
     def process(self, data, **kwargs):
-        result = dict(data)
-        result.update(
+        row = dict(data)
+        row.update(
             {
                 "condition_snapshot_version": "v001",
                 "condition_label": "17",
@@ -34,10 +42,13 @@ class _Pipeline:
                 "policy_region_id": "R_P1_S1",
             }
         )
-        return result
+        return self.policy_bridge.process(row, **kwargs)
+
+    def record_execution(self, feedback):
+        return self.policy_bridge.record_execution(feedback)
 
 
-class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
+class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
     @staticmethod
     def config(*, learning=False, residual=False):
         return Scheme2RuntimeCoordinatorConfig(
@@ -76,12 +87,36 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
         )
 
     @staticmethod
-    def bare_console():
+    def bridge():
+        return SlurryPolicyOnlineBridge(
+            {
+                "enabled": True,
+                "initialize_on_start": True,
+                "output_prefix": "mfac_",
+                "legacy_output_prefix": "slurry_policy_",
+                "emit_legacy_compatibility": True,
+                "target_column": "outlet_so2_target",
+                "failure_mode": "RAISE",
+            },
+            initial_active_pointer={"integrated_version": "v001"},
+        )
+
+    @classmethod
+    def bare_console(cls):
         console = ProcessForMapConsole.__new__(ProcessForMapConsole)
+        console._mfac_primary_runtime_coordinator = None
+        console._mfac_primary_context_resolver = None
         console._scheme2_runtime_coordinator = None
         console._scheme2_context_resolver = None
         console._scheme2_qbase_calculator = None
         console.slurry_core_config = {"target_column": "outlet_so2_target"}
+        console.process_config = PROCESS4MAP_CONFIG
+        console._slurry_pipeline_error = None
+        console._slurry_pipeline = _UnifiedPipeline(cls.bridge())
+        console._ensure_slurry_pipeline = lambda: True
+        console._publish_map_control = lambda payload: None
+        console.send = lambda: None
+        console.system_state = console.SystemState.NORMAL_OPERATION
         return console
 
     def coordinator(self, root, **config):
@@ -90,21 +125,41 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
             Scheme2RuntimeStore(root),
         )
 
-    def test_unconfigured_main_loop_is_explicitly_safe(self):
+    def test_unconfigured_primary_runtime_is_explicit_safe_fallback(self):
         console = self.bare_console()
-        payload = console._run_scheme2_shadow(
-            {},
-            {},
-            None,
-            data_quality_ok=True,
+        result = console.insert_Mod(
+            {
+                "date": "2026-08-27T09:00:00+08:00",
+                "yyq_SO2": 2000.0,
+                "yyq_LL": 2200000.0,
+                "xstshsjy_MD": 1200.0,
+                "xstshsjy_LL": 69.0,
+                "xstjy_PH": 6.2,
+                "jyq_SO2": 50.0,
+                "outlet_so2_target": 20.0,
+            },
+            20.0,
+            store_to_db=True,
         )
-        self.assertEqual(payload["scheme2_shadow_status"], "DISABLED")
-        self.assertFalse(payload["scheme2_learn_enabled"])
-        self.assertFalse(payload["scheme2_residual_enabled"])
-        self.assertFalse(payload["scheme2_dcs_write_enabled"])
-        self.assertEqual(payload["scheme2_residual_mfac_hold"], 0.0)
+        self.assertEqual(result["mfac_runtime_mode"], "SAFE_PRIMARY_FALLBACK")
+        self.assertEqual(result["scheme2_shadow_status"], "DISABLED")
+        self.assertEqual(
+            result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME"
+        )
+        self.assertFalse(result["scheme2_duplicate_runtime_path"])
+        self.assertFalse(result["mfac_learn_enabled"])
+        self.assertFalse(result["mfac_residual_enabled"])
+        self.assertFalse(result["mfac_dcs_write_enabled"])
+        self.assertEqual(result["mfac_residual_mfac_hold"], 0.0)
+        self.assertEqual(result["mfac_debug"]["qbase_calculation_count"], 1)
+        self.assertEqual(result["mfac_debug"]["coordinator_cycle_count"], 0)
+        self.assertEqual(result["mfac_debug"]["fallback_cycle_count"], 1)
+        self.assertAlmostEqual(
+            result["mfac_algorithm_target_supply_flow"],
+            41.20592948717949,
+        )
 
-    def test_main_loop_rejects_unsafe_coordinator_activation(self):
+    def test_process4_rejects_unsafe_coordinator_activation(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             with self.assertRaises(ValueError):
@@ -116,57 +171,24 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
                     self.coordinator(root + "/residual", residual=True)
                 )
 
-    def test_actual_flow_and_scheme1_target_are_not_qbase_fallbacks(self):
-        console = self.bare_console()
-        qbase = console._scheme2_qbase(
-            {
-                "xstshsjy_LL": 69.0,
-                "current_flow": 69.0,
-                "xst_base_flow": 31.0,
-            },
-            20.0,
-        )
-        self.assertFalse(qbase.valid)
-        self.assertIsNone(qbase.qbase_effective)
+    def test_coordinator_is_injected_into_primary_policy_not_sidecar(self):
+        with tempfile.TemporaryDirectory() as root:
+            console = self.bare_console()
+            coordinator = self.coordinator(root)
+            self.assertTrue(console.configure_scheme2_shadow(coordinator))
 
-    def test_unconfigured_coordinator_still_audits_online_qbase(self):
-        console = self.bare_console()
-        payload = console._run_scheme2_shadow(
-            {
-                "yyq_SO2": 2000.0,
-                "yyq_LL": 2200000.0,
-                "xstshsjy_MD": 1200.0,
-                "xstjy_PH": 6.2,
-                "outlet_so2_target": 20.0,
-            },
-            {},
-            20.0,
-            data_quality_ok=True,
-        )
-        self.assertEqual(payload["scheme2_shadow_status"], "DISABLED")
-        self.assertTrue(payload["scheme2_qbase_valid"])
-        self.assertEqual(payload["scheme2_qbase_source"], "DYNAMIC_QBASE")
-        self.assertAlmostEqual(
-            payload["scheme2_qbase_effective"],
-            41.20592948717949,
-        )
+            policy = console._slurry_pipeline.policy_bridge.policy
+            self.assertIs(policy.runtime_coordinator, coordinator)
+            self.assertEqual(policy.runtime_mode, "COORDINATOR_SHADOW")
 
-    def test_insert_mod_runs_shadow_without_claiming_dcs_application(self):
+    def test_insert_mod_uses_one_qbase_and_one_target_path(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             console.configure_scheme2_shadow(self.coordinator(root))
-            console.system_state = console.SystemState.NORMAL_OPERATION
-            console._slurry_pipeline = _Pipeline()
-            console._slurry_pipeline_error = None
-            console._ensure_slurry_pipeline = lambda: True
-            console.process_config = PROCESS4MAP_CONFIG
-            console.slurry_core_config = {"target_column": "outlet_so2_target"}
-            console._publish_map_control = lambda payload: None
-            console.send = lambda: None
 
             result = console.insert_Mod(
                 {
-                    "date": "2026-08-26T10:00:00+08:00",
+                    "date": "2026-08-27T09:10:00+08:00",
                     "xst_base_flow": 31.0,
                     "xstshsjy_LL": 69.0,
                     "xstshsjy_MD": 1200.0,
@@ -175,6 +197,8 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
                     "yyq_LL": 2200000.0,
                     "xstjy_PH": 6.2,
                     "outlet_so2_target": 20.0,
+                    # These fields must not make the current integration claim
+                    # that DCS applied the command.
                     "target_was_applied": True,
                     "dcs_applied_target_supply_flow": 31.0,
                 },
@@ -182,23 +206,63 @@ class Scheme2Process4ShadowIntegrationTest(unittest.TestCase):
                 store_to_db=False,
             )
 
+            self.assertEqual(result["mfac_runtime_mode"], "COORDINATOR_SHADOW")
             self.assertEqual(result["scheme2_shadow_status"], "ACTIVE")
-            self.assertEqual(result["scheme2_qbase_source"], "DYNAMIC_QBASE")
+            self.assertEqual(
+                result["scheme2_runtime_source"], "PRIMARY_MFAC_RUNTIME"
+            )
+            self.assertFalse(result["scheme2_duplicate_runtime_path"])
+            self.assertEqual(result["mfac_debug"]["qbase_calculation_count"], 1)
+            self.assertEqual(result["mfac_debug"]["coordinator_cycle_count"], 1)
+            self.assertEqual(result["mfac_debug"]["fallback_cycle_count"], 0)
+            self.assertTrue(result["mfac_qbase_valid"])
             self.assertAlmostEqual(
+                result["mfac_qbase_effective"],
+                41.20592948717949,
+            )
+            self.assertAlmostEqual(
+                result["mfac_algorithm_target_supply_flow"],
+                41.20592948717949,
+            )
+            self.assertEqual(
                 result["scheme2_algorithm_target_supply_flow"],
-                41.20592948717949,
+                result["mfac_algorithm_target_supply_flow"],
             )
-            self.assertTrue(result["scheme2_qbase_valid"])
-            self.assertAlmostEqual(
-                result["scheme2_qbase_effective"],
-                41.20592948717949,
+            self.assertIs(
+                result["scheme2_shadow"],
+                result["mfac_runtime_cycle"],
             )
-            self.assertFalse(result["scheme2_learn_enabled"])
-            self.assertFalse(result["scheme2_residual_enabled"])
-            self.assertFalse(result["scheme2_dcs_write_enabled"])
-            tracking = result["scheme2_shadow"]["tracking_events"]
+            self.assertFalse(result["mfac_learn_enabled"])
+            self.assertFalse(result["mfac_residual_enabled"])
+            self.assertFalse(result["mfac_dcs_write_enabled"])
+            tracking = result["mfac_runtime_cycle"]["tracking_events"]
             self.assertEqual(tracking[0]["status"], "NOT_APPLIED")
             self.assertFalse(tracking[0]["target_was_applied"])
+
+    def test_shadow_compat_hook_only_maps_precomputed_fields(self):
+        console = self.bare_console()
+        payload = console._run_scheme2_shadow(
+            {"yyq_SO2": "SHOULD_NOT_BE_READ"},
+            {
+                "mfac_runtime_mode": "SAFE_PRIMARY_FALLBACK",
+                "mfac_learn_enabled": False,
+                "mfac_residual_enabled": False,
+                "mfac_dcs_write_enabled": False,
+                "mfac_residual_mfac_hold": 0.0,
+                "mfac_algorithm_target_supply_flow": 42.5,
+                "mfac_qbase_source": "DYNAMIC_QBASE",
+                "mfac_qbase_valid": True,
+                "mfac_qbase_raw": 42.5,
+                "mfac_qbase_effective": 42.5,
+                "mfac_qbase": {"sentinel": "PRECOMPUTED"},
+                "mfac_runtime_cycle": None,
+            },
+            999.0,
+            data_quality_ok=False,
+        )
+        self.assertEqual(payload["scheme2_algorithm_target_supply_flow"], 42.5)
+        self.assertEqual(payload["scheme2_qbase"], {"sentinel": "PRECOMPUTED"})
+        self.assertFalse(payload["scheme2_duplicate_runtime_path"])
 
 
 if __name__ == "__main__":
