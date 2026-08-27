@@ -16,6 +16,8 @@ from system.model.config.mfac_paths import (
 from .runtime_config import DEFAULT_MFAC_RUNTIME_CONFIG
 
 
+MFAC_PRIMARY_MODE = "MFAC_PRIMARY_SHADOW"
+
 # Runtime calibration defaults are defined by runtime_config, while production
 # persistence uses the canonical path contract shared by every MFAC integration
 # layer.
@@ -29,7 +31,7 @@ MFAC_PRIMARY_ARTIFACT_CONFIG = {
     "active_version_file": str(MFAC_ACTIVE_VERSION_FILE),
     "condition_snapshots_dir": str(CONDITION_ROOT / "snapshots"),
     "runtime_dir": str(MFAC_RUNTIME_DIR),
-    "primary_mode": "MFAC_PRIMARY_SHADOW",
+    "primary_mode": MFAC_PRIMARY_MODE,
     # Runtime permission facts live only inside runtime config. They are also
     # defensively re-validated by builder/coordinator/P4PC, but are not repeated
     # as a second configurable set at this artifact level.
@@ -45,5 +47,6 @@ __all__ = [
     "MFAC_SNAPSHOTS_DIR",
     "MFAC_ACTIVE_VERSION_FILE",
     "MFAC_RUNTIME_DIR",
+    "MFAC_PRIMARY_MODE",
     "MFAC_PRIMARY_ARTIFACT_CONFIG",
 ]
