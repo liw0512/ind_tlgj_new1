@@ -114,18 +114,22 @@ TARGET_SO2_COLUMN = outlet_so2_target
 
 Dynamic Qbase 不允许再拥有另一套 target 字段映射。`plant_config.scheme2.qbase.target_so2_column` 仅作为历史兼容检查存在；若其值与标准字段不同，Qbase 构造直接失败。
 
-### 3.3 `mfac_primary_config.py`：MFAC产物路径唯一来源
+### 3.3 `mfac_paths.py`：MFAC 文件路径唯一来源
 
-以下路径只在 `mfac_primary_config.py` 定义：
+以下路径只在 `system/model/config/mfac_paths.py` 定义：
 
 ```text
+PROJECT_ROOT
+CONDITION_ROOT
+MODEL_CSV_ROOT
+MFAC_ROOT
 MFAC_OUTPUT_ROOT
 MFAC_SNAPSHOTS_DIR
 MFAC_ACTIVE_VERSION_FILE
 MFAC_RUNTIME_DIR
 ```
 
-`mfac_core_bridge_config.py` 只能引用这些路径，不能重新计算另一套目录。因此：
+`mfac_primary_config.py`、`runtime_config.py`、`mfac_core_bridge_config.py` 都只能引用这组 Path 常量，不再各自拼接同一目录。因此：
 
 ```text
 版本builder写入路径
@@ -134,7 +138,7 @@ P4PC在线读取active_version路径
 runtime持久化路径
 ```
 
-都来自同一 artifact tree。
+都来自同一文件路径合同。
 
 旧 standalone 配置若仍指向：
 
@@ -144,7 +148,17 @@ files/slurry_policy_model_output/active_version.json
 
 `IntegratedVersionManager` 会明确重定向到 canonical `MFAC_ACTIVE_VERSION_FILE`；其他显式自定义路径不会被覆盖。
 
-### 3.4 `runtime_config.py`：MFAC标定参数唯一来源
+### 3.4 `mfac_primary_config.py`：artifact 运行身份
+
+该文件负责正式 MFAC artifact 配置，并引用 `mfac_paths.py`。正式模式只定义一次：
+
+```text
+MFAC_PRIMARY_MODE = MFAC_PRIMARY_SHADOW
+```
+
+manifest builder 与 activate pointer 都引用同一常量，不能分别再写一套 mode 字符串。
+
+### 3.5 `runtime_config.py`：MFAC标定参数唯一来源
 
 runtime config 只拥有真正属于算法标定的参数，例如：
 
@@ -313,7 +327,7 @@ CONFIGURED_SHADOW
 
 代码不会把测试参数或经验值伪装成生产标定值。
 
-## 9. Version lifecycle
+## 9. Version lifecycle 与 plant-contract 绑定
 
 ```text
 condition training/update
@@ -322,6 +336,25 @@ condition training/update
 -> activate_mfac_version.py
 -> canonical active_version.json
 ```
+
+新 manifest 会记录：
+
+```text
+primary_mode = MFAC_PRIMARY_MODE
+runtime_semantics = Q_TARGET=CLIP(...当前plant min/max...)
+plant_contract_snapshot = {...}
+```
+
+`plant_contract_snapshot` 是**只读审计快照，不是新的参数事实源**。它记录版本生成时的：
+
+```text
+TARGET_SO2_COLUMN
+供浆 min/max/feedback/unit
+主塔 tower_id / pH column
+pH safe/operating range / guard band
+```
+
+启动和热更新时，如果 manifest 中存在该快照，`IntegratedVersionManager` 会与当前 `PLANT_CONFIG` 比对。厂级物理参数已经变化但 MFAC artifact 没有重建时，旧 artifact 会被拒绝，避免新 plant 参数和旧 MFAC 版本静默混用。历史没有该快照的旧 manifest 保持读取兼容。
 
 新 active pointer 只发布：
 
@@ -338,6 +371,8 @@ mfac {...}
 condition snapshot version/hash
 MFAC manifest version/hash
 MFAC -> condition version binding
+MFAC primary_mode
+optional plant-contract snapshot
 legacy_second_module_present = false
 LEARN/Residual/DCS-write activation flags = false
 ```
@@ -429,11 +464,13 @@ replay_semantics = COUNTERFACTUAL_SHADOW
 - canonical `mfac_*` 输出/数据库；
 - fail-closed runtime builder；
 - plant physical contract 单一事实源；
-- artifact path 单一事实源；
-- target SO2标准字段单一事实源；
+- `mfac_paths.py` 文件路径单一事实源；
+- target SO2 标准字段单一事实源；
+- `MFAC_PRIMARY_MODE` 运行身份单一事实源；
 - runtime 禁止覆盖 plant-owned 硬边界；
 - 手工 Coordinator 注入同样校验 plant contract；
 - legacy active-version 路径定向迁移；
+- manifest plant-contract 快照兼容校验；
 - 对应回归测试已写入仓库。
 
 ## 14. 仍未打开的后续阶段
