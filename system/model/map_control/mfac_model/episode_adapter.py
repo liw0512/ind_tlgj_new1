@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Adapt Scheme-1 supply-flow episodes into Scheme-2 MFAC learning events.
+"""Adapt historical actual-flow episodes into Scheme-2 MFAC evidence events.
 
-The existing slurry-policy engine already performs robust actual-flow event
-segmentation and SO2/pH effect profiling.  Scheme 2 reuses that physical event
-extraction and applies a stricter attribution gate instead of maintaining a
-second detector with drifting semantics.
+Historical operator actions are process-identification evidence, not action
+imitation targets.  Episodes enriched by ``historical_evidence`` may serve
+multiple roles (LOCAL_GAIN / DYNAMIC / SAFETY), but only LOCAL_GAIN evidence is
+allowed to seed MFAC sensitivity.  Large pulses and pH excursions remain useful
+for timing/risk analysis without contaminating local ``phi``.
 """
 
 import math
@@ -102,7 +103,7 @@ def _range(frame: pd.DataFrame, column: str) -> Optional[float]:
 
 
 class Scheme1EpisodeToMFACAdapter:
-    """Convert one Scheme-1 episode row into an auditable MFAC event."""
+    """Convert one historical episode row into an auditable MFAC event."""
 
     def __init__(
         self,
@@ -207,8 +208,28 @@ class Scheme1EpisodeToMFACAdapter:
         ph_before = _finite(row.get(f"before_ph__{tower_id}")) if tower_id else None
         ph_after = _finite(row.get(f"after_ph__{tower_id}")) if tower_id else None
         delta_ph = _finite(row.get(f"delta_ph__{tower_id}")) if tower_id else None
+        ph_out_of_safe_range = bool(
+            tower_id and _bool(row.get(f"ph_out_of_range__{tower_id}"), False)
+        )
 
-        reject_reason = "|".join(decision.reasons)
+        route_available = "mfac_local_gain_eligible" in row
+        historical_local_gain = (
+            _bool(row.get("mfac_local_gain_eligible"), False)
+            if route_available
+            else True
+        )
+        learning_eligible = bool(
+            decision.eligible
+            and historical_local_gain
+            and not ph_out_of_safe_range
+        )
+        reject_reasons = list(decision.reasons)
+        if route_available and not historical_local_gain:
+            reject_reasons.append("HISTORICAL_NOT_LOCAL_GAIN_EVIDENCE")
+        if ph_out_of_safe_range:
+            reject_reasons.append("HISTORICAL_PH_OUTSIDE_SAFE_RANGE")
+        reject_reason = "|".join(dict.fromkeys(reject_reasons))
+
         event_id = _text(row.get("episode_id"))
         if not event_id:
             event_id = (
@@ -216,6 +237,15 @@ class Scheme1EpisodeToMFACAdapter:
                 f"{_time_text(action_start) or 'UNKNOWN'}"
             )
 
+        evidence_metrics = {
+            key: row.get(key)
+            for key in row
+            if key.startswith("dose_")
+            or key.startswith("flow_mean_")
+            or key.startswith("flow_peak_")
+            or key.startswith("ph_peak_")
+            or key.startswith("ph_over_")
+        }
         metadata = {
             "scheme1_episode_id": _text(row.get("episode_id")),
             "scheme1_invalid_reason": _text(row.get("invalid_reason")),
@@ -229,6 +259,22 @@ class Scheme1EpisodeToMFACAdapter:
                 row.get("flow_disturbance_state")
             ),
             "eligibility_decision": decision.to_dict(),
+            "historical_evidence_roles": _text(row.get("mfac_evidence_roles")),
+            "historical_local_gain_eligible": historical_local_gain,
+            "historical_dynamic_evidence_eligible": _bool(
+                row.get("mfac_dynamic_evidence_eligible"), False
+            ),
+            "historical_safety_evidence": _bool(
+                row.get("mfac_safety_evidence"), False
+            ),
+            "historical_evidence_reasons": _text(
+                row.get("mfac_evidence_reasons")
+            ),
+            "historical_evidence_semantics_version": _text(
+                row.get("mfac_evidence_semantics_version")
+            ),
+            "ph_out_of_safe_range": ph_out_of_safe_range,
+            "historical_trajectory_metrics": evidence_metrics,
             "observed_response_delay_minutes": _finite(
                 row.get("flow_timing_observed_response_delay_minutes")
             ),
@@ -251,7 +297,11 @@ class Scheme1EpisodeToMFACAdapter:
             action_reached_time=_time_text(action_end),
             response_start_time=_time_text(response_start),
             response_end_time=_time_text(response_end),
-            action_source="HISTORICAL_ACTUAL_SUPPLY_FLOW",
+            action_source=(
+                "HISTORICAL_ACTUAL_SUPPLY_FLOW_LOCAL_GAIN"
+                if learning_eligible
+                else "HISTORICAL_ACTUAL_SUPPLY_FLOW"
+            ),
             q_before=_finite(row.get("flow_event_baseline_flow")),
             q_after=_finite(row.get("flow_event_final_flow")),
             delta_q_actual=delta_q,
@@ -275,7 +325,7 @@ class Scheme1EpisodeToMFACAdapter:
                 _bool(row.get("flow_effect_complete"), False)
                 and _bool(row.get("condition_valid"), False)
             ),
-            learning_eligible=decision.eligible,
+            learning_eligible=learning_eligible,
             reject_reason=reject_reason,
             phi_event=phi_event,
             quality_score=None,
@@ -352,7 +402,7 @@ def adapt_episode_frame(
     *,
     history: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Adapt all Scheme-1 episode rows while preserving rejected events."""
+    """Adapt all historical rows while preserving rejected evidence for audit."""
     if episodes.empty:
         return pd.DataFrame()
     records = [
