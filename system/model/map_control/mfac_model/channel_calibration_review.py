@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """Explicit human review for LOCAL_GAIN_READY -> CALIBRATED channel promotion.
 
-A configured response window is not observed process timing.  This module only
+A configured response window is not observed process timing. This module only
 accepts timing evidence explicitly derived from observed process traces, bound
 to the same condition/context and to events from the reviewed LOCAL_GAIN cohort.
 
-The review can calibrate SO2 and pH independently.  It grants no runtime
+Channel confidence also requires an auditable confidence-evidence record. The
+candidate score is not a probability and does not replace explicit human review.
+
+The review can calibrate SO2 and pH independently. It grants no runtime
 learning, residual-control or DCS authority.
 """
 
@@ -16,6 +19,10 @@ from datetime import datetime
 import math
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from .channel_confidence_evidence import (
+    CHANNEL_CONFIDENCE_EVIDENCE_VERSION,
+    ChannelConfidenceEvidence,
+)
 from .dual_response_calibration_profile import (
     CHANNEL_CALIBRATED,
     CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION,
@@ -135,6 +142,8 @@ class ChannelCalibrationReviewRecord:
     review_time: str
     timing_evidence_id: str
     timing_event_ids: Tuple[str, ...]
+    confidence_evidence_id: str
+    confidence_candidate: float
     confidence: float
     response_config: Dict[str, Any]
     activation_status: str = "NOT_ACTIVATABLE"
@@ -147,6 +156,11 @@ class ChannelCalibrationReviewRecord:
     def __post_init__(self) -> None:
         if self.status != "CHANNEL_CALIBRATION_REVIEW_APPROVED":
             raise ValueError("unsupported channel calibration review status")
+        if not str(self.confidence_evidence_id or "").strip():
+            raise ValueError("confidence_evidence_id is required")
+        candidate = _finite(self.confidence_candidate)
+        if candidate is None or not (0.0 <= candidate <= 1.0):
+            raise ValueError("confidence_candidate must be within [0,1]")
         if self.activation_status != "NOT_ACTIVATABLE":
             raise ValueError("channel calibration review must remain NOT_ACTIVATABLE")
         if self.learning_enabled or self.residual_control_enabled or self.dcs_write_enabled:
@@ -179,6 +193,7 @@ def approve_channel_calibration(
     *,
     channel: str,
     timing_evidence: ObservedResponseTimingEvidence,
+    confidence_evidence: ChannelConfidenceEvidence,
     response_config: Mapping[str, Any],
     confidence: float,
     human_approved: bool,
@@ -187,7 +202,7 @@ def approve_channel_calibration(
 ) -> ChannelCalibrationReviewResult:
     """Review one channel and promote only that channel to CALIBRATED.
 
-    The function is deliberately non-activating.  A later activation review is
+    The function is deliberately non-activating. A later activation review is
     still required even when both channels eventually become CALIBRATED.
     """
 
@@ -225,6 +240,27 @@ def approve_channel_calibration(
     if timing_evidence.independent_days > base.independent_days:
         raise ValueError("timing independent days exceed LOCAL_GAIN evidence days")
 
+    if confidence_evidence.semantics_version != CHANNEL_CONFIDENCE_EVIDENCE_VERSION:
+        raise ValueError("unsupported confidence evidence semantics")
+    if confidence_evidence.status != "READY_FOR_CONFIDENCE_REVIEW":
+        raise ValueError("confidence evidence is not ready for review")
+    if confidence_evidence.channel.upper() != channel_name:
+        raise ValueError("confidence evidence channel mismatch")
+    if confidence_evidence.condition_snapshot_version != profile.condition_snapshot_version:
+        raise ValueError("confidence evidence condition snapshot mismatch")
+    if confidence_evidence.mfac_context_id != profile.mfac_context_id:
+        raise ValueError("confidence evidence MFAC context mismatch")
+    if confidence_evidence.timing_evidence_id != timing_evidence.evidence_id:
+        raise ValueError("confidence evidence does not bind the supplied timing evidence")
+    if set(confidence_evidence.timing_event_ids) != timing_ids:
+        raise ValueError("confidence/timing event IDs mismatch")
+    if set(confidence_evidence.cohort_event_ids) != gain_ids:
+        raise ValueError("confidence evidence cohort does not match LOCAL_GAIN evidence")
+    if confidence_evidence.human_review_required is not True:
+        raise ValueError("confidence evidence must remain human-review gated")
+    if confidence_evidence.confidence_candidate_is_probability:
+        raise ValueError("confidence candidate cannot be treated as a probability")
+
     confidence_value = _finite(confidence)
     if confidence_value is None or not (0.0 < confidence_value <= 1.0):
         raise ValueError("reviewed confidence must be finite within (0, 1]")
@@ -255,6 +291,10 @@ def approve_channel_calibration(
         "configured_window_boundary_used_as_observed_timing": False,
         "response_config_review_approved": True,
         "confidence_review_approved": True,
+        "confidence_evidence_id": confidence_evidence.evidence_id,
+        "confidence_evidence_semantics": confidence_evidence.semantics_version,
+        "confidence_review_candidate": confidence_evidence.conservative_confidence_candidate,
+        "confidence_candidate_is_probability": False,
         "automatic_online_adaptation_allowed": False,
         "normal_runtime_activation_allowed": False,
         "separate_activation_review_required": True,
@@ -289,6 +329,8 @@ def approve_channel_calibration(
         review_time=reviewed_at,
         timing_evidence_id=timing_evidence.evidence_id,
         timing_event_ids=tuple(timing_evidence.event_ids),
+        confidence_evidence_id=confidence_evidence.evidence_id,
+        confidence_candidate=float(confidence_evidence.conservative_confidence_candidate),
         confidence=confidence_value,
         response_config=config,
         activation_status="NOT_ACTIVATABLE",
@@ -299,6 +341,8 @@ def approve_channel_calibration(
             "local_gain_event_ids": list(base.evidence_event_ids),
             "timing_event_ids_are_local_gain_subset": True,
             "configured_window_is_not_observed_timing": True,
+            "confidence_candidate_is_not_probability": True,
+            "human_confidence_value_explicitly_reviewed": True,
             "other_channel_status_unchanged": True,
         },
     )
