@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Evidence-first offline bootstrap trainer for Scheme 2 MFAC V1.
+"""Evidence-first offline SO2 bootstrap trainer for Scheme 2 MFAC.
 
-This module intentionally separates robust sensitivity estimation from the
-confidence/permission policy.  Historical data should first prove what the
-local sensitivity and delay distributions look like; control-authority scores
-can then be calibrated without burying arbitrary thresholds in the estimator.
+Historical operator actions are never treated as demonstrations to imitate.
+Only reviewed LOCAL_GAIN events may seed the local ``phi_so2`` sensitivity;
+large pulses/boosts remain available to the separate dynamic/safety evidence
+path without contaminating the controller gain.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -97,6 +97,18 @@ def _event_phi(event: ActionResponseEvent) -> Optional[float]:
     return delta_so2 / delta_q
 
 
+def _historical_local_gain_allowed(event: ActionResponseEvent) -> bool:
+    source = str(event.action_source or "").upper()
+    if not source.startswith("HISTORICAL_"):
+        return True
+    metadata = dict(event.metadata or {})
+    if metadata.get("ph_out_of_safe_range") is True:
+        return False
+    if source == "HISTORICAL_ACTUAL_SUPPLY_FLOW_LOCAL_GAIN":
+        return bool(metadata.get("historical_local_gain_eligible", True))
+    return metadata.get("historical_local_gain_eligible") is True
+
+
 def _quality_weight(event: ActionResponseEvent) -> float:
     value = _finite(event.quality_score)
     if value is None:
@@ -184,10 +196,12 @@ def build_bootstrap_evidence(
     events: Iterable[ActionResponseEvent],
     replay_config: MFACReplayConfig,
 ) -> List[MFACBootstrapEvidence]:
-    """Build one evidence bundle per (snapshot version, MFAC context)."""
+    """Build one SO2 local-gain evidence bundle per context."""
     groups: Dict[tuple[str, str], List[ActionResponseEvent]] = {}
     for event in events:
         if not event.learning_eligible:
+            continue
+        if not _historical_local_gain_allowed(event):
             continue
         phi = _event_phi(event)
         if phi is None or phi >= 0.0:
@@ -242,6 +256,8 @@ def build_bootstrap_evidence(
                 rejected_replay_event_ids=rejected,
                 metadata={
                     "confidence_status": "NOT_CALIBRATED",
+                    "evidence_role_required": "LOCAL_GAIN",
+                    "operator_action_imitation": False,
                     "replay_eta": float(replay_config.eta),
                     "replay_mu": float(replay_config.mu),
                 },
@@ -257,11 +273,7 @@ def finalize_bootstrap_profile(
     training_window: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> MFACBootstrapProfile:
-    """Convert reviewed evidence into a deployable profile.
-
-    Confidence is an explicit caller input until the project calibrates and
-    freezes a confidence-scoring policy from historical replay.
-    """
+    """Convert reviewed evidence into a deployable SO2 profile."""
     confidence_value = float(confidence)
     if not math.isfinite(confidence_value) or not 0.0 <= confidence_value <= 1.0:
         raise ValueError("confidence must be finite within [0, 1]")
