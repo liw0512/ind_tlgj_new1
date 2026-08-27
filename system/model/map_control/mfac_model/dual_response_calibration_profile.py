@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Fail-closed calibration profile for Scheme-2 SO2 + pH response channels.
 
-This profile separates local-gain evidence from full channel calibration.  A
+This profile separates local-gain evidence from full channel calibration. A
 channel may have a reviewed bootstrap gain while still lacking reviewed timing,
-confidence or response-window parameters.  SO2 and pH statuses are independent.
+confidence or response-window parameters. SO2 and pH statuses are independent.
 
 The profile is deliberately non-activating in this stage: even two CALIBRATED
 channels cannot enable learning, residual control or DCS write without a later,
@@ -18,6 +18,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .dual_response_bootstrap import DualResponseBootstrapBundle
 from .mfac_schema import DelayProfile
+from .ph_response import PHResponseConfig
+from .process_response import ProcessResponseConfig
 
 
 DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
@@ -63,6 +65,27 @@ def _valid_confidence(value: Optional[float]) -> bool:
         return False
     number = _finite(value)
     return number is not None and 0.0 <= number <= 1.0
+
+
+def _validate_response_config(channel: str, value: Mapping[str, Any]) -> None:
+    """Reuse the canonical online monitor validation instead of duplicating it."""
+    payload = dict(value or {})
+    missing = [key for key in _REQUIRED_RESPONSE_KEYS if payload.get(key) is None]
+    if missing:
+        raise ValueError(
+            "CALIBRATED channel is missing response config: %s"
+            % ",".join(missing)
+        )
+    try:
+        if str(channel).upper() == "SO2":
+            ProcessResponseConfig(**payload)
+        else:
+            PHResponseConfig(**payload)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "%s CALIBRATED response config is invalid: %s"
+            % (str(channel).upper(), exc)
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -114,15 +137,7 @@ class DualResponseChannelCalibration:
         if self.status == CHANNEL_CALIBRATED:
             if not _valid_confidence(self.confidence):
                 raise ValueError("CALIBRATED channel requires reviewed confidence")
-            missing = [
-                key for key in _REQUIRED_RESPONSE_KEYS
-                if self.response_config.get(key) is None
-            ]
-            if missing:
-                raise ValueError(
-                    "CALIBRATED channel is missing response config: %s"
-                    % ",".join(missing)
-                )
+            _validate_response_config(channel, self.response_config)
 
     @property
     def is_calibrated(self) -> bool:
@@ -249,7 +264,7 @@ def build_calibration_profile_from_dual_bootstrap(
 ) -> DualResponseCalibrationProfile:
     """Promote same-cohort bootstrap evidence into a non-activating profile.
 
-    This only establishes LOCAL_GAIN_READY for each channel.  It intentionally
+    This only establishes LOCAL_GAIN_READY for each channel. It intentionally
     does not invent reviewed confidence or response timing/window parameters.
     """
 
