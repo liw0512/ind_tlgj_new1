@@ -16,6 +16,12 @@ from .continuous_target import (
     ContinuousTargetPublisher,
 )
 from .context_resolver import MFACContextResolver
+from .dual_response_activation_review import (
+    DUAL_RESPONSE_ACTIVATION_REVIEW_VERSION,
+    DualResponseActivationPrerequisites,
+    DualResponseActivationReadiness,
+    evaluate_dual_response_activation_readiness,
+)
 from .dual_response_bootstrap import (
     DUAL_RESPONSE_BOOTSTRAP_VERSION,
     DualResponseBootstrapBuildResult,
@@ -228,6 +234,7 @@ __all__ = [
     "PH_BOOTSTRAP_SEMANTICS_VERSION",
     "DUAL_RESPONSE_BOOTSTRAP_VERSION",
     "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
+    "DUAL_RESPONSE_ACTIVATION_REVIEW_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
@@ -285,6 +292,9 @@ __all__ = [
     "DualResponseChannelCalibration",
     "DualResponseCalibrationProfile",
     "build_calibration_profile_from_dual_bootstrap",
+    "DualResponseActivationPrerequisites",
+    "DualResponseActivationReadiness",
+    "evaluate_dual_response_activation_readiness",
     "ContinuousTargetConfig",
     "ContinuousTargetDecision",
     "ContinuousTargetPublisher",
