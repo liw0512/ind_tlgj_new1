@@ -1,18 +1,17 @@
 # Scheme 2 calibration audit artifacts
 
-Files in this directory are **historical evidence snapshots**, not runtime
-configuration and not activation artifacts.
+Files in this directory are **historical evidence snapshots or manual-test design
+reviews**, not runtime configuration and not activation artifacts.
 
 Required semantics:
 
 ```text
 activation_status = NOT_ACTIVATABLE
-review_status     = REVIEW_REQUIRED
 ```
 
-The typed boundary is `Scheme2TrajectoryCalibrationProfile`. Its
-`to_runtime_config()` method intentionally raises: no historical audit file may
-silently become production calibration.
+Historical timing profiles additionally remain `REVIEW_REQUIRED`. Manual
+identification designs remain manual-only and may never enable automatic
+execution, automatic step escalation, DCS write, or runtime learning.
 
 ## Current real-data timing audit
 
@@ -95,11 +94,89 @@ exploration, but an extrapolated score must never be used to calibrate
 `max_step_up/down`. A candidate can become step-calibration evidence only after
 its action shape is supported by real controlled observations.
 
+## Manual LOCAL_GAIN identification design
+
+`MFAC-LOCAL-STEP-DESIGN-5553E529-20260827.json` addresses the missing low-flow
+LOCAL_GAIN evidence. It deliberately separates:
+
+```text
+review_candidate_parameters
+reviewed_parameters
+```
+
+The inherited Phase-1 engineering candidate is visible for review:
+
+```text
+step_up_m3_h      = 2.0
+max_step_up_m3_h  = 2.0
+reach_tolerance   = 0.5 m3/h
+baseline          = 300 s
+Qbase abs drift   = 2.0 m3/h
+Qbase rel drift   = 6%
+pH margins        = 0.05 / 0.05
+SO2 observation   = 600 s
+pH observation    = 900 s
+effect timeout    = 1800 s
+candidate interval= 3600 s
+```
+
+These are **review candidates**, not reviewed site parameters. `reviewed_parameters`
+remain null, so the current design is:
+
+```text
+status            = INCOMPLETE_REVIEW_REQUIRED
+activation_status = NOT_ACTIVATABLE
+ready_for_manual_session = false
+```
+
+The following important fields still require explicit plant/engineering review
+or additional data evidence:
+
+```text
+required_valid_trials
+required_independent_days
+min_quiet_seconds
+max_abs_actual_minus_qbase
+max_abs_inlet_so2_change
+max_ph_baseline_range
+max_sample_gap_seconds
+outlet_so2_headroom_to_safe_max
+min_abs_delta_so2
+min_abs_delta_ph
+```
+
+The typed `LocalStepIdentificationDesignProfile` is intentionally fail-closed:
+
+- candidate values never fill reviewed values;
+- any required reviewed field left null blocks manual config construction;
+- `activation_status` must stay `NOT_ACTIVATABLE`;
+- `automatic_execution_allowed`, `automatic_escalation_allowed`,
+  `dcs_write_enabled`, and `learning_permission` must all remain false;
+- `to_runtime_config()` always raises.
+
+A successful manually executed trial also does not update MFAC immediately. The
+required chain is:
+
+```text
+proposal REVIEW_CANDIDATE
+-> first human approval
+-> manual action
+-> real actual-flow REACHED event
+-> independent SO2 + pH response completion
+-> LOCAL_GAIN_EVIDENCE_CANDIDATE
+-> second human evidence review
+-> canonical reviewed ActionResponseEvent
+```
+
+The promoted event contains both `delta_so2` and `delta_ph` from the same
+physical trial. The manual return-to-baseline action is recovery only and is not
+learnable.
+
 ## Consequence for next identification work
 
 The historical pulse dataset is adequate for DYNAMIC and SAFETY evidence but
 not for the low-flow proactive staircase shape we actually want to operate.
-Therefore the next evidence gap is intentional:
+Therefore the remaining work is intentionally split:
 
 ```text
 historical pulse data
@@ -110,6 +187,12 @@ controlled local-step identification
 -> safe step magnitude support
 -> low-flow staircase response support
 ```
+
+Before a Phase-1 manual session can even be considered, the remaining null
+review fields above must be resolved. Data-derived quantities such as sample-gap
+and baseline-noise thresholds may be estimated from the real CSV; policy/safety
+choices such as required trial count/days and outlet-SO2 abort headroom require
+explicit engineering review.
 
 Production permissions remain unchanged:
 
