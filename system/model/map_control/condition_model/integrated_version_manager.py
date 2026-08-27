@@ -1,26 +1,15 @@
 # -*- coding: utf-8 -*-
-"""第一、第二模块在线版本对的统一管理器。
+"""第一模块 condition + 第二模块 MFAC 的统一在线版本管理器。
 
-正式在线版本只由 ``active_version.json`` 发布。第一模块增量快照可以先生成，
-第二模块继续基于该固定版本训练；只有第二模块训练完成并通过激活脚本验证后，
-在线端才会看到新的版本指针。
-
-本管理器只负责：
-1. 读取并规范化统一版本指针；
-2. 校验并准备第一模块候选快照；
-3. 记录版本切换状态；
-4. 为集成在线管线提供轮询和审计字段。
-
-第二模块候选策略的完整 manifest、PKL、配置和映射校验由
-``PolicySnapshotLoader.prepare_pointer`` 完成。两个候选都成功后，集成管线才会
-在同一个锁内提交，避免出现 condition vN + policy vM 的短暂错配。
+正式在线版本只由 ``active_version.json`` 发布。第二模块的 canonical 身份是
+``mfac``；历史 ``slurry_policy`` / ``policy_*`` 名称只在输入解析和输出兼容处保留，
+不再作为运行时事实源，也不会恢复已删除的 ``slurry_policy_model`` 实现。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,9 +20,7 @@ from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
     from_dict,
 )
-from system.model.map_control.condition_model.condition_schema import (
-    ConditionSnapshot,
-)
+from system.model.map_control.condition_model.condition_schema import ConditionSnapshot
 from system.model.map_control.condition_model.snapshot_io import read_snapshot
 
 
@@ -74,36 +61,60 @@ def utc_now_iso() -> str:
 
 @dataclass(frozen=True)
 class IntegratedVersionPointer:
-    """规范化后的统一在线版本指针。"""
+    """规范化后的 condition + MFAC 统一在线版本指针。
+
+    ``policy_*`` properties are read-only migration aliases. New code must use
+    the ``mfac_*`` fields.
+    """
 
     integrated_version: str
     condition_version: str
     condition_snapshot_path: Path
     condition_snapshot_sha256: Optional[str]
     grid_condition_mapping_sha256: Optional[str]
-    policy_version: str
-    policy_snapshot_path: Path
-    policy_manifest_sha256: Optional[str]
-    policy_source_condition_version: str
+    mfac_version: str
+    mfac_snapshot_path: Path
+    mfac_manifest_sha256: Optional[str]
+    mfac_source_condition_version: str
     raw: Dict[str, Any]
     signature: str
+
+    @property
+    def policy_version(self) -> str:
+        return self.mfac_version
+
+    @property
+    def policy_snapshot_path(self) -> Path:
+        return self.mfac_snapshot_path
+
+    @property
+    def policy_manifest_sha256(self) -> Optional[str]:
+        return self.mfac_manifest_sha256
+
+    @property
+    def policy_source_condition_version(self) -> str:
+        return self.mfac_source_condition_version
 
     def validate_pair(self) -> None:
         observed = {
             self.integrated_version,
             self.condition_version,
-            self.policy_version,
-            self.policy_source_condition_version,
+            self.mfac_version,
+            self.mfac_source_condition_version,
         }
         if len(observed) != 1:
             raise IntegratedVersionError(
-                "第一/第二模块在线版本必须完全一致，实际为 %s"
+                "第一模块/第二模块MFAC在线版本必须完全一致，实际为 %s"
                 % sorted(observed)
             )
 
 
 def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
-    """兼容新嵌套格式和旧扁平格式，并强制形成同版本对。"""
+    """优先读取 canonical ``mfac`` block，并兼容旧 MFAC 指针格式。
+
+    Compatibility parsing does not imply execution of the removed legacy
+    second module. The normalized object always exposes MFAC as module 2.
+    """
 
     if not isinstance(value, dict):
         raise IntegratedVersionError("active_version.json 根对象必须是字典")
@@ -111,14 +122,23 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
     condition_block = value.get("condition")
     if not isinstance(condition_block, dict):
         condition_block = {}
-    policy_block = value.get("slurry_policy")
-    if not isinstance(policy_block, dict):
-        policy_block = {}
+
+    mfac_block = value.get("mfac")
+    if not isinstance(mfac_block, dict):
+        mfac_block = {}
+
+    # Input-only compatibility for active pointers emitted during migration.
+    legacy_block = value.get("slurry_policy")
+    if not isinstance(legacy_block, dict):
+        legacy_block = {}
+    second_block = mfac_block or legacy_block
 
     integrated_version = _valid_version(
         value.get("integrated_version")
+        or mfac_block.get("version")
+        or value.get("mfac_version")
         or value.get("policy_version")
-        or policy_block.get("version")
+        or legacy_block.get("version")
         or value.get("condition_snapshot_version")
         or condition_block.get("version"),
         "integrated_version",
@@ -129,19 +149,23 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
         or integrated_version,
         "condition.version",
     )
-    policy_version = _valid_version(
-        policy_block.get("version")
+    mfac_version = _valid_version(
+        mfac_block.get("version")
+        or value.get("mfac_version")
+        or legacy_block.get("version")
         or value.get("policy_version")
         or value.get("model_version")
         or integrated_version,
-        "slurry_policy.version",
+        "mfac.version",
     )
     source_condition_version = _valid_version(
-        policy_block.get("source_condition_version")
+        mfac_block.get("source_condition_version")
+        or value.get("mfac_source_condition_version")
+        or legacy_block.get("source_condition_version")
         or value.get("source_condition_version")
         or value.get("condition_snapshot_version")
         or condition_version,
-        "slurry_policy.source_condition_version",
+        "mfac.source_condition_version",
     )
 
     condition_path_value = (
@@ -149,15 +173,16 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
         or condition_block.get("path")
         or value.get("condition_snapshot_path")
     )
-    policy_path_value = (
-        policy_block.get("snapshot_path")
-        or policy_block.get("path")
+    mfac_path_value = (
+        second_block.get("snapshot_path")
+        or second_block.get("path")
+        or value.get("mfac_snapshot_path")
         or value.get("policy_snapshot_path")
     )
     if not str(condition_path_value or "").strip():
         raise IntegratedVersionError("active_version.json 缺少第一模块快照路径")
-    if not str(policy_path_value or "").strip():
-        raise IntegratedVersionError("active_version.json 缺少第二模块快照路径")
+    if not str(mfac_path_value or "").strip():
+        raise IntegratedVersionError("active_version.json 缺少MFAC版本产物路径")
 
     condition_hash = (
         condition_block.get("snapshot_sha256")
@@ -166,11 +191,12 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
     )
     mapping_hash = (
         condition_block.get("grid_condition_mapping_sha256")
-        or policy_block.get("grid_condition_mapping_sha256")
+        or second_block.get("grid_condition_mapping_sha256")
         or value.get("grid_condition_mapping_sha256")
     )
     manifest_hash = (
-        policy_block.get("manifest_sha256")
+        second_block.get("manifest_sha256")
+        or value.get("mfac_manifest_sha256")
         or value.get("policy_manifest_sha256")
     )
 
@@ -184,12 +210,12 @@ def normalize_pointer(value: Dict[str, Any]) -> IntegratedVersionPointer:
         grid_condition_mapping_sha256=(
             str(mapping_hash).strip() if mapping_hash else None
         ),
-        policy_version=policy_version,
-        policy_snapshot_path=Path(str(policy_path_value)),
-        policy_manifest_sha256=(
+        mfac_version=mfac_version,
+        mfac_snapshot_path=Path(str(mfac_path_value)),
+        mfac_manifest_sha256=(
             str(manifest_hash).strip() if manifest_hash else None
         ),
-        policy_source_condition_version=source_condition_version,
+        mfac_source_condition_version=source_condition_version,
         raw=dict(value),
         signature=_canonical_hash(value),
     )
@@ -253,8 +279,6 @@ class IntegratedVersionManager:
         return pointer
 
     def poll(self, force: bool = False) -> Optional[IntegratedVersionPointer]:
-        """返回需要准备的新版本；没有变化时返回 ``None``。"""
-
         if not self.enabled or not self.hot_reload_enabled:
             return None
         now = time.monotonic()
@@ -338,23 +362,32 @@ class IntegratedVersionManager:
         self,
         *,
         condition_loaded_version: Optional[str],
-        slurry_policy_loaded_version: Optional[str],
+        mfac_loaded_version: Optional[str] = None,
+        slurry_policy_loaded_version: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Return canonical MFAC version status plus one legacy alias."""
         condition_version = str(condition_loaded_version or "")
-        policy_version = str(slurry_policy_loaded_version or "")
+        mfac_version = str(
+            mfac_loaded_version
+            if mfac_loaded_version not in (None, "")
+            else (slurry_policy_loaded_version or "")
+        )
         active_version = str(self._committed_version or "")
         consistent = bool(
             active_version
             and condition_version == active_version
-            and policy_version == active_version
+            and mfac_version == active_version
         )
         return {
             "integrated_active_version": active_version,
             "condition_loaded_version": condition_version,
-            "slurry_policy_loaded_version": policy_version,
+            "mfac_loaded_version": mfac_version,
+            # Temporary output compatibility only.
+            "slurry_policy_loaded_version": mfac_version,
             "version_consistent": consistent,
             "version_switch_state": self._switch_state,
             "version_switch_time": self._last_switch_time or "",
             "version_switch_error": self._switch_error or "",
             "active_version_file": str(self.active_file),
+            "second_module_backend": "MFAC",
         }
