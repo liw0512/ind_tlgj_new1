@@ -1,8 +1,12 @@
 import unittest
+from pathlib import Path
 
 from system.model.map_control.condition_model.integrated_version_manager import (
     IntegratedVersionManager,
     normalize_pointer,
+)
+from system.model.map_control.mfac_model.mfac_primary_config import (
+    MFAC_ACTIVE_VERSION_FILE,
 )
 
 
@@ -36,7 +40,6 @@ class Scheme2IntegratedVersionMFACPointerTest(unittest.TestCase):
             "/tmp/mfac-v007-manifest.json",
         )
         self.assertEqual(pointer.mfac_manifest_sha256, "def")
-        # Migration properties remain read-only aliases.
         self.assertEqual(pointer.policy_version, pointer.mfac_version)
         self.assertEqual(pointer.policy_snapshot_path, pointer.mfac_snapshot_path)
         self.assertNotIn("slurry_policy", pointer.raw)
@@ -61,6 +64,37 @@ class Scheme2IntegratedVersionMFACPointerTest(unittest.TestCase):
             str(pointer.mfac_snapshot_path),
             "/tmp/mfac-v003-manifest.json",
         )
+
+    def test_removed_legacy_active_path_redirects_to_canonical_mfac_path(self):
+        manager = IntegratedVersionManager(
+            {
+                "enabled": True,
+                "active_version_file": "files/slurry_policy_model_output/active_version.json",
+            }
+        )
+        self.assertEqual(manager.active_file, Path(MFAC_ACTIVE_VERSION_FILE))
+        fields = manager.status_fields(
+            condition_loaded_version="",
+            mfac_loaded_version="",
+        )
+        self.assertEqual(
+            fields["active_version_path_source"],
+            "MFAC_PRIMARY_ARTIFACT_CONFIG",
+        )
+
+    def test_custom_active_path_is_not_overridden(self):
+        manager = IntegratedVersionManager(
+            {
+                "enabled": True,
+                "active_version_file": "/tmp/custom-mfac-active.json",
+            }
+        )
+        self.assertEqual(manager.active_file, Path("/tmp/custom-mfac-active.json"))
+        fields = manager.status_fields(
+            condition_loaded_version="",
+            mfac_loaded_version="",
+        )
+        self.assertEqual(fields["active_version_path_source"], "EXPLICIT_CONFIG")
 
     def test_status_fields_publish_canonical_and_legacy_alias(self):
         manager = IntegratedVersionManager(
