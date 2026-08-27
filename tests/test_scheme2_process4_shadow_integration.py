@@ -7,9 +7,13 @@ from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
 )
+from system.model.map_control.mfac_model.flow_trajectory_planner import (
+    FlowTrajectoryPlannerConfig,
+)
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )
+from system.model.map_control.mfac_model.pending_dose_guard import PendingDoseGuardConfig
 from system.model.map_control.mfac_model.ph_adaptation import PHOnlineAdaptationConfig
 from system.model.map_control.mfac_model.ph_arbitration import PHResidualArbitrationConfig
 from system.model.map_control.mfac_model.ph_response import PHResponseConfig
@@ -23,6 +27,9 @@ from system.model.map_control.mfac_model.runtime_coordinator import (
 from system.model.map_control.mfac_model.runtime_store import Scheme2RuntimeStore
 from system.model.map_control.mfac_model.supply_flow_tracking import (
     SupplyFlowTrackingConfig,
+)
+from system.model.map_control.mfac_model.trajectory_coordinator import (
+    Scheme2TrajectoryShadowCoordinator,
 )
 
 
@@ -111,6 +118,26 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
         )
 
     @staticmethod
+    def pending_config():
+        return PendingDoseGuardConfig(
+            flow_change_deadband=1.0,
+            response_onset_seconds=10.0,
+            response_peak_seconds=30.0,
+            response_memory_seconds=60.0,
+            max_sample_gap_seconds=15.0,
+            min_confidence=0.5,
+        )
+
+    @staticmethod
+    def planner_config():
+        return FlowTrajectoryPlannerConfig(
+            max_step_up=2.0,
+            max_step_down=3.0,
+            min_hold_seconds=20.0,
+            demand_deadband=0.1,
+        )
+
+    @staticmethod
     def bridge():
         return SlurryPolicyOnlineBridge(
             {
@@ -147,10 +174,18 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
         console.system_state = console.SystemState.NORMAL_OPERATION
         return console
 
-    def coordinator(self, root, **config):
+    def base_coordinator(self, root, **config):
         return Scheme2RuntimeCoordinator(
             self.config(**config),
             Scheme2RuntimeStore(root),
+        )
+
+    def coordinator(self, root, **config):
+        return Scheme2TrajectoryShadowCoordinator(
+            self.config(**config),
+            Scheme2RuntimeStore(root),
+            pending_dose_config=self.pending_config(),
+            trajectory_planner_config=self.planner_config(),
         )
 
     def test_unconfigured_primary_runtime_is_explicit_safe_fallback(self):
@@ -188,7 +223,7 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
             41.20592948717949,
         )
 
-    def test_process4_rejects_unsafe_or_single_response_activation(self):
+    def test_process4_rejects_unsafe_single_response_or_legacy_runtime(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             with self.assertRaises(ValueError):
@@ -201,10 +236,14 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
                 )
             with self.assertRaises(ValueError):
                 console.configure_mfac_runtime(
-                    self.coordinator(root + "/single", dual=False)
+                    self.base_coordinator(root + "/single", dual=False)
+                )
+            with self.assertRaises(ValueError):
+                console.configure_mfac_runtime(
+                    self.base_coordinator(root + "/legacy-dual", dual=True)
                 )
 
-    def test_dual_coordinator_is_injected_into_primary_policy_not_sidecar(self):
+    def test_trajectory_coordinator_is_injected_into_primary_policy_not_sidecar(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             coordinator = self.coordinator(root)
@@ -214,10 +253,10 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
             self.assertEqual(policy.runtime_mode, "COORDINATOR_SHADOW")
             self.assertEqual(
                 console._mfac_runtime_build_result.status,
-                "CONFIGURED_SHADOW",
+                "CONFIGURED_TRAJECTORY_SHADOW",
             )
 
-    def test_insert_mod_uses_one_qbase_and_one_target_path(self):
+    def test_insert_mod_uses_one_target_path_and_keeps_trajectory_advisory(self):
         with tempfile.TemporaryDirectory() as root:
             console = self.bare_console()
             console.configure_mfac_runtime(self.coordinator(root))
@@ -265,6 +304,11 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
             tracking = result["mfac_runtime_cycle"]["tracking_events"]
             self.assertEqual(tracking[0]["status"], "NOT_APPLIED")
             self.assertFalse(tracking[0]["target_was_applied"])
+            metadata = result["mfac_runtime_cycle"]["metadata"]
+            self.assertTrue(metadata["trajectory_shadow_enabled"])
+            self.assertFalse(metadata["algorithm_target_replaced_by_trajectory_planner"])
+            self.assertTrue(metadata["trajectory_plan"]["shadow_only"])
+            self.assertFalse(metadata["trajectory_planner_dcs_write_enabled"])
 
     def test_shadow_compat_hook_only_maps_precomputed_fields(self):
         console = self.bare_console()
