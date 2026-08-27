@@ -50,33 +50,44 @@ class Scheme2LocalStepSessionReadinessTest(unittest.TestCase):
         )
 
     @staticmethod
-    def reviewed_observation():
-        response = {
-            "baseline_window_seconds": 30.0,
-            "delay_onset_seconds": 10.0,
-            "observation_seconds": 30.0,
-            "measurement_window_seconds": 10.0,
-            "max_sample_gap_seconds": 15.0,
+    def reviewed_observation(**overrides):
+        tracking = {
+            "target_change_deadband": 0.5,
+            "reach_tolerance": 0.5,
+            "required_sustain_seconds": 20.0,
+            "execution_timeout_seconds": 300.0,
+            "max_sample_gap_seconds": 30.0,
+        }
+        so2 = {
+            "baseline_window_seconds": 300.0,
+            "delay_onset_seconds": 100.0,
+            "observation_seconds": 500.0,
+            "measurement_window_seconds": 60.0,
+            "max_sample_gap_seconds": 30.0,
             "target_change_tolerance": 0.0,
             "min_baseline_samples": 2,
             "min_response_samples": 2,
         }
+        ph = {
+            "baseline_window_seconds": 300.0,
+            "delay_onset_seconds": 100.0,
+            "observation_seconds": 800.0,
+            "measurement_window_seconds": 60.0,
+            "max_sample_gap_seconds": 30.0,
+            "target_change_tolerance": 0.0,
+            "min_baseline_samples": 2,
+            "min_response_samples": 2,
+        }
+        sections = {"tracking": tracking, "so2_response": so2, "ph_response": ph}
+        for dotted, value in overrides.items():
+            section, field = dotted.split("__", 1)
+            sections[section][field] = value
         return LocalStepObservationProfile.from_mapping(
             {
                 "profile_id": "OBS",
                 "status": "REVIEWED_MANUAL_ONLY",
                 "activation_status": "NOT_ACTIVATABLE",
-                "reviewed_parameters": {
-                    "tracking": {
-                        "target_change_deadband": 0.5,
-                        "reach_tolerance": 0.5,
-                        "required_sustain_seconds": 20.0,
-                        "execution_timeout_seconds": 300.0,
-                        "max_sample_gap_seconds": 30.0,
-                    },
-                    "so2_response": dict(response),
-                    "ph_response": dict(response),
-                },
+                "reviewed_parameters": sections,
             }
         )
 
@@ -96,7 +107,7 @@ class Scheme2LocalStepSessionReadinessTest(unittest.TestCase):
             ),
         )
 
-    def test_all_three_gates_are_required(self):
+    def test_all_three_gates_and_consistency_are_required(self):
         result = evaluate_local_step_session_readiness(
             self.reviewed_design(),
             self.reviewed_observation(),
@@ -104,6 +115,7 @@ class Scheme2LocalStepSessionReadinessTest(unittest.TestCase):
             level_id="PHASE1_STEP_2",
         )
         self.assertTrue(result.ready)
+        self.assertTrue(result.cross_profile_consistent)
         self.assertEqual(result.status, "READY_FOR_SUPERVISED_MANUAL_SESSION")
         self.assertEqual(result.blockers, ())
         self.assertFalse(result.automatic_execution_allowed)
@@ -143,6 +155,55 @@ class Scheme2LocalStepSessionReadinessTest(unittest.TestCase):
         self.assertIn("OBSERVATION_PROFILE_NOT_REVIEWED", result.blockers)
         self.assertTrue(
             any(item.startswith("OBSERVATION_MISSING:") for item in result.blockers)
+        )
+
+    def test_sample_gap_mismatch_blocks_session(self):
+        result = evaluate_local_step_session_readiness(
+            self.reviewed_design(),
+            self.reviewed_observation(so2_response__max_sample_gap_seconds=20.0),
+            self.matrix(reviewed=True),
+            level_id="PHASE1_STEP_2",
+        )
+        self.assertFalse(result.ready)
+        self.assertIn("MAX_SAMPLE_GAP_PROFILE_MISMATCH", result.blockers)
+
+    def test_tracking_deadband_cannot_hide_identification_step(self):
+        result = evaluate_local_step_session_readiness(
+            self.reviewed_design(),
+            self.reviewed_observation(tracking__target_change_deadband=2.0),
+            self.matrix(reviewed=True),
+            level_id="PHASE1_STEP_2",
+        )
+        self.assertFalse(result.ready)
+        self.assertIn(
+            "TRACKING_DEADBAND_NOT_BELOW_IDENTIFICATION_STEP",
+            result.blockers,
+        )
+
+    def test_tracking_reach_tolerance_cannot_exceed_evidence_step_error(self):
+        result = evaluate_local_step_session_readiness(
+            self.reviewed_design(),
+            self.reviewed_observation(tracking__reach_tolerance=0.8),
+            self.matrix(reviewed=True),
+            level_id="PHASE1_STEP_2",
+        )
+        self.assertFalse(result.ready)
+        self.assertIn(
+            "TRACKING_REACH_TOLERANCE_EXCEEDS_TRIAL_STEP_ERROR",
+            result.blockers,
+        )
+
+    def test_response_monitor_horizon_must_cover_trial_minimum(self):
+        result = evaluate_local_step_session_readiness(
+            self.reviewed_design(),
+            self.reviewed_observation(ph_response__observation_seconds=700.0),
+            self.matrix(reviewed=True),
+            level_id="PHASE1_STEP_2",
+        )
+        self.assertFalse(result.ready)
+        self.assertIn(
+            "PH_MONITOR_HORIZON_SHORTER_THAN_TRIAL_REQUIREMENT",
+            result.blockers,
         )
 
 
