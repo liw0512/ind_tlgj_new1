@@ -2,6 +2,7 @@ import inspect
 import math
 import unittest
 
+from system.model.config.mfac_plant_contract import target_supply_flow_contract
 from system.model.map_control.mfac_model.continuous_target import (
     COUNTERFACTUAL_SHADOW,
     ContinuousTargetConfig,
@@ -26,16 +27,19 @@ class ContinuousTargetPublisherTest(unittest.TestCase):
         self.assertFalse(result.hard_clipped)
         self.assertEqual(publisher.last_valid_algorithm_target, 32.5)
 
-    def test_hard_range_is_zero_to_seventy_by_default(self):
+    def test_default_hard_range_comes_from_plant_contract(self):
+        contract = target_supply_flow_contract()
+        lower = float(contract["minimum"])
+        upper = float(contract["maximum"])
         publisher = ContinuousTargetPublisher()
 
-        upper = publisher.publish(69.0, 5.0)
-        self.assertEqual(upper.algorithm_target_supply_flow, 70.0)
-        self.assertTrue(upper.hard_clipped)
+        high = publisher.publish(upper - 1.0, 5.0)
+        self.assertEqual(high.algorithm_target_supply_flow, upper)
+        self.assertTrue(high.hard_clipped)
 
-        lower = publisher.publish(1.0, -5.0)
-        self.assertEqual(lower.algorithm_target_supply_flow, 0.0)
-        self.assertTrue(lower.hard_clipped)
+        low = publisher.publish(lower + 1.0, -5.0)
+        self.assertEqual(low.algorithm_target_supply_flow, lower)
+        self.assertTrue(low.hard_clipped)
 
     def test_invalid_input_holds_last_valid_algorithm_target(self):
         publisher = ContinuousTargetPublisher()
@@ -102,11 +106,15 @@ class ContinuousTargetPublisherTest(unittest.TestCase):
         self.assertEqual(result.algorithm_target_supply_flow, 46.0)
 
     def test_restore_rejects_corrupt_out_of_range_target(self):
+        upper = float(target_supply_flow_contract()["maximum"])
         publisher = ContinuousTargetPublisher()
         with self.assertRaises(ValueError):
-            publisher.restore_last_valid_algorithm_target(71.0)
+            publisher.restore_last_valid_algorithm_target(upper + 1.0)
 
-    def test_custom_hard_bounds_are_supported(self):
+    def test_custom_hard_bounds_are_supported_for_component_tests(self):
+        # Component-level tests may explicitly exercise arbitrary bounds. The
+        # formal production runtime separately rejects bounds that diverge from
+        # PLANT_CONFIG.
         publisher = ContinuousTargetPublisher(
             ContinuousTargetConfig(
                 hard_min_supply_flow=10.0,
