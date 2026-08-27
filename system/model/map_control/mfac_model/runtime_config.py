@@ -4,6 +4,13 @@
 Plant facts stay in ``PLANT_CONFIG``. Runtime configuration owns only calibrated
 algorithm/dynamic parameters. The current repository default remains disabled,
 and production permission remains LEARN=0, Residual=0, DCS write=off.
+
+V5 separates two concepts that were previously conflated:
+
+* ``pending_dose`` owns only the delayed *rise* needed to estimate future pH
+  response that has not yet been realized (onset -> peak);
+* pulse half-decay/full-recovery evidence belongs to identification/session
+  gating and is not allowed to control PendingDoseGuard.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from .supply_flow_tracking import SupplyFlowTrackingConfig
 from .trajectory_coordinator import Scheme2TrajectoryShadowCoordinator
 
 
-MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V4_PENDING_TRAJECTORY"
+MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V5_PENDING_RISE_ONLY"
 DEFAULT_RUNTIME_DIR = MFAC_RUNTIME_DIR
 
 DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
@@ -55,8 +62,8 @@ DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "ph_response": {},
     "ph_adaptation": {},
     "ph_arbitration": {},
-    # Dynamic pH-memory calibration. These are intentionally empty until
-    # historical/field evidence freezes onset/peak/memory parameters.
+    # Pending pH response owns onset/peak only. Recovery/quiet time is a
+    # separate identification/session concept and cannot be configured here.
     "pending_dose": {},
     # Staircase shaping parameters. Empty by default: no guessed production
     # step size or hold duration is hidden in code.
@@ -117,7 +124,6 @@ _REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
         "flow_change_deadband",
         "response_onset_seconds",
         "response_peak_seconds",
-        "response_memory_seconds",
         "max_sample_gap_seconds",
     ),
     "trajectory_planner": (
@@ -137,6 +143,11 @@ _PLANT_OWNED_PH_FIELDS = {
     "safe_min",
     "safe_max",
     "guard_band",
+}
+_PENDING_RECOVERY_FORBIDDEN_FIELDS = {
+    "recovery_memory_seconds",
+    "response_recovery_seconds",
+    "half_decay_seconds",
 }
 
 
@@ -219,6 +230,19 @@ def _ph_arbitration_config(value: Mapping[str, Any]) -> PHResidualArbitrationCon
     return PHResidualArbitrationConfig(**plant_values)
 
 
+def _pending_dose_config(value: Mapping[str, Any]) -> PendingDoseGuardConfig:
+    payload = dict(value or {})
+    forbidden = sorted(_PENDING_RECOVERY_FORBIDDEN_FIELDS.intersection(payload))
+    if forbidden:
+        raise ValueError(
+            "pending_dose cannot own pulse recovery/quiet fields: %s"
+            % ", ".join(forbidden)
+        )
+    # ``response_memory_seconds`` is accepted only as a deprecated audit-window
+    # compatibility input by PendingDoseGuardConfig. It has no control authority.
+    return PendingDoseGuardConfig(**payload)
+
+
 def build_mfac_runtime(
     config: Optional[Mapping[str, Any]] = None,
 ) -> MFACRuntimeBuildResult:
@@ -272,8 +296,8 @@ def build_mfac_runtime(
         ph_arbitration = _ph_arbitration_config(
             _as_mapping(value.get("ph_arbitration"), "ph_arbitration")
         )
-        pending_dose = PendingDoseGuardConfig(
-            **_as_mapping(value.get("pending_dose"), "pending_dose")
+        pending_dose = _pending_dose_config(
+            _as_mapping(value.get("pending_dose"), "pending_dose")
         )
         trajectory_planner = FlowTrajectoryPlannerConfig(
             **_as_mapping(value.get("trajectory_planner"), "trajectory_planner")
