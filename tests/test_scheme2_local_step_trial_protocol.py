@@ -245,7 +245,7 @@ class Scheme2LocalStepTrialProtocolTest(unittest.TestCase):
         self.assertEqual(outcome.status, "REJECTED")
         self.assertIn("PH_OBSERVATION_TOO_SHORT", outcome.reasons)
 
-    def test_second_human_review_is_required_before_learning_eligible_event(self):
+    def test_second_human_review_records_non_learning_event_until_cohort_review(self):
         plan = self.plan()
         outcome = evaluate_local_step_trial(
             plan,
@@ -271,9 +271,12 @@ class Scheme2LocalStepTrialProtocolTest(unittest.TestCase):
             condition_label="P10",
             base_condition_id="P10",
         )
-        self.assertTrue(event.learning_eligible)
+        self.assertFalse(event.learning_eligible)
         self.assertEqual(event.action_source, "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED")
         self.assertEqual(event.metadata["evidence_role"], "LOCAL_GAIN")
+        self.assertTrue(event.metadata["cohort_bootstrap_review_required"])
+        self.assertFalse(event.metadata["cohort_bootstrap_review_approved"])
+        self.assertFalse(event.metadata["offline_bootstrap_evidence_allowed"])
         self.assertFalse(event.metadata["automatic_online_adaptation_allowed"])
         self.assertFalse(event.metadata["return_to_baseline_learning_allowed"])
         self.assertEqual(event.so2_target, 15.0)
