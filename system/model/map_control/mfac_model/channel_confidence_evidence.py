@@ -65,6 +65,10 @@ def _consistency_score(metric: float, reviewed_limit: float) -> float:
     return _clip01(1.0 / (1.0 + ratio))
 
 
+def _same(left: float, right: float) -> bool:
+    return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-12)
+
+
 @dataclass(frozen=True)
 class ChannelConfidenceEvidence:
     evidence_id: str
@@ -99,8 +103,15 @@ class ChannelConfidenceEvidence:
     semantics_version: str = CHANNEL_CONFIDENCE_EVIDENCE_VERSION
 
     def __post_init__(self) -> None:
-        if not str(self.evidence_id or "").strip():
-            raise ValueError("confidence evidence_id is required")
+        for name in (
+            "evidence_id",
+            "condition_snapshot_version",
+            "mfac_context_id",
+            "cohort_review_id",
+            "timing_evidence_id",
+        ):
+            if not str(getattr(self, name) or "").strip():
+                raise ValueError("%s is required" % name)
         if str(self.channel or "").upper() not in {"SO2", "PH"}:
             raise ValueError("confidence channel must be SO2 or PH")
         if self.status != "READY_FOR_CONFIDENCE_REVIEW":
@@ -113,6 +124,47 @@ class ChannelConfidenceEvidence:
             raise ValueError("confidence evidence cannot enable runtime permissions")
         if self.semantics_version != CHANNEL_CONFIDENCE_EVIDENCE_VERSION:
             raise ValueError("unsupported confidence evidence semantics")
+
+        cohort_ids = tuple(str(value or "").strip() for value in self.cohort_event_ids)
+        timing_ids = tuple(str(value or "").strip() for value in self.timing_event_ids)
+        if not cohort_ids or any(not value for value in cohort_ids):
+            raise ValueError("confidence evidence requires cohort event IDs")
+        if len(set(cohort_ids)) != len(cohort_ids):
+            raise ValueError("confidence evidence contains duplicate cohort event IDs")
+        if not timing_ids or any(not value for value in timing_ids):
+            raise ValueError("confidence evidence requires timing event IDs")
+        if len(set(timing_ids)) != len(timing_ids):
+            raise ValueError("confidence evidence contains duplicate timing event IDs")
+        if not set(timing_ids).issubset(set(cohort_ids)):
+            raise ValueError("timing evidence must be a subset of the cohort")
+
+        if int(self.valid_event_count) != len(cohort_ids) or int(self.valid_event_count) <= 0:
+            raise ValueError("valid_event_count must equal cohort event ID count")
+        if int(self.required_valid_trials) <= 0:
+            raise ValueError("required_valid_trials must be > 0")
+        if int(self.independent_days) <= 0:
+            raise ValueError("independent_days must be > 0")
+        if int(self.required_independent_days) <= 0:
+            raise ValueError("required_independent_days must be > 0")
+        if int(self.independent_days) > int(self.valid_event_count):
+            raise ValueError("independent_days cannot exceed valid_event_count")
+
+        numeric_nonnegative = (
+            "phi_relative_mad",
+            "phi_max_relative_deviation",
+        )
+        for name in numeric_nonnegative:
+            number = _finite(getattr(self, name))
+            if number is None or number < 0.0:
+                raise ValueError("%s must be finite and >= 0" % name)
+        for name in (
+            "reviewed_phi_relative_mad_limit",
+            "reviewed_phi_max_relative_deviation_limit",
+        ):
+            number = _finite(getattr(self, name))
+            if number is None or number <= 0.0:
+                raise ValueError("%s must be finite and > 0" % name)
+
         for name in (
             "event_count_sufficiency",
             "independent_day_sufficiency",
@@ -124,10 +176,38 @@ class ChannelConfidenceEvidence:
             number = _finite(getattr(self, name))
             if number is None or not (0.0 <= number <= 1.0):
                 raise ValueError("%s must be within [0,1]" % name)
-        if not self.timing_event_ids:
-            raise ValueError("confidence evidence requires timing event IDs")
-        if not set(self.timing_event_ids).issubset(set(self.cohort_event_ids)):
-            raise ValueError("timing evidence must be a subset of the cohort")
+
+        expected_count = _sufficiency(self.valid_event_count, self.required_valid_trials)
+        expected_days = _sufficiency(self.independent_days, self.required_independent_days)
+        expected_timing = _clip01(
+            float(len(timing_ids)) / float(self.valid_event_count)
+        )
+        expected_mad = _consistency_score(
+            self.phi_relative_mad,
+            self.reviewed_phi_relative_mad_limit,
+        )
+        expected_deviation = _consistency_score(
+            self.phi_max_relative_deviation,
+            self.reviewed_phi_max_relative_deviation_limit,
+        )
+        expected_candidate = min(
+            expected_count,
+            expected_days,
+            expected_timing,
+            expected_mad,
+            expected_deviation,
+        )
+        expected = {
+            "event_count_sufficiency": expected_count,
+            "independent_day_sufficiency": expected_days,
+            "timing_coverage_ratio": expected_timing,
+            "phi_mad_consistency_score": expected_mad,
+            "phi_max_deviation_consistency_score": expected_deviation,
+            "conservative_confidence_candidate": expected_candidate,
+        }
+        for name, value in expected.items():
+            if not _same(getattr(self, name), value):
+                raise ValueError("%s is inconsistent with source evidence" % name)
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
