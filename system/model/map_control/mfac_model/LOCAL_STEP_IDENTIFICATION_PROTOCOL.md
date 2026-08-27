@@ -3,7 +3,7 @@
 ## Purpose
 
 Historical operator slurry actions are dominated by large pulse-like actions and
-do not support the low-flow staircase shape intended by Scheme 2.  They are
+do not support the low-flow staircase shape intended by Scheme 2. They are
 therefore DYNAMIC/SAFETY evidence, not action demonstrations.
 
 The missing evidence is local plant sensitivity:
@@ -26,7 +26,7 @@ dcs_write_enabled            = false
 normal_algorithm_target_replaced = false
 ```
 
-A proposal is not an instruction.  An abort is a recommendation to the human
+A proposal is not an instruction. An abort is a recommendation to the human
 operator/test supervisor, not an automatic DCS command.
 
 Production control permissions remain:
@@ -213,16 +213,16 @@ phi_so2_event < 0
 phi_ph_event  > 0
 ```
 
-The real-data audit now indicates that a 600-second SO2-only early observation
-is not sufficient for dual-channel closure because pH peak P90 is about 886 s.
-The current review candidate is therefore:
+The real-data audit shows that a 600-second SO2-only early observation is not
+sufficient for dual-channel closure because pH peak P90 is about 886 s. The
+current review candidates are therefore:
 
 ```text
 minimum SO2 observation = 600 s
 minimum pH observation  = 900 s
 ```
 
-These are still review candidates, not reviewed site parameters.
+These remain review candidates, not reviewed site parameters.
 
 ## Second human review: evidence promotion
 
@@ -239,7 +239,7 @@ learning_permission = false
 ```
 
 Only a second explicit evidence review may call
-`promote_local_step_evidence()`.  The promoted canonical event contains both
+`promote_local_step_evidence()`. The promoted canonical event contains both
 channels from the same physical action:
 
 ```text
@@ -263,30 +263,92 @@ offline_bootstrap_evidence_allowed = true
 SO2 and pH offline bootstrap therefore consume the same reviewed physical trial,
 not two unrelated actions.
 
-## Return to baseline
+## Return to baseline and pH recovery
 
 The manual return from the test plateau to the pre-trial target is a recovery
 action, not a second LOCAL_GAIN demonstration. Its delayed response overlaps the
 first test and must not be automatically learned.
 
-After return-to-baseline, a new trial may be proposed only after the complete
-proposal gate passes again, including quiet interval and fresh stable baselines.
+A crucial distinction is now explicit:
+
+```text
+PendingDoseGuard onset/peak
+!= pulse recovery time
+!= identification quiet time
+!= candidate interval
+```
+
+`phi_ph` is a step sensitivity. A sustained positive delta-Q does not decay
+because a generic memory timer expires. For a pulse, pH falls because the later
+negative return-flow step progressively cancels the earlier positive step.
+Therefore PendingDoseGuard only models future response that has not yet been
+realized between response onset and peak.
+
+Pulse recovery is audited separately. In the current 918-event recovery cohort:
+
+```text
+pulse end -> pH peak
+P50 ~ 220 s
+P90 ~ 393 s
+P95 ~ 450 s
+
+peak -> half-decay
+P50 ~ 590 s
+P90 ~ 970 s
+P95 ~ 1140 s
+
+pulse end -> half-decay
+P50 ~ 830 s
+P90 ~ 1280 s
+P95 ~ 1440 s
+
+pulse end -> recovery band
+P50 ~ 1030 s
+P90 ~ 2020 s
+P95 ~ 2450 s
+```
+
+Recovery band is defined as:
+
+```text
+pH <= pre-pulse baseline + 0.05
+sustained for approximately 120 s
+```
+
+The current quiet-time engineering candidate is therefore:
+
+```text
+min_quiet_seconds = 2700 s  # 45 min, REVIEW_CANDIDATE
+```
+
+It is rounded above the recovery-band P95 and is still not a reviewed value.
+After this quiet interval, a new trial still cannot start unless **all** proposal
+baseline-stability checks pass again.
+
+The separate conservative session policy remains:
+
+```text
+min_candidate_interval_seconds = 3600 s  # REVIEW_CANDIDATE
+```
+
+Therefore neither 2700 s nor 3600 s is a PendingDoseGuard parameter.
+
 There is no dose debt and no requirement to perform another action merely to
 balance cumulative slurry volume.
 
-## Historical timing context
+## Timing map
 
-The current real-data audit remains useful for conservative observation design:
+The current real-data evidence should be read as four different clocks:
 
 ```text
-pH onset P90              ~190 s
-pH peak P90               ~886 s
-SO2 improvement onset P90 ~310 s
-pH memory lower bound     >=1800 s
+pH pending onset P90       ~190 s  -> PendingDoseGuard review
+pH pending peak P90        ~886 s  -> PendingDoseGuard review (~900 s candidate)
+SO2 improvement onset P90  ~310 s  -> Planner HOLD review (~360 s candidate)
+pH pulse recovery P95      ~2450 s -> identification quiet review (~2700 s candidate)
+identification interval    3600 s   -> separate session-policy candidate
 ```
 
-These values constrain observation/recovery review. They do not determine local
-`phi` or the runtime staircase step cap.
+They must not be merged into one generic `response_memory_seconds`.
 
 ## Current readiness
 
@@ -295,6 +357,9 @@ historical DYNAMIC evidence   rich
 historical SAFETY evidence    rich
 historical LOCAL_GAIN         insufficient
 Phase-1 step                  +2.0 m3/h REVIEW_CANDIDATE
+max sample gap                30 s REVIEW_CANDIDATE
+pH baseline range             0.05 REVIEW_CANDIDATE
+minimum quiet time            2700 s REVIEW_CANDIDATE
 required trial count          unresolved
 required independent days     unresolved
 several safety/effect limits  unresolved
@@ -302,6 +367,5 @@ manual session ready          false
 runtime activation            false
 ```
 
-The next engineering decision is to review the remaining null fields in the
-local-step design artifact. Only after that review can a supervised Phase-1
-manual session be considered.
+The remaining null values must still be reviewed or supported by new evidence.
+Only after that review can a supervised Phase-1 manual session be considered.
