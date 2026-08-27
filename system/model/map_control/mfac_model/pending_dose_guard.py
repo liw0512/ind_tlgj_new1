@@ -1,11 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Shadow-only memory model for delayed pH response to recent slurry-flow changes.
+"""Shadow-only pending pH model for recent slurry-flow changes.
 
 ``phi_ph`` is a step sensitivity (delta pH / delta flow), not a volume gain.
-Recent actual-flow changes are superposed through a simple calibrated step
-response. Future extrema are evaluated at every onset/peak breakpoint, so a
-later flow reduction cannot incorrectly cancel the still-developing pH peak of
-an earlier positive pulse. Delivered volume is audit only and never dose debt.
+Recent actual-flow changes are superposed through a calibrated step-response
+rise.  The guard predicts only the *future response that has not yet been
+realized*.
+
+A critical semantic boundary is deliberate here: pulse half-decay/full recovery
+is not a PendingDoseGuard control parameter.  A permanent positive step does
+not decay merely because a timer expires; a later negative flow step produces
+the recovery by superposition.  Once an individual delta-Q contribution has
+reached its response peak, its future incremental effect is zero and it can be
+removed from the pending set safely.  Historical recovery/quiet-time evidence
+belongs to identification/session gating, not to this pending-response model.
+
+Delivered volume is audit only and never dose debt.
 """
 
 from __future__ import annotations
@@ -19,7 +28,9 @@ from .mfac_schema import MFACRuntimeState
 from .ph_arbitration import PHResidualArbitrationConfig
 
 
-PENDING_DOSE_GUARD_SEMANTICS_VERSION = "SCHEME2_PENDING_DOSE_GUARD_V2_FUTURE_EXTREMA"
+PENDING_DOSE_GUARD_SEMANTICS_VERSION = (
+    "SCHEME2_PENDING_DOSE_GUARD_V3_PENDING_ONLY_NO_RECOVERY_MEMORY"
+)
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -48,9 +59,13 @@ class PendingDoseGuardConfig:
     flow_change_deadband: float
     response_onset_seconds: float
     response_peak_seconds: float
-    response_memory_seconds: float
     max_sample_gap_seconds: float
+    audit_volume_window_seconds: Optional[float] = None
     min_confidence: float = 0.0
+    # Deprecated compatibility input.  It has no pending-control authority.
+    # If audit_volume_window_seconds is omitted, this legacy value may be used
+    # only as the recent-volume audit window.
+    response_memory_seconds: Optional[float] = None
 
     def __post_init__(self) -> None:
         parsed: Dict[str, float] = {}
@@ -58,7 +73,6 @@ class PendingDoseGuardConfig:
             "flow_change_deadband",
             "response_onset_seconds",
             "response_peak_seconds",
-            "response_memory_seconds",
             "max_sample_gap_seconds",
             "min_confidence",
         ):
@@ -72,12 +86,27 @@ class PendingDoseGuardConfig:
             raise ValueError("response_onset_seconds must be >= 0")
         if parsed["response_peak_seconds"] <= parsed["response_onset_seconds"]:
             raise ValueError("response_peak_seconds must be > response_onset_seconds")
-        if parsed["response_memory_seconds"] < parsed["response_peak_seconds"]:
-            raise ValueError("response_memory_seconds must be >= response_peak_seconds")
         if parsed["max_sample_gap_seconds"] <= 0.0:
             raise ValueError("max_sample_gap_seconds must be > 0")
         if not 0.0 <= parsed["min_confidence"] <= 1.0:
             raise ValueError("min_confidence must be within [0, 1]")
+
+        for name in ("audit_volume_window_seconds", "response_memory_seconds"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            number = _finite(value)
+            if number is None or number <= 0.0:
+                raise ValueError("%s must be finite and > 0 when provided" % name)
+
+    @property
+    def effective_audit_volume_window_seconds(self) -> float:
+        value = self.audit_volume_window_seconds
+        if value is None:
+            value = self.response_memory_seconds
+        if value is None:
+            value = self.response_peak_seconds
+        return max(float(self.response_peak_seconds), float(value))
 
 
 @dataclass
@@ -137,14 +166,19 @@ class PendingDoseGuard:
         return max(0.0, min(1.0, (age_seconds - onset) / (peak - onset)))
 
     def _prune(self, now: datetime) -> None:
-        memory = float(self.config.response_memory_seconds)
+        # Contributions older than peak have zero *future incremental* effect.
+        # They must not be retained merely to emulate a vague recovery memory.
+        peak = float(self.config.response_peak_seconds)
         self._contributions = [
-            item for item in self._contributions
-            if 0.0 <= (now - item[0]).total_seconds() <= memory
+            item
+            for item in self._contributions
+            if 0.0 <= (now - item[0]).total_seconds() < peak
         ]
+        audit_window = float(self.config.effective_audit_volume_window_seconds)
         self._samples = [
-            item for item in self._samples
-            if 0.0 <= (now - item[0]).total_seconds() <= memory
+            item
+            for item in self._samples
+            if 0.0 <= (now - item[0]).total_seconds() <= audit_window
         ]
 
     def _recent_volume(self) -> Optional[float]:
@@ -163,14 +197,13 @@ class PendingDoseGuard:
     ) -> Tuple[float, float, float, float, List[Dict[str, Any]]]:
         """Return future max/min equivalent step change relative to *now*.
 
-        The response function is piecewise linear, so future extrema can only
-        occur at the current instant or when a contribution reaches onset/peak.
-        Evaluating those breakpoints is exact for this V2 response model and
-        avoids an arbitrary simulation time step.
+        The response rise is piecewise linear, so future extrema can only occur
+        at the current instant or when a still-pending contribution reaches
+        onset/peak.  Contributions that already reached peak are pruned because
+        their future incremental response is exactly zero.
         """
         onset = float(self.config.response_onset_seconds)
         peak = float(self.config.response_peak_seconds)
-        memory = float(self.config.response_memory_seconds)
         ages: List[Tuple[datetime, float, float, float]] = []
         horizons = {0.0}
         details: List[Dict[str, Any]] = []
@@ -180,7 +213,7 @@ class PendingDoseGuard:
             ages.append((event_time, float(delta_q), age, current_fraction))
             for breakpoint in (onset, peak):
                 horizon = breakpoint - age
-                if 0.0 < horizon <= memory:
+                if horizon > 0.0:
                     horizons.add(float(horizon))
             details.append({
                 "timestamp": event_time.isoformat(),
@@ -239,8 +272,6 @@ class PendingDoseGuard:
         max_eq, min_eq, peak_horizon, trough_horizon, details = (
             self._future_equivalent_range(now)
         )
-        # Backward-compatible scalar: keep the more extreme future equivalent
-        # change, while exposing signed upper/lower projections explicitly.
         selected_eq = max_eq if abs(max_eq) >= abs(min_eq) else min_eq
         phi_ph = _finite(state.phi_ph_live) if state is not None else None
         confidence = _finite(state.confidence_ph_live) if state is not None else None
@@ -249,6 +280,12 @@ class PendingDoseGuard:
             "last_reset_reason": self._last_reset_reason,
             "recent_volume_semantics": "AUDIT_ONLY_NOT_CONTROL_DEBT",
             "future_extrema_method": "PIECEWISE_LINEAR_STEP_BREAKPOINTS",
+            "pending_control_horizon_seconds": float(self.config.response_peak_seconds),
+            "recovery_memory_used_for_pending_control": False,
+            "audit_volume_window_seconds": float(
+                self.config.effective_audit_volume_window_seconds
+            ),
+            "legacy_response_memory_seconds": self.config.response_memory_seconds,
         }
         if (
             ph is None or phi_ph is None or phi_ph <= 0.0
