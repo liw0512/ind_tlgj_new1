@@ -67,7 +67,7 @@ class LocalGainBootstrapChannelsTest(unittest.TestCase):
         self.assertEqual(so2[0].metadata["evidence_role_required"], "LOCAL_GAIN")
         self.assertEqual(ph[0].metadata["evidence_role_required"], "LOCAL_GAIN")
 
-    def test_reviewed_manual_trial_seeds_both_channels_from_same_event(self):
+    def test_individually_reviewed_manual_trial_cannot_seed_without_cohort_review(self):
         event = self.event(
             local=False,
             source="MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
@@ -76,6 +76,40 @@ class LocalGainBootstrapChannelsTest(unittest.TestCase):
             {
                 "evidence_role": "LOCAL_GAIN",
                 "manual_evidence_review_approved": True,
+                "cohort_bootstrap_review_required": True,
+                "cohort_bootstrap_review_approved": False,
+                "offline_bootstrap_evidence_allowed": False,
+                "automatic_online_adaptation_allowed": False,
+            }
+        )
+        # Covers legacy V2 promoted events that may still carry
+        # learning_eligible=True: the bootstrap gate must ignore them.
+        self.assertTrue(event.learning_eligible)
+        self.assertEqual(
+            build_bootstrap_evidence(
+                [event], MFACReplayConfig(eta=0.1, mu=1.0)
+            ),
+            [],
+        )
+        self.assertEqual(
+            build_ph_bootstrap_evidence(
+                [event], PHReplayConfig(eta=0.1, mu=1.0)
+            ),
+            [],
+        )
+
+    def test_cohort_approved_manual_trial_can_seed_both_channels(self):
+        event = self.event(
+            local=False,
+            source="MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
+        )
+        event.metadata.update(
+            {
+                "evidence_role": "LOCAL_GAIN",
+                "manual_evidence_review_approved": True,
+                "cohort_bootstrap_review_required": True,
+                "cohort_bootstrap_review_approved": True,
+                "offline_bootstrap_evidence_allowed": True,
                 "automatic_online_adaptation_allowed": False,
             }
         )
