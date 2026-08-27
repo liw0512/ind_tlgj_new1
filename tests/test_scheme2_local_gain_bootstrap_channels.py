@@ -37,6 +37,7 @@ class LocalGainBootstrapChannelsTest(unittest.TestCase):
             metadata={
                 "historical_local_gain_eligible": bool(local),
                 "ph_out_of_safe_range": bool(ph_out),
+                "evidence_role": "LOCAL_GAIN" if local else "",
             },
         )
 
@@ -65,6 +66,31 @@ class LocalGainBootstrapChannelsTest(unittest.TestCase):
         self.assertGreater(ph[0].phi_seed, 0.0)
         self.assertEqual(so2[0].metadata["evidence_role_required"], "LOCAL_GAIN")
         self.assertEqual(ph[0].metadata["evidence_role_required"], "LOCAL_GAIN")
+
+    def test_reviewed_manual_trial_seeds_both_channels_from_same_event(self):
+        event = self.event(
+            local=False,
+            source="MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
+        )
+        event.metadata.update(
+            {
+                "evidence_role": "LOCAL_GAIN",
+                "manual_evidence_review_approved": True,
+                "automatic_online_adaptation_allowed": False,
+            }
+        )
+        so2 = build_bootstrap_evidence(
+            [event], MFACReplayConfig(eta=0.1, mu=1.0)
+        )
+        ph = build_ph_bootstrap_evidence(
+            [event], PHReplayConfig(eta=0.1, mu=1.0)
+        )
+        self.assertEqual(len(so2), 1)
+        self.assertEqual(len(ph), 1)
+        self.assertEqual(so2[0].event_ids, ["E1"])
+        self.assertEqual(ph[0].event_ids, ["E1"])
+        self.assertLess(so2[0].phi_seed, 0.0)
+        self.assertGreater(ph[0].phi_seed, 0.0)
 
     def test_ph_safe_excursion_is_defense_in_depth_rejected(self):
         event = self.event(local=True, ph_out=True)
