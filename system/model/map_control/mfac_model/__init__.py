@@ -132,6 +132,11 @@ from .mfac_schema import (
     MFACRuntimeState,
     QbaseResult,
 )
+from .observed_timing_extraction_profile import (
+    OBSERVED_TIMING_EXTRACTION_PROFILE_VERSION,
+    ObservedTimingExtractionProfile,
+    load_observed_timing_extraction_profile,
+)
 from .observed_timing_extractor import (
     OBSERVED_TIMING_EXTRACTOR_VERSION,
     RESPONSE_TIMING_DEFINITION,
@@ -277,6 +282,7 @@ __all__ = [
     "CHANNEL_CONFIDENCE_EVIDENCE_VERSION",
     "CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION",
     "OBSERVED_TIMING_EXTRACTOR_VERSION",
+    "OBSERVED_TIMING_EXTRACTION_PROFILE_VERSION",
     "LOCAL_STEP_RAW_TRACE_VERSION",
     "DUAL_RESPONSE_ACTIVATION_REVIEW_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
@@ -353,6 +359,8 @@ __all__ = [
     "ObservedTimingExtractionResult",
     "extract_observed_timing_from_trace",
     "build_observed_response_timing_evidence",
+    "ObservedTimingExtractionProfile",
+    "load_observed_timing_extraction_profile",
     "LocalStepRawTracePoint",
     "LocalStepRawTraceBundle",
     "LocalStepRawTraceRecorder",
