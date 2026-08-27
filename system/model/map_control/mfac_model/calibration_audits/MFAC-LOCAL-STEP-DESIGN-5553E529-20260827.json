@@ -1,6 +1,6 @@
 {
   "semantics_version": "SCHEME2_LOCAL_STEP_IDENTIFICATION_V2_BASELINE_STABILITY",
-  "trial_protocol_version": "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V1_MANUAL_REVIEW",
+  "trial_protocol_version": "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V2_SINGLE_ACTION_BINDING",
   "trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
   "design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
   "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
@@ -129,6 +129,7 @@
     "SO2 response status is COMPLETED",
     "pH response status is COMPLETED",
     "SO2 and pH responses belong to the same actual-flow tracking event",
+    "safety summary belongs to the same approved trial",
     "actual positive delta-Q matches the approved test step within reviewed tolerance",
     "condition/context/target remain stable and there is no FAST overlap",
     "data quality remains valid",
@@ -148,7 +149,8 @@
     "action_source": "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
     "evidence_role": "LOCAL_GAIN",
     "automatic_online_adaptation_allowed": false,
-    "offline_bootstrap_evidence_allowed": true
+    "offline_bootstrap_evidence_allowed": true,
+    "return_to_baseline_learning_allowed": false
   },
   "execution_contract": {
     "proposal_only_until_human_approval": true,
