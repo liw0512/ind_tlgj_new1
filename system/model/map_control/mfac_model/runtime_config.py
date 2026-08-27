@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
 """Fail-closed configuration/builder for the formal Scheme-2 MFAC runtime.
 
-Plant calibration parameters live here, but plant *facts* do not. Supply-flow
-hard bounds/feedback mapping and pH safety/operating envelopes are owned only by
-``PLANT_CONFIG`` and are injected through ``mfac_plant_contract``. Runtime
-configuration is therefore unable to silently override those physical facts.
-
-Repository default remains ``enabled=False`` / ``DISABLED_UNCALIBRATED`` and
-production permission remains fixed at LEARN=0, Residual=0, DCS write=off.
+Plant facts stay in ``PLANT_CONFIG``. Runtime configuration owns only calibrated
+algorithm/dynamic parameters. The current repository default remains disabled,
+and production permission remains LEARN=0, Residual=0, DCS write=off.
 """
 
 from __future__ import annotations
@@ -23,22 +19,22 @@ from system.model.config.mfac_plant_contract import (
 )
 
 from .continuous_target import ContinuousTargetConfig
+from .flow_trajectory_planner import FlowTrajectoryPlannerConfig
 from .mfac_eligibility import MFACEligibilityConfig
 from .online_adaptation import MFACOnlineAdaptationConfig
+from .pending_dose_guard import PendingDoseGuardConfig
 from .ph_adaptation import PHOnlineAdaptationConfig
 from .ph_arbitration import PHResidualArbitrationConfig
 from .ph_response import PHResponseConfig
 from .process_response import ProcessResponseConfig
 from .residual_control import MFACResidualConfig
-from .runtime_coordinator import (
-    Scheme2RuntimeCoordinator,
-    Scheme2RuntimeCoordinatorConfig,
-)
+from .runtime_coordinator import Scheme2RuntimeCoordinator
 from .runtime_store import Scheme2RuntimeStore
 from .supply_flow_tracking import SupplyFlowTrackingConfig
+from .trajectory_coordinator import Scheme2TrajectoryShadowCoordinator
 
 
-MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V3_SINGLE_PATH_CONTRACT"
+MFAC_RUNTIME_CONFIG_VERSION = "SCHEME2_MFAC_RUNTIME_CONFIG_V4_PENDING_TRAJECTORY"
 DEFAULT_RUNTIME_DIR = MFAC_RUNTIME_DIR
 
 DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
@@ -51,8 +47,6 @@ DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "persist_runtime": True,
     "runtime_dir": str(DEFAULT_RUNTIME_DIR),
     "startup_setpoint_target": None,
-    # Plant-owned hard bounds must not be repeated here. Empty means derive
-    # entirely from PLANT_CONFIG.scheme2.target_supply_flow.
     "continuous_target": {},
     "tracking": {},
     "so2_response": {},
@@ -60,9 +54,13 @@ DEFAULT_MFAC_RUNTIME_CONFIG: Dict[str, Any] = {
     "residual": {},
     "ph_response": {},
     "ph_adaptation": {},
-    # Plant-owned safe/operating ranges and guard band are injected from the
-    # selected tower. Only algorithmic knobs such as min_confidence belong here.
     "ph_arbitration": {},
+    # Dynamic pH-memory calibration. These are intentionally empty until
+    # historical/field evidence freezes onset/peak/memory parameters.
+    "pending_dose": {},
+    # Staircase shaping parameters. Empty by default: no guessed production
+    # step size or hold duration is hidden in code.
+    "trajectory_planner": {},
     "eligibility": {},
 }
 
@@ -114,6 +112,18 @@ _REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
         "phi_lower_bound",
         "phi_upper_bound",
         "max_single_update_abs",
+    ),
+    "pending_dose": (
+        "flow_change_deadband",
+        "response_onset_seconds",
+        "response_peak_seconds",
+        "response_memory_seconds",
+        "max_sample_gap_seconds",
+    ),
+    "trajectory_planner": (
+        "max_step_up",
+        "max_step_down",
+        "min_hold_seconds",
     ),
 }
 
@@ -212,14 +222,7 @@ def _ph_arbitration_config(value: Mapping[str, Any]) -> PHResidualArbitrationCon
 def build_mfac_runtime(
     config: Optional[Mapping[str, Any]] = None,
 ) -> MFACRuntimeBuildResult:
-    """Build a calibrated Shadow coordinator or return an explicit safe state.
-
-    ``enabled=False`` is a normal production-safe state. When enabled, all
-    response/adaptation calibration fields must be explicit, while plant-owned
-    physical limits are resolved from ``PLANT_CONFIG`` and cannot be overridden
-    in this runtime mapping.
-    """
-
+    """Build the calibrated dual-response + trajectory Shadow runtime."""
     value = deepcopy(DEFAULT_MFAC_RUNTIME_CONFIG)
     if config is not None:
         for key, item in dict(config).items():
@@ -269,6 +272,12 @@ def build_mfac_runtime(
         ph_arbitration = _ph_arbitration_config(
             _as_mapping(value.get("ph_arbitration"), "ph_arbitration")
         )
+        pending_dose = PendingDoseGuardConfig(
+            **_as_mapping(value.get("pending_dose"), "pending_dose")
+        )
+        trajectory_planner = FlowTrajectoryPlannerConfig(
+            **_as_mapping(value.get("trajectory_planner"), "trajectory_planner")
+        )
         continuous_target = _continuous_target_config(
             _as_mapping(value.get("continuous_target"), "continuous_target")
         )
@@ -281,6 +290,7 @@ def build_mfac_runtime(
             raise ValueError("runtime_dir cannot be empty")
         persist_runtime = bool(value.get("persist_runtime", True))
         store = Scheme2RuntimeStore(runtime_dir, enabled=persist_runtime)
+        from .runtime_coordinator import Scheme2RuntimeCoordinatorConfig
         coordinator_config = Scheme2RuntimeCoordinatorConfig(
             tracking=tracking,
             response=so2_response,
@@ -295,9 +305,11 @@ def build_mfac_runtime(
             residual_control_enabled=False,
             persist_runtime=persist_runtime,
         )
-        coordinator = Scheme2RuntimeCoordinator(
+        coordinator = Scheme2TrajectoryShadowCoordinator(
             coordinator_config,
             store,
+            pending_dose_config=pending_dose,
+            trajectory_planner_config=trajectory_planner,
             startup_setpoint_target=value.get("startup_setpoint_target"),
         )
     except Exception as exc:
@@ -309,7 +321,7 @@ def build_mfac_runtime(
 
     return MFACRuntimeBuildResult(
         configured=True,
-        status="CONFIGURED_SHADOW",
+        status="CONFIGURED_TRAJECTORY_SHADOW",
         coordinator=coordinator,
     )
 
