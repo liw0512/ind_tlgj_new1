@@ -1,7 +1,7 @@
 """Canonical MFAC extension for the model-result monthly table.
 
 The base database schema is kept for non-breaking migration and still contains
-legacy ``slurry_policy_*`` compatibility columns.  This module adds the formal
+legacy ``slurry_policy_*`` compatibility columns. This module adds the formal
 ``mfac_*`` fields emitted by ``MFACUnifiedRuntimePolicy`` and is the schema used
 by ``Process4MapControlMFAC``.
 """
@@ -75,6 +75,8 @@ _MFAC_RESULT_FIELDS = OrderedDict([
     ("mfac_runtime_config_status", "varchar(64)"),
     ("mfac_runtime_config_error", "text"),
     ("mfac_runtime_configured", "boolean"),
+    ("mfac_runtime_config_version", "varchar(96)"),
+    ("mfac_runtime_config_missing_fields", "jsonb"),
 ])
 
 MFAC_MODEL_RESULT_FIELD_TYPES = OrderedDict(LEGACY_MODEL_RESULT_FIELD_TYPES)
