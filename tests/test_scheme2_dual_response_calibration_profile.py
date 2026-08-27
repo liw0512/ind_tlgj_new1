@@ -5,6 +5,9 @@ from system.model.map_control.mfac_model.channel_calibration_review import (
     ObservedResponseTimingEvidence,
     approve_channel_calibration,
 )
+from system.model.map_control.mfac_model.channel_confidence_evidence import (
+    ChannelConfidenceEvidence,
+)
 from system.model.map_control.mfac_model.dual_response_bootstrap import (
     build_dual_response_bootstrap_evidence,
 )
@@ -90,11 +93,51 @@ class Scheme2DualResponseCalibrationProfileTest(unittest.TestCase):
         )
 
     @classmethod
+    def confidence_evidence(cls, channel, timing=None, cohort_event_ids=None):
+        timing = timing or cls.timing(channel)
+        cohort_ids = tuple(cohort_event_ids or cls.EVENT_IDS)
+        return ChannelConfidenceEvidence(
+            evidence_id="CONF-%s" % channel,
+            channel=channel,
+            condition_snapshot_version="v001",
+            mfac_context_id="CTX",
+            cohort_review_id="COHORT-1",
+            timing_evidence_id=timing.evidence_id,
+            cohort_event_ids=cohort_ids,
+            timing_event_ids=tuple(timing.event_ids),
+            valid_event_count=len(cohort_ids),
+            required_valid_trials=len(cohort_ids),
+            independent_days=2,
+            required_independent_days=2,
+            event_count_sufficiency=1.0,
+            independent_day_sufficiency=1.0,
+            timing_coverage_ratio=float(len(timing.event_ids)) / float(len(cohort_ids)),
+            phi_relative_mad=0.05,
+            reviewed_phi_relative_mad_limit=0.10,
+            phi_max_relative_deviation=0.10,
+            reviewed_phi_max_relative_deviation_limit=0.20,
+            phi_mad_consistency_score=2.0 / 3.0,
+            phi_max_deviation_consistency_score=2.0 / 3.0,
+            conservative_confidence_candidate=min(
+                float(len(timing.event_ids)) / float(len(cohort_ids)),
+                2.0 / 3.0,
+            ),
+        )
+
+    @classmethod
     def review(cls, profile, channel):
+        timing = cls.timing(channel)
         result = approve_channel_calibration(
             profile,
             channel=channel,
-            timing_evidence=cls.timing(channel),
+            timing_evidence=timing,
+            confidence_evidence=cls.confidence_evidence(
+                channel,
+                timing,
+                profile.so2.evidence_event_ids
+                if channel == "SO2"
+                else profile.ph.evidence_event_ids,
+            ),
             response_config=cls.response_config(310.0 if channel == "SO2" else 190.0),
             confidence=0.8 if channel == "SO2" else 0.75,
             human_approved=True,
@@ -206,11 +249,13 @@ class Scheme2DualResponseCalibrationProfileTest(unittest.TestCase):
         config = self.response_config(310.0)
         config["observation_seconds"] = 30.0
         config["measurement_window_seconds"] = 60.0
+        timing = self.timing("SO2")
         with self.assertRaises(ValueError):
             approve_channel_calibration(
                 profile,
                 channel="SO2",
-                timing_evidence=self.timing("SO2"),
+                timing_evidence=timing,
+                confidence_evidence=self.confidence_evidence("SO2", timing),
                 response_config=config,
                 confidence=0.8,
                 human_approved=True,
@@ -236,6 +281,33 @@ class Scheme2DualResponseCalibrationProfileTest(unittest.TestCase):
                 profile,
                 channel="SO2",
                 timing_evidence=timing,
+                confidence_evidence=self.confidence_evidence(
+                    "SO2", timing, cohort_event_ids=("E1", "E2", "E3")
+                ),
+                response_config=self.response_config(310.0),
+                confidence=0.8,
+                human_approved=True,
+                reviewer_id="calibration-reviewer",
+                review_time="2026-08-27T17:30:00+08:00",
+            )
+
+    def test_confidence_evidence_must_bind_same_timing(self):
+        profile = DualResponseCalibrationProfile(
+            profile_id="P-CONF",
+            condition_snapshot_version="v001",
+            mfac_context_id="CTX",
+            so2=self.local_gain("SO2"),
+            ph=self.insufficient("PH"),
+        )
+        timing = self.timing("SO2")
+        confidence = self.confidence_evidence("SO2", timing)
+        object.__setattr__(confidence, "timing_evidence_id", "OTHER-TIMING")
+        with self.assertRaises(ValueError):
+            approve_channel_calibration(
+                profile,
+                channel="SO2",
+                timing_evidence=timing,
+                confidence_evidence=confidence,
                 response_config=self.response_config(310.0),
                 confidence=0.8,
                 human_approved=True,
@@ -306,6 +378,7 @@ class Scheme2DualResponseCalibrationProfileTest(unittest.TestCase):
         self.assertFalse(restored.ph_calibrated)
         self.assertEqual(restored.metadata["review_note"], "test")
         self.assertTrue(restored.so2.metadata["calibration_review_approved"])
+        self.assertTrue(restored.so2.metadata["confidence_evidence_id"])
 
 
 if __name__ == "__main__":
