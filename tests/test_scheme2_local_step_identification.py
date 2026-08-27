@@ -23,9 +23,12 @@ class Scheme2LocalStepIdentificationTest(unittest.TestCase):
                 min_quiet_seconds=1800.0,
                 min_candidate_interval_seconds=3600.0,
                 max_abs_actual_minus_qbase=1.0,
-                max_abs_qbase_drift=1.0,
+                max_actual_flow_baseline_range=1.0,
+                max_abs_qbase_drift=2.0,
+                max_relative_qbase_drift=0.06,
                 max_abs_inlet_so2_change=50.0,
                 max_outlet_so2_baseline_range=2.0,
+                max_ph_baseline_range=0.05,
             ),
             ContinuousTargetConfig(
                 hard_min_supply_flow=0.0,
@@ -55,9 +58,12 @@ class Scheme2LocalStepIdentificationTest(unittest.TestCase):
             "mfac_context_id": "CTX",
             "seconds_since_last_supply_action": 2400.0,
             "seconds_since_last_identification": 7200.0,
+            "actual_flow_baseline_range": 0.4,
             "qbase_drift": 0.2,
+            "qbase_relative_drift": 0.01,
             "inlet_so2_change": 20.0,
             "outlet_so2_baseline_range": 1.0,
+            "ph_baseline_range": 0.02,
             "fast_active": False,
             "data_quality_ok": True,
             "equipment_changed": False,
@@ -113,6 +119,25 @@ class Scheme2LocalStepIdentificationTest(unittest.TestCase):
                 values[key] = True
                 result = self.gate().propose(**values)
                 self.assertEqual(result.status, "BLOCKED")
+
+    def test_unstable_baseline_channels_block_identification(self):
+        cases = {
+            "actual_flow_baseline_range": "ACTUAL_FLOW_BASELINE_NOT_STABLE",
+            "qbase_relative_drift": "QBASE_RELATIVE_DRIFT_TOO_LARGE",
+            "ph_baseline_range": "PH_BASELINE_NOT_STABLE",
+        }
+        bad_values = {
+            "actual_flow_baseline_range": 2.0,
+            "qbase_relative_drift": 0.20,
+            "ph_baseline_range": 0.20,
+        }
+        for field, reason in cases.items():
+            with self.subTest(field=field):
+                values = self.inputs()
+                values[field] = bad_values[field]
+                result = self.gate().propose(**values)
+                self.assertEqual(result.status, "BLOCKED")
+                self.assertIn(reason, result.reasons)
 
     def test_gate_exposes_no_execution_api(self):
         gate = self.gate()
