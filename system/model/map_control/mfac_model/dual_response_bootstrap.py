@@ -2,7 +2,7 @@
 """Bind Scheme-2 SO2 and pH bootstrap evidence to the same physical cohort.
 
 The independent bootstrap trainers remain responsible for channel-specific
-seed/replay calculations.  This module adds the missing cross-channel contract:
+seed/replay calculations. This module adds the missing cross-channel contract:
 manual LOCAL_GAIN bootstrap is valid only when both channels consume exactly the
 same cohort-approved event IDs under the same condition snapshot/context.
 
@@ -174,16 +174,14 @@ def build_dual_response_bootstrap_evidence(
     rejections: List[DualResponseBootstrapRejection] = list(immediate_rejections)
 
     for (snapshot, context), group in sorted(groups.items()):
-        ordered_input_ids = tuple(
-            event.event_id
-            for event in sorted(group, key=lambda item: str(item.action_start_time or ""))
-        )
+        input_ids = tuple(str(event.event_id or "") for event in group)
+        input_id_set = set(input_ids)
         reasons: List[str] = []
         if not snapshot:
             reasons.append("CONDITION_SNAPSHOT_REQUIRED")
         if not context:
             reasons.append("MFAC_CONTEXT_REQUIRED")
-        if len(set(ordered_input_ids)) != len(ordered_input_ids):
+        if len(input_id_set) != len(input_ids):
             reasons.append("DUPLICATE_EVENT_ID")
 
         so2_evidence = build_bootstrap_evidence(group, so2_replay_config)
@@ -198,40 +196,53 @@ def build_dual_response_bootstrap_evidence(
         ph = ph_evidence[0] if len(ph_evidence) == 1 else None
 
         if so2 is not None:
-            if tuple(so2.event_ids) != ordered_input_ids:
+            if (
+                len(so2.event_ids) != len(input_ids)
+                or set(so2.event_ids) != input_id_set
+            ):
                 reasons.append("SO2_EVENT_SET_DIFFERS_FROM_INPUT_COHORT")
             if so2.rejected_replay_event_ids:
                 reasons.append("SO2_REPLAY_REJECTED_EVENT")
             if so2.phi_seed >= 0.0 or so2.phi_replayed >= 0.0:
                 reasons.append("SO2_BOOTSTRAP_DIRECTION_INVALID")
         if ph is not None:
-            if tuple(ph.event_ids) != ordered_input_ids:
+            if (
+                len(ph.event_ids) != len(input_ids)
+                or set(ph.event_ids) != input_id_set
+            ):
                 reasons.append("PH_EVENT_SET_DIFFERS_FROM_INPUT_COHORT")
             if ph.rejected_replay_event_ids:
                 reasons.append("PH_REPLAY_REJECTED_EVENT")
             if ph.phi_seed <= 0.0 or ph.phi_replayed <= 0.0:
                 reasons.append("PH_BOOTSTRAP_DIRECTION_INVALID")
 
+        bound_event_ids: Tuple[str, ...] = ()
         if so2 is not None and ph is not None:
             if tuple(so2.event_ids) != tuple(ph.event_ids):
-                reasons.append("SO2_PH_EVENT_SET_MISMATCH")
+                reasons.append("SO2_PH_EVENT_ORDER_MISMATCH")
+            else:
+                bound_event_ids = tuple(so2.event_ids)
             if so2.valid_event_count != ph.valid_event_count:
                 reasons.append("SO2_PH_EVENT_COUNT_MISMATCH")
             if so2.independent_days != ph.independent_days:
                 reasons.append("SO2_PH_INDEPENDENT_DAYS_MISMATCH")
 
         reasons = list(dict.fromkeys(reasons))
+        rejection_ids = bound_event_ids or tuple(sorted(input_id_set))
         if reasons:
             rejections.append(
                 DualResponseBootstrapRejection(
                     condition_snapshot_version=snapshot,
                     mfac_context_id=context,
-                    event_ids=ordered_input_ids,
+                    event_ids=rejection_ids,
                     reasons=tuple(reasons),
                     metadata={
                         "same_physical_cohort_required": True,
+                        "input_event_ids": list(input_ids),
                         "so2_event_ids": list(so2.event_ids) if so2 is not None else [],
                         "ph_event_ids": list(ph.event_ids) if ph is not None else [],
+                        "input_order_is_not_authority": True,
+                        "channel_time_order_must_match": True,
                     },
                 )
             )
@@ -241,7 +252,7 @@ def build_dual_response_bootstrap_evidence(
             DualResponseBootstrapBundle(
                 condition_snapshot_version=snapshot,
                 mfac_context_id=context,
-                event_ids=ordered_input_ids,
+                event_ids=bound_event_ids,
                 valid_event_count=so2.valid_event_count,
                 independent_days=so2.independent_days,
                 so2=so2,
@@ -254,6 +265,8 @@ def build_dual_response_bootstrap_evidence(
                 metadata={
                     "same_physical_cohort": True,
                     "same_event_ids_for_so2_and_ph": True,
+                    "input_order_is_not_authority": True,
+                    "channel_time_order_must_match": True,
                     "manual_cohort_review_required_upstream": True,
                     "bootstrap_profile_review_required_downstream": True,
                     "normal_runtime_activation_allowed": False,
