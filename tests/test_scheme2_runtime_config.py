@@ -7,6 +7,7 @@ from system.model.config.mfac_plant_contract import (
 )
 from system.model.map_control.mfac_model.runtime_config import (
     DEFAULT_MFAC_RUNTIME_CONFIG,
+    MFAC_RUNTIME_CONFIG_VERSION,
     build_mfac_runtime,
 )
 from system.model.map_control.mfac_model.trajectory_coordinator import (
@@ -76,11 +77,11 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
             },
             # Test-only synthetic timings; production repository keeps these
             # sections empty until historical/field calibration is reviewed.
+            # Pending owns only onset -> peak, not pulse recovery memory.
             "pending_dose": {
                 "flow_change_deadband": 1.0,
                 "response_onset_seconds": 10.0,
                 "response_peak_seconds": 30.0,
-                "response_memory_seconds": 60.0,
                 "max_sample_gap_seconds": 15.0,
                 "min_confidence": 0.5,
             },
@@ -97,6 +98,10 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
         self.assertEqual(
             DEFAULT_MFAC_RUNTIME_CONFIG["status"],
             "DISABLED_UNCALIBRATED",
+        )
+        self.assertEqual(
+            MFAC_RUNTIME_CONFIG_VERSION,
+            "SCHEME2_MFAC_RUNTIME_CONFIG_V5_PENDING_RISE_ONLY",
         )
         for section in (
             "tracking",
@@ -123,6 +128,7 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
         self.assertIn("so2_response.delay_onset_seconds", result.missing_fields)
         self.assertIn("ph_response.delay_onset_seconds", result.missing_fields)
         self.assertIn("pending_dose.response_peak_seconds", result.missing_fields)
+        self.assertNotIn("pending_dose.response_memory_seconds", result.missing_fields)
         self.assertIn("trajectory_planner.max_step_up", result.missing_fields)
         self.assertNotIn("ph_arbitration.safe_min", result.missing_fields)
 
@@ -176,6 +182,35 @@ class Scheme2RuntimeConfigTest(unittest.TestCase):
             self.assertIsNotNone(coordinator.ph_arbiter)
             self.assertIsNotNone(coordinator.pending_dose_guard)
             self.assertIsNotNone(coordinator.trajectory_planner)
+            self.assertFalse(
+                coordinator.pending_dose_guard.config.response_memory_seconds
+                is not None
+            )
+
+    def test_legacy_pending_response_memory_is_audit_compatibility_only(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = self.complete_config(root)
+            config["pending_dose"]["response_memory_seconds"] = 3600.0
+            result = build_mfac_runtime(config)
+            self.assertTrue(result.configured)
+            pending = result.coordinator.pending_dose_guard.config
+            self.assertEqual(pending.response_memory_seconds, 3600.0)
+            self.assertEqual(pending.response_peak_seconds, 30.0)
+            self.assertEqual(pending.effective_audit_volume_window_seconds, 3600.0)
+
+    def test_pending_runtime_rejects_recovery_memory_authority(self):
+        for field in (
+            "recovery_memory_seconds",
+            "response_recovery_seconds",
+            "half_decay_seconds",
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as root:
+                config = self.complete_config(root)
+                config["pending_dose"][field] = 1800.0
+                result = build_mfac_runtime(config)
+                self.assertFalse(result.configured)
+                self.assertEqual(result.status, "INVALID_CALIBRATION_CONFIG")
+                self.assertIn("cannot own pulse recovery/quiet fields", result.error)
 
     def test_runtime_cannot_override_plant_owned_target_bounds(self):
         with tempfile.TemporaryDirectory() as root:
