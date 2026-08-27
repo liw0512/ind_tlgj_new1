@@ -2,9 +2,9 @@
 """Typed review boundary for manual LOCAL_GAIN identification design artifacts.
 
 Historical/review-candidate values are intentionally separated from reviewed
-site values.  This module can build manual-only proposal/trial configs only
-when every required reviewed field is present and the design status explicitly
-states that manual identification has been reviewed.  It never activates the
+site values. This module can build manual-only proposal/trial configs only when
+every required reviewed field is present and the design status explicitly
+states that manual identification has been reviewed. It never activates the
 normal MFAC runtime and never enables DCS write.
 """
 
@@ -13,14 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Tuple, Union
 
 from .local_step_identification import LocalStepIdentificationConfig
 from .local_step_trial_protocol import LocalStepTrialProtocolConfig
 
 
 LOCAL_STEP_DESIGN_PROFILE_VERSION = (
-    "SCHEME2_LOCAL_STEP_DESIGN_PROFILE_V1_REVIEW_BOUNDARY"
+    "SCHEME2_LOCAL_STEP_DESIGN_PROFILE_V2_PERMISSION_HARDENED"
 )
 
 
@@ -70,6 +70,10 @@ class LocalStepIdentificationDesignProfile:
     design_id: str
     status: str
     activation_status: str
+    automatic_execution_allowed: bool = False
+    automatic_escalation_allowed: bool = False
+    dcs_write_enabled: bool = False
+    learning_permission: bool = False
     review_candidate_parameters: Dict[str, Any] = field(default_factory=dict)
     reviewed_parameters: Dict[str, Any] = field(default_factory=dict)
     trial_matrix: Dict[str, Any] = field(default_factory=dict)
@@ -81,6 +85,17 @@ class LocalStepIdentificationDesignProfile:
             raise ValueError("design_id is required")
         if str(self.activation_status) != "NOT_ACTIVATABLE":
             raise ValueError("local-step design must remain NOT_ACTIVATABLE")
+        protected_flags = {
+            "automatic_execution_allowed": self.automatic_execution_allowed,
+            "automatic_escalation_allowed": self.automatic_escalation_allowed,
+            "dcs_write_enabled": self.dcs_write_enabled,
+            "learning_permission": self.learning_permission,
+        }
+        enabled = [name for name, value in protected_flags.items() if bool(value)]
+        if enabled:
+            raise ValueError(
+                "manual local-step design cannot enable: %s" % ",".join(enabled)
+            )
 
     @property
     def required_reviewed_keys(self) -> Tuple[str, ...]:
@@ -105,6 +120,10 @@ class LocalStepIdentificationDesignProfile:
             self.reviewed_complete
             and str(self.status) == "REVIEWED_MANUAL_ONLY"
             and str(self.activation_status) == "NOT_ACTIVATABLE"
+            and not self.automatic_execution_allowed
+            and not self.automatic_escalation_allowed
+            and not self.dcs_write_enabled
+            and not self.learning_permission
         )
 
     def build_manual_trial_configs(self) -> LocalStepManualConfigs:
@@ -182,6 +201,14 @@ class LocalStepIdentificationDesignProfile:
             design_id=str(data.get("design_id") or ""),
             status=str(data.get("status") or ""),
             activation_status=str(data.get("activation_status") or ""),
+            automatic_execution_allowed=bool(
+                data.get("automatic_execution_allowed", False)
+            ),
+            automatic_escalation_allowed=bool(
+                data.get("automatic_escalation_allowed", False)
+            ),
+            dcs_write_enabled=bool(data.get("dcs_write_enabled", False)),
+            learning_permission=bool(data.get("learning_permission", False)),
             review_candidate_parameters=dict(
                 data.get("review_candidate_parameters") or {}
             ),
@@ -190,20 +217,14 @@ class LocalStepIdentificationDesignProfile:
             metadata={
                 "source_profile_id": data.get("source_profile_id"),
                 "source_semantics_version": data.get("semantics_version"),
-                "automatic_execution_allowed": data.get(
-                    "automatic_execution_allowed"
-                ),
-                "automatic_escalation_allowed": data.get(
-                    "automatic_escalation_allowed"
-                ),
-                "dcs_write_enabled": data.get("dcs_write_enabled"),
-                "learning_permission": data.get("learning_permission"),
+                "trial_protocol_version": data.get("trial_protocol_version"),
+                "trial_matrix_version": data.get("trial_matrix_version"),
             },
         )
 
 
 def load_local_step_design_profile(
-    path: str | Path,
+    path: Union[str, Path],
 ) -> LocalStepIdentificationDesignProfile:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
