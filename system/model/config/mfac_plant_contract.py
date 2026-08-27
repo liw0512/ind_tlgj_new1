@@ -58,9 +58,10 @@ def primary_tower_contract(
 ) -> Dict[str, Any]:
     """Resolve the tower associated with the canonical supply-flow feedback.
 
-    If exactly one enabled tower exists it is accepted directly. With multiple
-    enabled towers the supply-flow feedback column must identify exactly one
-    tower, otherwise formal MFAC startup fails closed instead of guessing.
+    The configured feedback column must match exactly one enabled tower whenever
+    tower ``supply_flows`` are declared. A single enabled tower is only accepted
+    without a match when it has no explicit supply-flow mapping at all. This
+    prevents two descriptions of the same physical signal from drifting silently.
     """
     plant = dict(plant_config or PLANT_CONFIG)
     target = target_supply_flow_contract(plant)
@@ -74,18 +75,28 @@ def primary_tower_contract(
         raise ValueError("PLANT_CONFIG requires at least one enabled tower")
 
     matches = []
+    tower_flow_columns: Dict[str, set[str]] = {}
     for tower in towers:
+        tower_id = str(tower.get("tower_id") or "").strip()
         flow_columns = {
             str(item.get("column") or "").strip()
             for item in tower.get("supply_flows", []) or []
+            if str(item.get("column") or "").strip()
         }
+        tower_flow_columns[tower_id] = flow_columns
         if feedback_column in flow_columns:
             matches.append(tower)
 
     if len(matches) == 1:
         tower = matches[0]
-    elif len(towers) == 1:
-        tower = towers[0]
+    elif len(matches) == 0 and len(towers) == 1:
+        only_tower = towers[0]
+        only_id = str(only_tower.get("tower_id") or "").strip()
+        if tower_flow_columns.get(only_id):
+            raise ValueError(
+                "target supply-flow feedback_column does not match primary tower supply_flows"
+            )
+        tower = only_tower
     else:
         raise ValueError(
             "target supply-flow feedback must identify exactly one enabled tower"
