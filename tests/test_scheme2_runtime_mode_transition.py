@@ -58,8 +58,20 @@ class Scheme2RuntimeModeTransitionTest(unittest.TestCase):
                 "phi_upper_bound": 1.0,
                 "max_single_update_abs": 0.1,
             },
-            # Plant-owned pH ranges/guard band are derived by the builder.
             "ph_arbitration": {},
+            # Synthetic test values only; production remains uncalibrated.
+            "pending_dose": {
+                "flow_change_deadband": 1.0,
+                "response_onset_seconds": 10.0,
+                "response_peak_seconds": 30.0,
+                "response_memory_seconds": 60.0,
+                "max_sample_gap_seconds": 15.0,
+            },
+            "trajectory_planner": {
+                "max_step_up": 2.0,
+                "max_step_down": 3.0,
+                "min_hold_seconds": 20.0,
+            },
         }
 
     @staticmethod
@@ -95,6 +107,7 @@ class Scheme2RuntimeModeTransitionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             built = build_mfac_runtime(self.calibrated_config(root))
             self.assertTrue(built.configured)
+            self.assertEqual(built.status, "CONFIGURED_TRAJECTORY_SHADOW")
             policy.configure_runtime_coordinator(built.coordinator)
 
             invalid = self.valid_row()
