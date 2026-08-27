@@ -7,12 +7,11 @@ from system.model.map_control.condition_model.online_condition_policy_bridge imp
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )
-from system.model.map_control.mfac_model.primary_runtime import (
-    MFACUnifiedRuntimePolicy,
-)
-from system.model.map_control.mfac_model.process_response import (
-    ProcessResponseConfig,
-)
+from system.model.map_control.mfac_model.ph_adaptation import PHOnlineAdaptationConfig
+from system.model.map_control.mfac_model.ph_arbitration import PHResidualArbitrationConfig
+from system.model.map_control.mfac_model.ph_response import PHResponseConfig
+from system.model.map_control.mfac_model.primary_runtime import MFACUnifiedRuntimePolicy
+from system.model.map_control.mfac_model.process_response import ProcessResponseConfig
 from system.model.map_control.mfac_model.residual_control import MFACResidualConfig
 from system.model.map_control.mfac_model.runtime_coordinator import (
     Scheme2RuntimeCoordinator,
@@ -45,7 +44,35 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
         }
 
     @staticmethod
-    def config(*, learning=False, residual=False):
+    def config(*, learning=False, residual=False, dual=True):
+        kwargs = {}
+        if dual:
+            kwargs.update(
+                ph_response=PHResponseConfig(
+                    baseline_window_seconds=20.0,
+                    delay_onset_seconds=5.0,
+                    observation_seconds=15.0,
+                    measurement_window_seconds=5.0,
+                    max_sample_gap_seconds=15.0,
+                    target_change_tolerance=0.0,
+                    min_baseline_samples=2,
+                    min_response_samples=2,
+                ),
+                ph_online_adaptation=PHOnlineAdaptationConfig(
+                    eta=0.2,
+                    mu=1.0,
+                    phi_lower_bound=0.01,
+                    phi_upper_bound=1.0,
+                    max_single_update_abs=0.1,
+                ),
+                ph_arbitration=PHResidualArbitrationConfig(
+                    operating_min=5.4,
+                    operating_max=6.2,
+                    safe_min=5.0,
+                    safe_max=6.5,
+                    guard_band=0.1,
+                ),
+            )
         return Scheme2RuntimeCoordinatorConfig(
             tracking=SupplyFlowTrackingConfig(
                 target_change_deadband=0.5,
@@ -79,6 +106,7 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
             ),
             learning_enabled=learning,
             residual_control_enabled=residual,
+            **kwargs,
         )
 
     def coordinator(self, root, **flags):
@@ -92,7 +120,6 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
             active_pointer={"integrated_version": "v001"}
         )
         decision = policy.evaluate(self.row(), target=20.0)
-
         self.assertEqual(decision["runtime_mode"], "SAFE_PRIMARY_FALLBACK")
         self.assertIsNone(decision["runtime_cycle"])
         self.assertTrue(decision["qbase_valid"])
@@ -106,20 +133,18 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
         self.assertFalse(decision["debug"]["duplicate_runtime_path"])
         self.assertEqual(decision["residual_mfac_hold"], 0.0)
 
-    def test_coordinator_becomes_unique_target_owner(self):
+    def test_dual_response_coordinator_becomes_unique_target_owner(self):
         with tempfile.TemporaryDirectory() as root:
             coordinator = self.coordinator(root)
             policy = MFACUnifiedRuntimePolicy(
                 active_pointer={"integrated_version": "v001"}
             )
             policy.configure_runtime_coordinator(coordinator)
-
             decision = policy.evaluate(
                 self.row(),
                 target=20.0,
                 execution_context={"data_quality_ok": False},
             )
-
             self.assertEqual(decision["runtime_mode"], "COORDINATOR_SHADOW")
             self.assertIsNotNone(decision["runtime_cycle"])
             self.assertAlmostEqual(
@@ -136,6 +161,18 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
             self.assertEqual(tracking[0]["status"], "NOT_APPLIED")
             self.assertFalse(tracking[0]["target_was_applied"])
 
+    def test_single_response_coordinator_is_not_formal_runtime(self):
+        with tempfile.TemporaryDirectory() as root:
+            coordinator = Scheme2RuntimeCoordinator(
+                self.config(dual=False),
+                Scheme2RuntimeStore(root),
+            )
+            policy = MFACUnifiedRuntimePolicy(
+                active_pointer={"integrated_version": "v001"}
+            )
+            with self.assertRaises(ValueError):
+                policy.configure_runtime_coordinator(coordinator)
+
     def test_unsafe_coordinator_is_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             policy = MFACUnifiedRuntimePolicy(
@@ -150,7 +187,7 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
                     self.coordinator(root + "/residual", residual=True)
                 )
 
-    def test_bridge_reattaches_coordinator_to_hot_reload_candidate(self):
+    def test_bridge_reattaches_dual_coordinator_to_hot_reload_candidate(self):
         with tempfile.TemporaryDirectory() as root:
             coordinator = self.coordinator(root)
             bridge = SlurryPolicyOnlineBridge(
@@ -175,7 +212,7 @@ class Scheme2UnifiedPrimaryRuntimeTest(unittest.TestCase):
             self.assertIs(bridge.policy.runtime_coordinator, coordinator)
             self.assertEqual(bridge.status()["runtime_mode"], "COORDINATOR_SHADOW")
 
-    def test_bridge_outputs_mfac_and_legacy_compatibility_from_same_decision(self):
+    def test_bridge_outputs_mfac_and_legacy_alias_from_same_decision(self):
         bridge = SlurryPolicyOnlineBridge(
             {
                 "enabled": True,
