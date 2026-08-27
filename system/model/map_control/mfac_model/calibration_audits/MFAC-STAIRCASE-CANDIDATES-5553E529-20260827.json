@@ -11,12 +11,14 @@
   "historical_support": {
     "flow_semantics": "EXTRA_FLOW_ABOVE_EVENT_BASELINE",
     "source_event_count": 725,
-    "sustained_extra_flow_p05_m3_h": 57.877,
-    "sustained_extra_flow_p95_m3_h": 88.106,
+    "absolute_running_flow_p05_m3_h_audit_only": 57.8768,
+    "absolute_running_flow_p95_m3_h_audit_only": 88.1057,
+    "sustained_extra_flow_p05_m3_h": 51.0720,
+    "sustained_extra_flow_p95_m3_h": 86.3891,
     "action_duration_p05_seconds": 320.0,
     "action_duration_p95_seconds": 730.0,
     "max_observed_proactive_advance_seconds": 0.0,
-    "interpretation": "Candidate shapes outside this support may be explored by a replay model but cannot become step-calibration evidence."
+    "interpretation": "Candidate stage levels are extra flow above baseline, so support gating uses sustained extra-flow quantiles rather than absolute running flow. Out-of-support candidates may be explored but cannot become step-calibration evidence."
   },
   "candidates": [
     {
@@ -37,11 +39,7 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     },
     {
@@ -62,11 +60,7 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     },
     {
@@ -87,11 +81,7 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     },
     {
@@ -113,11 +103,7 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     },
     {
@@ -137,19 +123,13 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     },
     {
       "candidate_id": "FLAT_30_ADV10",
       "advance_seconds": 600.0,
-      "stages": [
-        {"extra_flow_m3_h": 30.0, "hold_seconds": 913.0550}
-      ],
+      "stages": [{"extra_flow_m3_h": 30.0, "hold_seconds": 913.0550}],
       "total_extra_volume_m3": 7.60879,
       "peak_extra_flow_m3_h": 30.0,
       "status": "EXPLORATION_ONLY_OUT_OF_HISTORICAL_SUPPORT",
@@ -160,24 +140,11 @@
         "proactive_advance_supported": false,
         "extrapolation_required": true,
         "eligible_for_step_calibration_evidence": false,
-        "reasons": [
-          "SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT",
-          "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT",
-          "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"
-        ]
+        "reasons": ["SUSTAINED_EXTRA_FLOW_OUT_OF_HISTORICAL_SUPPORT", "TOTAL_DURATION_OUT_OF_HISTORICAL_SUPPORT", "PROACTIVE_ADVANCE_OUT_OF_HISTORICAL_SUPPORT"]
       }
     }
   ],
-  "required_scoring_metrics": [
-    "outlet_so2_peak",
-    "outlet_so2_exceedance_seconds",
-    "outlet_so2_integral_error",
-    "ph_peak",
-    "ph_over_operating_max_seconds",
-    "ph_over_safe_max_seconds",
-    "max_supply_flow_m3_h",
-    "total_extra_volume_m3"
-  ],
+  "required_scoring_metrics": ["outlet_so2_peak", "outlet_so2_exceedance_seconds", "outlet_so2_integral_error", "ph_peak", "ph_over_operating_max_seconds", "ph_over_safe_max_seconds", "max_supply_flow_m3_h", "total_extra_volume_m3"],
   "ranking_policy": "SAFETY_FIRST_THEN_SO2_EXCEEDANCE_THEN_SLURRY_VOLUME",
   "notes": [
     "No candidate is a runtime step limit.",
