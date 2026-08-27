@@ -79,6 +79,12 @@ from .residual_control import (
     MFACResidualHoldDecision,
     MFACResidualHoldManager,
 )
+from .runtime_config import (
+    DEFAULT_MFAC_RUNTIME_CONFIG,
+    MFAC_RUNTIME_CONFIG_VERSION,
+    MFACRuntimeBuildResult,
+    build_mfac_runtime,
+)
 from .runtime_store import (
     SCHEME2_RUNTIME_STORE_VERSION,
     Scheme2RuntimeRestore,
@@ -101,6 +107,7 @@ from .supply_flow_tracking import (
 __all__ = [
     "MFAC_SEMANTICS_VERSION",
     "MFAC_PRIMARY_RUNTIME_VERSION",
+    "MFAC_RUNTIME_CONFIG_VERSION",
     "CONTINUOUS_TARGET_SEMANTICS_VERSION",
     "SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION",
     "PROCESS_RESPONSE_SEMANTICS_VERSION",
@@ -113,6 +120,9 @@ __all__ = [
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
     "COUNTERFACTUAL_SHADOW",
     "ONLINE_SHADOW",
+    "DEFAULT_MFAC_RUNTIME_CONFIG",
+    "MFACRuntimeBuildResult",
+    "build_mfac_runtime",
     "ActionResponseEvent",
     "DelayProfile",
     "MFACBootstrapProfile",
