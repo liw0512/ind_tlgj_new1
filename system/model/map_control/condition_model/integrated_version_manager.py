@@ -22,6 +22,9 @@ from system.model.map_control.condition_model.condition_config import (
 )
 from system.model.map_control.condition_model.condition_schema import ConditionSnapshot
 from system.model.map_control.condition_model.snapshot_io import read_snapshot
+from system.model.map_control.mfac_model.mfac_primary_config import (
+    MFAC_ACTIVE_VERSION_FILE,
+)
 
 
 class IntegratedVersionError(RuntimeError):
@@ -222,6 +225,13 @@ class IntegratedVersionManager:
         self.config = dict(config or {})
         self.enabled = bool(self.config.get("enabled", True))
         active_path = str(self.config.get("active_version_file", "")).strip()
+        normalized_active_path = active_path.replace("\\", "/").lower()
+        self._legacy_active_path_redirected = bool(
+            active_path and "slurry_policy_model_output" in normalized_active_path
+        )
+        if self._legacy_active_path_redirected:
+            active_path = str(MFAC_ACTIVE_VERSION_FILE)
+            self.config["active_version_file"] = active_path
         if self.enabled and not active_path:
             raise IntegratedVersionError(
                 "integrated_version.active_version_file 不能为空"
@@ -444,5 +454,10 @@ class IntegratedVersionManager:
             "version_switch_time": self._last_switch_time or "",
             "version_switch_error": self._switch_error or "",
             "active_version_file": str(self.active_file),
+            "active_version_path_source": (
+                "MFAC_PRIMARY_ARTIFACT_CONFIG"
+                if self._legacy_active_path_redirected
+                else "EXPLICIT_CONFIG"
+            ),
             "second_module_backend": "MFAC",
         }
