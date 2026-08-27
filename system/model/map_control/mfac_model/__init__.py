@@ -91,6 +91,12 @@ from .local_step_observation_profile import (
     LocalStepObservationProfile,
     load_local_step_observation_profile,
 )
+from .local_step_raw_trace import (
+    LOCAL_STEP_RAW_TRACE_VERSION,
+    LocalStepRawTraceBundle,
+    LocalStepRawTracePoint,
+    LocalStepRawTraceRecorder,
+)
 from .local_step_session_readiness import (
     LOCAL_STEP_SESSION_READINESS_VERSION,
     LocalStepSessionReadiness,
@@ -271,6 +277,7 @@ __all__ = [
     "CHANNEL_CONFIDENCE_EVIDENCE_VERSION",
     "CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION",
     "OBSERVED_TIMING_EXTRACTOR_VERSION",
+    "LOCAL_STEP_RAW_TRACE_VERSION",
     "DUAL_RESPONSE_ACTIVATION_REVIEW_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "PH_ARBITRATION_SEMANTICS_VERSION",
@@ -346,6 +353,9 @@ __all__ = [
     "ObservedTimingExtractionResult",
     "extract_observed_timing_from_trace",
     "build_observed_response_timing_evidence",
+    "LocalStepRawTracePoint",
+    "LocalStepRawTraceBundle",
+    "LocalStepRawTraceRecorder",
     "DualResponseActivationPrerequisites",
     "DualResponseActivationReadiness",
     "evaluate_dual_response_activation_readiness",
