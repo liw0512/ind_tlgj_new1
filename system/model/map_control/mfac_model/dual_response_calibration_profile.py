@@ -1,0 +1,322 @@
+# -*- coding: utf-8 -*-
+"""Fail-closed calibration profile for Scheme-2 SO2 + pH response channels.
+
+This profile separates local-gain evidence from full channel calibration.  A
+channel may have a reviewed bootstrap gain while still lacking reviewed timing,
+confidence or response-window parameters.  SO2 and pH statuses are independent.
+
+The profile is deliberately non-activating in this stage: even two CALIBRATED
+channels cannot enable learning, residual control or DCS write without a later,
+separate activation artifact.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+import math
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+from .dual_response_bootstrap import DualResponseBootstrapBundle
+from .mfac_schema import DelayProfile
+
+
+DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
+    "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V1_FAIL_CLOSED"
+)
+
+CHANNEL_UNCONFIGURED = "UNCONFIGURED"
+CHANNEL_INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+CHANNEL_REVIEW_REQUIRED = "REVIEW_REQUIRED"
+CHANNEL_LOCAL_GAIN_READY = "LOCAL_GAIN_READY"
+CHANNEL_CALIBRATED = "CALIBRATED"
+
+_ALLOWED_CHANNEL_STATUSES = {
+    CHANNEL_UNCONFIGURED,
+    CHANNEL_INSUFFICIENT_EVIDENCE,
+    CHANNEL_REVIEW_REQUIRED,
+    CHANNEL_LOCAL_GAIN_READY,
+    CHANNEL_CALIBRATED,
+}
+
+_REQUIRED_RESPONSE_KEYS: Tuple[str, ...] = (
+    "baseline_window_seconds",
+    "delay_onset_seconds",
+    "observation_seconds",
+    "measurement_window_seconds",
+    "max_sample_gap_seconds",
+    "target_change_tolerance",
+    "min_baseline_samples",
+    "min_response_samples",
+)
+
+
+def _finite(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _valid_confidence(value: Optional[float]) -> bool:
+    if value is None:
+        return False
+    number = _finite(value)
+    return number is not None and 0.0 <= number <= 1.0
+
+
+@dataclass(frozen=True)
+class DualResponseChannelCalibration:
+    channel: str
+    status: str
+    phi_prior: Optional[float] = None
+    phi_live0: Optional[float] = None
+    confidence: Optional[float] = None
+    valid_event_count: int = 0
+    independent_days: int = 0
+    delay_profile: DelayProfile = field(default_factory=DelayProfile)
+    response_config: Dict[str, Any] = field(default_factory=dict)
+    evidence_event_ids: Tuple[str, ...] = ()
+    reason_codes: Tuple[str, ...] = ()
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        channel = str(self.channel or "").upper()
+        if channel not in {"SO2", "PH"}:
+            raise ValueError("channel must be SO2 or PH")
+        if self.status not in _ALLOWED_CHANNEL_STATUSES:
+            raise ValueError("unsupported channel calibration status")
+        if int(self.valid_event_count) < 0 or int(self.independent_days) < 0:
+            raise ValueError("event/day counts must be >= 0")
+
+        phi_prior = _finite(self.phi_prior)
+        phi_live0 = _finite(self.phi_live0)
+        for name, value in (("phi_prior", phi_prior), ("phi_live0", phi_live0)):
+            if value is None and getattr(self, name) is not None:
+                raise ValueError("%s must be finite when provided" % name)
+            if value is not None:
+                if channel == "SO2" and value >= 0.0:
+                    raise ValueError("SO2 phi must remain negative")
+                if channel == "PH" and value <= 0.0:
+                    raise ValueError("pH phi must remain positive")
+
+        if self.confidence is not None and not _valid_confidence(self.confidence):
+            raise ValueError("confidence must be within [0, 1]")
+
+        if self.status in {CHANNEL_LOCAL_GAIN_READY, CHANNEL_CALIBRATED}:
+            if phi_prior is None or phi_live0 is None:
+                raise ValueError("local-gain-ready channel requires phi_prior and phi_live0")
+            if int(self.valid_event_count) <= 0 or int(self.independent_days) <= 0:
+                raise ValueError("local-gain-ready channel requires positive evidence counts")
+            if not self.evidence_event_ids:
+                raise ValueError("local-gain-ready channel requires evidence event IDs")
+
+        if self.status == CHANNEL_CALIBRATED:
+            if not _valid_confidence(self.confidence):
+                raise ValueError("CALIBRATED channel requires reviewed confidence")
+            missing = [
+                key for key in _REQUIRED_RESPONSE_KEYS
+                if self.response_config.get(key) is None
+            ]
+            if missing:
+                raise ValueError(
+                    "CALIBRATED channel is missing response config: %s"
+                    % ",".join(missing)
+                )
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self.status == CHANNEL_CALIBRATED
+
+    @property
+    def has_local_gain(self) -> bool:
+        return self.status in {CHANNEL_LOCAL_GAIN_READY, CHANNEL_CALIBRATED}
+
+    def to_dict(self) -> Dict[str, Any]:
+        value = asdict(self)
+        value["delay_profile"] = self.delay_profile.to_dict()
+        value["evidence_event_ids"] = list(self.evidence_event_ids)
+        value["reason_codes"] = list(self.reason_codes)
+        return value
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "DualResponseChannelCalibration":
+        payload = dict(value or {})
+        payload["delay_profile"] = DelayProfile.from_dict(payload.get("delay_profile"))
+        payload["evidence_event_ids"] = tuple(payload.get("evidence_event_ids") or ())
+        payload["reason_codes"] = tuple(payload.get("reason_codes") or ())
+        return cls(**payload)
+
+
+@dataclass(frozen=True)
+class DualResponseCalibrationProfile:
+    profile_id: str
+    condition_snapshot_version: str
+    mfac_context_id: str
+    so2: DualResponseChannelCalibration
+    ph: DualResponseChannelCalibration
+    activation_status: str = "NOT_ACTIVATABLE"
+    learning_review_status: str = "REVIEW_REQUIRED"
+    residual_review_status: str = "REVIEW_REQUIRED"
+    learning_enabled: bool = False
+    residual_control_enabled: bool = False
+    dcs_write_enabled: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    semantics_version: str = DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION
+
+    def __post_init__(self) -> None:
+        if not str(self.profile_id or "").strip():
+            raise ValueError("profile_id is required")
+        if not str(self.condition_snapshot_version or "").strip():
+            raise ValueError("condition_snapshot_version is required")
+        if not str(self.mfac_context_id or "").strip():
+            raise ValueError("mfac_context_id is required")
+        if self.so2.channel.upper() != "SO2" or self.ph.channel.upper() != "PH":
+            raise ValueError("dual profile requires SO2 and PH channel sections")
+        if self.activation_status != "NOT_ACTIVATABLE":
+            raise ValueError("V1 dual calibration profile must remain NOT_ACTIVATABLE")
+        if self.learning_enabled or self.residual_control_enabled or self.dcs_write_enabled:
+            raise ValueError("dual calibration profile cannot enable production permissions")
+        if self.semantics_version != DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION:
+            raise ValueError("unsupported dual-response calibration profile semantics")
+
+        if self.so2.has_local_gain and self.ph.has_local_gain:
+            if self.so2.evidence_event_ids != self.ph.evidence_event_ids:
+                raise ValueError("SO2 and pH local-gain evidence IDs must match")
+            if self.so2.valid_event_count != self.ph.valid_event_count:
+                raise ValueError("SO2 and pH local-gain event counts must match")
+            if self.so2.independent_days != self.ph.independent_days:
+                raise ValueError("SO2 and pH independent-day counts must match")
+
+    @property
+    def so2_calibrated(self) -> bool:
+        return self.so2.is_calibrated
+
+    @property
+    def ph_calibrated(self) -> bool:
+        return self.ph.is_calibrated
+
+    @property
+    def both_channels_calibrated(self) -> bool:
+        return self.so2_calibrated and self.ph_calibrated
+
+    @property
+    def can_enable_learning(self) -> bool:
+        return False
+
+    @property
+    def can_enable_residual(self) -> bool:
+        return False
+
+    @property
+    def can_enable_dcs(self) -> bool:
+        return False
+
+    def to_runtime_config(self) -> Dict[str, Any]:
+        raise ValueError(
+            "dual-response calibration profile is review-only; a separate activation artifact is required"
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "condition_snapshot_version": self.condition_snapshot_version,
+            "mfac_context_id": self.mfac_context_id,
+            "so2": self.so2.to_dict(),
+            "ph": self.ph.to_dict(),
+            "activation_status": self.activation_status,
+            "learning_review_status": self.learning_review_status,
+            "residual_review_status": self.residual_review_status,
+            "learning_enabled": self.learning_enabled,
+            "residual_control_enabled": self.residual_control_enabled,
+            "dcs_write_enabled": self.dcs_write_enabled,
+            "metadata": dict(self.metadata),
+            "semantics_version": self.semantics_version,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "DualResponseCalibrationProfile":
+        payload = dict(value or {})
+        payload["so2"] = DualResponseChannelCalibration.from_dict(payload.get("so2") or {})
+        payload["ph"] = DualResponseChannelCalibration.from_dict(payload.get("ph") or {})
+        return cls(**payload)
+
+
+def build_calibration_profile_from_dual_bootstrap(
+    bundle: DualResponseBootstrapBundle,
+    *,
+    profile_id: str,
+) -> DualResponseCalibrationProfile:
+    """Promote same-cohort bootstrap evidence into a non-activating profile.
+
+    This only establishes LOCAL_GAIN_READY for each channel.  It intentionally
+    does not invent reviewed confidence or response timing/window parameters.
+    """
+
+    so2 = DualResponseChannelCalibration(
+        channel="SO2",
+        status=CHANNEL_LOCAL_GAIN_READY,
+        phi_prior=bundle.so2.phi_seed,
+        phi_live0=bundle.so2.phi_replayed,
+        confidence=None,
+        valid_event_count=bundle.valid_event_count,
+        independent_days=bundle.independent_days,
+        delay_profile=bundle.so2.delay_profile,
+        response_config={},
+        evidence_event_ids=bundle.event_ids,
+        reason_codes=("RESPONSE_TIMING_AND_CONFIDENCE_REVIEW_REQUIRED",),
+        metadata={
+            "bootstrap_semantics_version": bundle.so2.semantics_version,
+            "bootstrap_status": bundle.status,
+        },
+    )
+    ph = DualResponseChannelCalibration(
+        channel="PH",
+        status=CHANNEL_LOCAL_GAIN_READY,
+        phi_prior=bundle.ph.phi_seed,
+        phi_live0=bundle.ph.phi_replayed,
+        confidence=None,
+        valid_event_count=bundle.valid_event_count,
+        independent_days=bundle.independent_days,
+        delay_profile=DelayProfile(),
+        response_config={},
+        evidence_event_ids=bundle.event_ids,
+        reason_codes=("RESPONSE_TIMING_AND_CONFIDENCE_REVIEW_REQUIRED",),
+        metadata={
+            "bootstrap_semantics_version": bundle.ph.semantics_version,
+            "bootstrap_status": bundle.status,
+            "ph_delay_profile_not_inferred_from_gain_bootstrap": True,
+        },
+    )
+    return DualResponseCalibrationProfile(
+        profile_id=profile_id,
+        condition_snapshot_version=bundle.condition_snapshot_version,
+        mfac_context_id=bundle.mfac_context_id,
+        so2=so2,
+        ph=ph,
+        activation_status="NOT_ACTIVATABLE",
+        learning_review_status="REVIEW_REQUIRED",
+        residual_review_status="REVIEW_REQUIRED",
+        learning_enabled=False,
+        residual_control_enabled=False,
+        dcs_write_enabled=False,
+        metadata={
+            "source_dual_bootstrap_semantics": bundle.semantics_version,
+            "same_physical_cohort": True,
+            "local_gain_ready_is_not_full_calibration": True,
+            "separate_activation_artifact_required": True,
+        },
+    )
+
+
+__all__ = [
+    "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
+    "CHANNEL_UNCONFIGURED",
+    "CHANNEL_INSUFFICIENT_EVIDENCE",
+    "CHANNEL_REVIEW_REQUIRED",
+    "CHANNEL_LOCAL_GAIN_READY",
+    "CHANNEL_CALIBRATED",
+    "DualResponseChannelCalibration",
+    "DualResponseCalibrationProfile",
+    "build_calibration_profile_from_dual_bootstrap",
+]
