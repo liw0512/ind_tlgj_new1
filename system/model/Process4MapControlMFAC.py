@@ -14,11 +14,11 @@ from typing import Any, Dict, Optional
 
 from system.model.Process4MapControl import ProcessForMapConsole as _LegacyShell
 from system.model.config.database_schema import ensure_filter_table
+from system.model.config.mfac_core_bridge_config import MFAC_CORE_BRIDGE_CONFIG
 from system.model.config.mfac_database_schema import (
     ensure_mfac_model_result_table,
     insert_mfac_model_result_row,
 )
-from system.model.config.slurry_core_bridge_config import MFAC_CORE_BRIDGE_CONFIG
 from system.model.map_control.mfac_model.context_resolver import MFACContextResolver
 from system.model.map_control.mfac_model.mfac_primary_config import (
     MFAC_PRIMARY_ARTIFACT_CONFIG,
@@ -32,7 +32,7 @@ from system.model.map_control.mfac_model.runtime_coordinator import (
 )
 
 
-UNIFIED_PROCESS4_MFAC_VERSION = "PROCESS4_SCHEME2_UNIFIED_RUNTIME_V2_CANONICAL"
+UNIFIED_PROCESS4_MFAC_VERSION = "PROCESS4_SCHEME2_UNIFIED_RUNTIME_V3_CANONICAL"
 _DATA_QUALITY_MARKER = "_mfac_data_quality_ok"
 
 
@@ -48,9 +48,6 @@ class ProcessForMapConsole(_LegacyShell):
     }
 
     def __init__(self, GLOBAL_DATA):
-        # Build the configured coordinator before the legacy shell restores an
-        # active model.  Default repo config returns DISABLED_UNCALIBRATED and
-        # therefore creates no coordinator and no guessed plant parameters.
         try:
             runtime_build = build_mfac_runtime(
                 MFAC_PRIMARY_ARTIFACT_CONFIG.get("runtime") or {}
@@ -68,9 +65,12 @@ class ProcessForMapConsole(_LegacyShell):
         self._mfac_primary_context_resolver: Optional[MFACContextResolver] = None
 
         super().__init__(GLOBAL_DATA)
-        # Canonical lifecycle config becomes the public state of this subclass.
-        # Inherited legacy-shell methods access old key names through _core_path.
         self.slurry_core_config = deepcopy(MFAC_CORE_BRIDGE_CONFIG)
+        # Migration-only aliases for old introspection/tests. The inherited
+        # sidecar method is overridden below and never executes this object.
+        self._scheme2_runtime_coordinator = self._mfac_primary_runtime_coordinator
+        self._scheme2_context_resolver = self._mfac_primary_context_resolver
+        self._scheme2_qbase_calculator = None
 
     def _core_path(self, key):
         canonical = self._LEGACY_CORE_KEY_MAP.get(str(key), str(key))
@@ -79,7 +79,7 @@ class ProcessForMapConsole(_LegacyShell):
         return str(MFAC_CORE_BRIDGE_CONFIG[canonical])
 
     def _integration_config(self):
-        """Build the production bridge without legacy condition-config authority."""
+        """Build production integration without legacy condition-config authority."""
         return {
             "enabled": True,
             "config_spec": self._core_path("mfac_config"),
@@ -170,9 +170,6 @@ class ProcessForMapConsole(_LegacyShell):
             status="CONFIGURED_SHADOW",
             coordinator=coordinator,
         )
-
-        # Legacy attributes are introspection aliases only. They are never run
-        # as a second runtime path by this subclass.
         self._scheme2_runtime_coordinator = coordinator
         self._scheme2_context_resolver = context_resolver
         self._scheme2_qbase_calculator = None
@@ -204,6 +201,8 @@ class ProcessForMapConsole(_LegacyShell):
             "mfac_runtime_config_status": result.status,
             "mfac_runtime_config_error": result.error,
             "mfac_runtime_configured": bool(result.configured),
+            "mfac_runtime_config_version": result.config_version,
+            "mfac_runtime_config_missing_fields": list(result.missing_fields),
         }
 
     def _compat_scheme2_payload(self, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -272,6 +271,28 @@ class ProcessForMapConsole(_LegacyShell):
             return payload
         return self._compat_scheme2_payload(result)
 
+    def _build_write_key(self, data, write_target):
+        """Use canonical MFAC action identity for model-result deduplication."""
+        try:
+            return "|".join(
+                [
+                    str(write_target),
+                    str(data.get("_snapshot_seq", "")),
+                    str(data.get("date", "")),
+                    str(data.get(self.process_config.unit_stop.field, "")),
+                    str(data.get("yyq_SO2", "")),
+                    str(data.get("jyq_SO2", "")),
+                    str(data.get("condition_label", "")),
+                    str(
+                        data.get("mfac_action_id")
+                        or data.get("slurry_policy_action_id")
+                        or ""
+                    ),
+                ]
+            )
+        except Exception:
+            return None
+
     def insert_Mod(self, data, target_so2, store_to_db=True):
         """Pass snapshot data-quality evidence into the single MFAC runtime."""
         runtime_data = dict(data)
@@ -288,8 +309,12 @@ class ProcessForMapConsole(_LegacyShell):
     def getNewDataTableName(self):
         """Create/extend current monthly tables with canonical MFAC columns."""
         persistence = self.process_config.persistence
-        self.filter_table_name = self.filter_table_name if hasattr(self, "filter_table_name") else ""
-        self.mod_pre_table_name = self.mod_pre_table_name if hasattr(self, "mod_pre_table_name") else ""
+        self.filter_table_name = (
+            self.filter_table_name if hasattr(self, "filter_table_name") else ""
+        )
+        self.mod_pre_table_name = (
+            self.mod_pre_table_name if hasattr(self, "mod_pre_table_name") else ""
+        )
         filter_ok = False
         model_ok = False
         try:
