@@ -54,6 +54,9 @@ def activate(version: str) -> Path:
             % (version, condition_version)
         )
 
+    # Canonical pointer: module 2 is MFAC.  No slurry_policy compatibility
+    # block is emitted anymore; IntegratedVersionManager can still read older
+    # migration pointers, but all newly activated versions are MFAC-native.
     pointer = {
         "integrated_version": version,
         "activated_at": datetime.now(timezone.utc).isoformat(),
@@ -72,15 +75,6 @@ def activate(version: str) -> Path:
             "learn_enabled": False,
             "residual_enabled": False,
             "dcs_write_enabled": False,
-        },
-        # Temporary compatibility block for IntegratedVersionManager.  It no
-        # longer points to or loads the deleted slurry-policy implementation.
-        "slurry_policy": {
-            "version": version,
-            "source_condition_version": version,
-            "snapshot_path": str(manifest_path),
-            "manifest_sha256": sha256_file(manifest_path),
-            "backend": "MFAC_COMPAT_POINTER",
         },
     }
 
