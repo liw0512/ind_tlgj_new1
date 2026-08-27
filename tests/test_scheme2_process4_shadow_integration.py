@@ -2,6 +2,7 @@ import tempfile
 import unittest
 
 from system.model.Process4MapControlMFAC import ProcessForMapConsole
+from system.model.config.mfac_plant_contract import ph_arbitration_plant_values
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.map_control.condition_model.online_condition_policy_bridge import (
     SlurryPolicyOnlineBridge,
@@ -70,11 +71,7 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
                     max_single_update_abs=0.1,
                 ),
                 ph_arbitration=PHResidualArbitrationConfig(
-                    operating_min=5.4,
-                    operating_max=6.2,
-                    safe_min=5.0,
-                    safe_max=6.5,
-                    guard_band=0.1,
+                    **ph_arbitration_plant_values()
                 ),
             )
         return Scheme2RuntimeCoordinatorConfig(
@@ -185,6 +182,7 @@ class Scheme2Process4UnifiedRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(result["mfac_debug"]["qbase_calculation_count"], 1)
         self.assertEqual(result["mfac_debug"]["coordinator_cycle_count"], 0)
         self.assertEqual(result["mfac_debug"]["fallback_cycle_count"], 1)
+        self.assertEqual(result["mfac_debug"]["plant_contract_source"], "PLANT_CONFIG")
         self.assertAlmostEqual(
             result["mfac_algorithm_target_supply_flow"],
             41.20592948717949,
