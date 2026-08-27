@@ -23,6 +23,28 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .local_step_identification import (
+    LOCAL_STEP_IDENTIFICATION_VERSION,
+    LocalStepIdentificationConfig,
+    LocalStepIdentificationGate,
+    LocalStepIdentificationProposal,
+)
+from .local_step_trial_matrix import (
+    LOCAL_STEP_TRIAL_MATRIX_VERSION,
+    LocalStepTrialLevel,
+    LocalStepTrialMatrix,
+)
+from .local_step_trial_protocol import (
+    LOCAL_STEP_TRIAL_PROTOCOL_VERSION,
+    LocalStepTrialOutcome,
+    LocalStepTrialPlan,
+    LocalStepTrialProtocolConfig,
+    LocalStepTrialSafetyDecision,
+    LocalStepTrialSafetyMonitor,
+    approve_local_step_proposal,
+    evaluate_local_step_trial,
+    promote_local_step_evidence,
+)
 from .mfac_eligibility import (
     MFACEligibilityConfig,
     MFACEligibilityDecision,
@@ -162,6 +184,9 @@ __all__ = [
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
+    "LOCAL_STEP_IDENTIFICATION_VERSION",
+    "LOCAL_STEP_TRIAL_PROTOCOL_VERSION",
+    "LOCAL_STEP_TRIAL_MATRIX_VERSION",
     "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
     "TRAJECTORY_COUNTERFACTUAL_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
@@ -231,6 +256,19 @@ __all__ = [
     "FlowTrajectoryPlannerConfig",
     "FlowTrajectoryPlan",
     "FlowTrajectoryPlanner",
+    "LocalStepIdentificationConfig",
+    "LocalStepIdentificationProposal",
+    "LocalStepIdentificationGate",
+    "LocalStepTrialProtocolConfig",
+    "LocalStepTrialPlan",
+    "approve_local_step_proposal",
+    "LocalStepTrialSafetyDecision",
+    "LocalStepTrialSafetyMonitor",
+    "LocalStepTrialOutcome",
+    "evaluate_local_step_trial",
+    "promote_local_step_evidence",
+    "LocalStepTrialLevel",
+    "LocalStepTrialMatrix",
     "CalibrationQuantiles",
     "PendingDoseCalibrationCandidate",
     "TrajectoryPlannerCalibrationCandidate",
