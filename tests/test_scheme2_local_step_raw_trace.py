@@ -50,13 +50,14 @@ class Scheme2LocalStepRawTraceTest(unittest.TestCase):
         )
         bundle = recorder.finalize(event_id="MFAC-LOCAL-GAIN-TRIAL-1")
         self.assertEqual(bundle.status, "TRACE_REVIEW_CANDIDATE")
+        self.assertTrue(bundle.usable_for_timing_extraction)
         self.assertEqual(bundle.so2_trace.event_id, bundle.ph_trace.event_id)
         self.assertEqual(bundle.so2_trace.actual_flow_reached_time, self.time(0))
         self.assertFalse(bundle.learning_enabled)
         self.assertFalse(bundle.residual_control_enabled)
         self.assertFalse(bundle.dcs_write_enabled)
 
-    def test_context_change_marks_bundle_invalid(self):
+    def test_context_change_marks_bundle_invalid_and_hides_traces(self):
         recorder = LocalStepRawTraceRecorder(self.plan())
         recorder.record(
             timestamp=self.time(-10),
@@ -86,8 +87,11 @@ class Scheme2LocalStepRawTraceTest(unittest.TestCase):
         bundle = recorder.finalize(event_id="MFAC-LOCAL-GAIN-TRIAL-1")
         self.assertEqual(bundle.status, "INVALID_TRACE")
         self.assertIn("MFAC_CONTEXT_CHANGED", bundle.reasons)
+        self.assertIsNone(bundle.so2_trace)
+        self.assertIsNone(bundle.ph_trace)
+        self.assertFalse(bundle.usable_for_timing_extraction)
 
-    def test_reached_time_is_required(self):
+    def test_reached_time_is_required_and_invalid_bundle_exposes_no_trace(self):
         recorder = LocalStepRawTraceRecorder(self.plan())
         recorder.record(
             timestamp=self.time(0),
@@ -99,6 +103,28 @@ class Scheme2LocalStepRawTraceTest(unittest.TestCase):
         bundle = recorder.finalize(event_id="MFAC-LOCAL-GAIN-TRIAL-1")
         self.assertEqual(bundle.status, "INVALID_TRACE")
         self.assertIn("ACTUAL_FLOW_REACHED_TIME_REQUIRED", bundle.reasons)
+        self.assertIsNone(bundle.so2_trace)
+        self.assertIsNone(bundle.ph_trace)
+
+    def test_reached_time_outside_trace_range_is_invalid(self):
+        recorder = LocalStepRawTraceRecorder(self.plan())
+        for seconds in (-20, -10, 0, 10):
+            recorder.record(
+                timestamp=self.time(seconds),
+                outlet_so2=10.0,
+                ph=6.2,
+                condition_snapshot_version="v001",
+                mfac_context_id="CTX",
+            )
+        recorder.mark_actual_flow_reached(
+            tracking_event_id="TRACK-1",
+            actual_flow_reached_time=self.time(60),
+        )
+        bundle = recorder.finalize(event_id="MFAC-LOCAL-GAIN-TRIAL-1")
+        self.assertEqual(bundle.status, "INVALID_TRACE")
+        self.assertIn("ACTUAL_FLOW_REACHED_OUTSIDE_TRACE_RANGE", bundle.reasons)
+        self.assertIsNone(bundle.so2_trace)
+        self.assertIsNone(bundle.ph_trace)
 
     def test_recorder_has_no_execution_api(self):
         recorder = LocalStepRawTraceRecorder(self.plan())
