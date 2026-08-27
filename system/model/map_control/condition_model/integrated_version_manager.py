@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from system.model.config.mfac_plant_contract import validate_plant_contract_snapshot
 from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
     from_dict,
@@ -24,6 +25,7 @@ from system.model.map_control.condition_model.condition_schema import ConditionS
 from system.model.map_control.condition_model.snapshot_io import read_snapshot
 from system.model.map_control.mfac_model.mfac_primary_config import (
     MFAC_ACTIVE_VERSION_FILE,
+    MFAC_PRIMARY_MODE,
 )
 
 
@@ -308,7 +310,7 @@ class IntegratedVersionManager:
         return path
 
     def prepare_mfac(self, pointer: IntegratedVersionPointer) -> Dict[str, Any]:
-        """Validate the MFAC artifact paired with the condition candidate."""
+        """Validate MFAC artifact, mode and optional plant-contract snapshot."""
         path = self._mfac_manifest_path(pointer)
         if not path.exists() or not path.is_file():
             raise IntegratedVersionError("MFAC候选 manifest 不存在: %s" % path)
@@ -343,11 +345,37 @@ class IntegratedVersionManager:
                 "MFAC manifest绑定condition版本 %s 与激活condition版本 %s 不一致"
                 % (source_condition, pointer.condition_version)
             )
+
         artifact_type = str(manifest.get("artifact_type") or "").strip()
         if artifact_type and artifact_type != "MFAC_PRIMARY_MANIFEST":
             raise IntegratedVersionError(
                 "MFAC manifest artifact_type 无效: %s" % artifact_type
             )
+        manifest_mode = str(manifest.get("primary_mode") or "").strip()
+        if manifest_mode and manifest_mode != MFAC_PRIMARY_MODE:
+            raise IntegratedVersionError(
+                "MFAC manifest primary_mode %s 与正式模式 %s 不一致"
+                % (manifest_mode, MFAC_PRIMARY_MODE)
+            )
+        raw_mfac = pointer.raw.get("mfac")
+        if isinstance(raw_mfac, dict):
+            pointer_mode = str(raw_mfac.get("mode") or "").strip()
+            if pointer_mode and pointer_mode != MFAC_PRIMARY_MODE:
+                raise IntegratedVersionError(
+                    "active_version MFAC mode %s 与正式模式 %s 不一致"
+                    % (pointer_mode, MFAC_PRIMARY_MODE)
+                )
+
+        plant_snapshot = manifest.get("plant_contract_snapshot")
+        if plant_snapshot is not None:
+            try:
+                validate_plant_contract_snapshot(plant_snapshot)
+            except ValueError as exc:
+                raise IntegratedVersionError(
+                    "MFAC manifest plant contract 与当前 PLANT_CONFIG 不一致: %s"
+                    % exc
+                )
+
         if bool(manifest.get("legacy_second_module_present", False)):
             raise IntegratedVersionError("MFAC manifest 不得声明旧第二模块存在")
         for field_name in ("learn_enabled", "residual_enabled", "dcs_write_enabled"):
