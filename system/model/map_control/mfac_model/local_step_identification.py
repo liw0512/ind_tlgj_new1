@@ -19,7 +19,7 @@ from .ph_arbitration import PHResidualArbitrationConfig
 
 
 LOCAL_STEP_IDENTIFICATION_VERSION = (
-    "SCHEME2_LOCAL_STEP_IDENTIFICATION_V1_MANUAL_ONLY"
+    "SCHEME2_LOCAL_STEP_IDENTIFICATION_V2_BASELINE_STABILITY"
 )
 
 
@@ -55,9 +55,12 @@ class LocalStepIdentificationConfig:
     min_quiet_seconds: float
     min_candidate_interval_seconds: float
     max_abs_actual_minus_qbase: float
+    max_actual_flow_baseline_range: float
     max_abs_qbase_drift: float
+    max_relative_qbase_drift: float
     max_abs_inlet_so2_change: float
     max_outlet_so2_baseline_range: float
+    max_ph_baseline_range: float
 
     def __post_init__(self) -> None:
         positive = (
@@ -65,9 +68,12 @@ class LocalStepIdentificationConfig:
             "min_quiet_seconds",
             "min_candidate_interval_seconds",
             "max_abs_actual_minus_qbase",
+            "max_actual_flow_baseline_range",
             "max_abs_qbase_drift",
+            "max_relative_qbase_drift",
             "max_abs_inlet_so2_change",
             "max_outlet_so2_baseline_range",
+            "max_ph_baseline_range",
         )
         nonnegative = (
             "ph_lower_margin_inside_operating",
@@ -173,9 +179,12 @@ class LocalStepIdentificationGate:
         mfac_context_id: str,
         seconds_since_last_supply_action: Any,
         seconds_since_last_identification: Any,
+        actual_flow_baseline_range: Any,
         qbase_drift: Any,
+        qbase_relative_drift: Any,
         inlet_so2_change: Any,
         outlet_so2_baseline_range: Any,
+        ph_baseline_range: Any,
         fast_active: bool = False,
         data_quality_ok: bool = True,
         equipment_changed: bool = False,
@@ -193,9 +202,12 @@ class LocalStepIdentificationGate:
         so2 = _finite(outlet_so2)
         quiet = _finite(seconds_since_last_supply_action)
         since_identification = _finite(seconds_since_last_identification)
+        actual_range = _finite(actual_flow_baseline_range)
         qbase_change = _finite(qbase_drift)
+        qbase_relative = _finite(qbase_relative_drift)
         inlet_change = _finite(inlet_so2_change)
         so2_range = _finite(outlet_so2_baseline_range)
+        ph_range = _finite(ph_baseline_range)
 
         if not bool(request_enabled):
             reasons.append("IDENTIFICATION_REQUEST_DISABLED")
@@ -228,12 +240,24 @@ class LocalStepIdentificationGate:
             or since_identification < float(self.config.min_candidate_interval_seconds)
         ):
             reasons.append("IDENTIFICATION_INTERVAL_NOT_ELAPSED")
+        if (
+            actual_range is None
+            or actual_range > float(self.config.max_actual_flow_baseline_range)
+        ):
+            reasons.append("ACTUAL_FLOW_BASELINE_NOT_STABLE")
         if qbase_change is None or abs(qbase_change) > float(self.config.max_abs_qbase_drift):
             reasons.append("QBASE_NOT_STABLE")
+        if (
+            qbase_relative is None
+            or abs(qbase_relative) > float(self.config.max_relative_qbase_drift)
+        ):
+            reasons.append("QBASE_RELATIVE_DRIFT_TOO_LARGE")
         if inlet_change is None or abs(inlet_change) > float(self.config.max_abs_inlet_so2_change):
             reasons.append("INLET_SO2_NOT_STABLE")
         if so2_range is None or so2_range > float(self.config.max_outlet_so2_baseline_range):
             reasons.append("OUTLET_SO2_BASELINE_NOT_STABLE")
+        if ph_range is None or ph_range > float(self.config.max_ph_baseline_range):
+            reasons.append("PH_BASELINE_NOT_STABLE")
         if (
             actual is not None
             and qbase is not None
@@ -280,6 +304,9 @@ class LocalStepIdentificationGate:
                     self.identification_ph_max,
                 ],
                 "identification_so2_max": self.identification_so2_max,
+                "actual_flow_baseline_range": actual_range,
+                "qbase_relative_drift": qbase_relative,
+                "ph_baseline_range": ph_range,
                 "normal_algorithm_target_replaced": False,
                 "actual_flow_used_as_normal_algorithm_target": False,
                 "proposal_semantics": "MANUAL_CONTROLLED_LOCAL_STEP_ONLY",
