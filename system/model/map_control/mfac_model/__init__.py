@@ -17,6 +17,12 @@ from .continuous_target import (
 )
 from .context_resolver import MFACContextResolver
 from .episode_adapter import Scheme1EpisodeToMFACAdapter, adapt_episode_frame
+from .flow_trajectory_planner import (
+    FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION,
+    FlowTrajectoryPlan,
+    FlowTrajectoryPlanner,
+    FlowTrajectoryPlannerConfig,
+)
 from .mfac_eligibility import (
     MFACEligibilityConfig,
     MFACEligibilityDecision,
@@ -31,7 +37,6 @@ from .mfac_schema import (
     MFACRuntimeState,
     QbaseResult,
 )
-from .qbase import DynamicQbaseCalculator
 from .online_adaptation import (
     ONLINE_ADAPTATION_SEMANTICS_VERSION,
     MFACOnlineAdaptationConfig,
@@ -39,6 +44,12 @@ from .online_adaptation import (
     MFACOnlineAdapter,
 )
 from .online_event_adapter import OnlineResponseToMFACAdapter
+from .pending_dose_guard import (
+    PENDING_DOSE_GUARD_SEMANTICS_VERSION,
+    PendingDoseGuard,
+    PendingDoseGuardConfig,
+    PendingDoseGuardDecision,
+)
 from .ph_adaptation import (
     PH_ONLINE_ADAPTATION_SEMANTICS_VERSION,
     PHOnlineAdaptationConfig,
@@ -50,6 +61,14 @@ from .ph_arbitration import (
     PHResidualArbitrationConfig,
     PHResidualArbitrationDecision,
     PHResidualArbiter,
+)
+from .ph_bootstrap_trainer import (
+    PH_BOOTSTRAP_SEMANTICS_VERSION,
+    PHBootstrapEvidence,
+    PHBootstrapProfile,
+    PHReplayConfig,
+    build_ph_bootstrap_evidence,
+    finalize_ph_bootstrap_profile,
 )
 from .ph_response import (
     PH_RESPONSE_SEMANTICS_VERSION,
@@ -71,6 +90,7 @@ from .process_response import (
     ProcessResponseUpdate,
     ProcessSample,
 )
+from .qbase import DynamicQbaseCalculator
 from .residual_control import (
     RESIDUAL_CONTROL_SEMANTICS_VERSION,
     MFACResidualConfig,
@@ -85,16 +105,16 @@ from .runtime_config import (
     MFACRuntimeBuildResult,
     build_mfac_runtime,
 )
-from .runtime_store import (
-    SCHEME2_RUNTIME_STORE_VERSION,
-    Scheme2RuntimeRestore,
-    Scheme2RuntimeStore,
-)
 from .runtime_coordinator import (
     SCHEME2_RUNTIME_COORDINATOR_VERSION,
     Scheme2RuntimeCoordinator,
     Scheme2RuntimeCoordinatorConfig,
     Scheme2RuntimeCycleResult,
+)
+from .runtime_store import (
+    SCHEME2_RUNTIME_STORE_VERSION,
+    Scheme2RuntimeRestore,
+    Scheme2RuntimeStore,
 )
 from .supply_flow_tracking import (
     SUPPLY_FLOW_TRACKING_SEMANTICS_VERSION,
@@ -102,6 +122,10 @@ from .supply_flow_tracking import (
     SupplyFlowTrackingEvent,
     SupplyFlowTrackingMonitor,
     SupplyFlowTrackingUpdate,
+)
+from .trajectory_coordinator import (
+    TRAJECTORY_SHADOW_COORDINATOR_VERSION,
+    Scheme2TrajectoryShadowCoordinator,
 )
 
 __all__ = [
@@ -114,10 +138,14 @@ __all__ = [
     "PH_RESPONSE_SEMANTICS_VERSION",
     "ONLINE_ADAPTATION_SEMANTICS_VERSION",
     "PH_ONLINE_ADAPTATION_SEMANTICS_VERSION",
+    "PH_BOOTSTRAP_SEMANTICS_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "PH_ARBITRATION_SEMANTICS_VERSION",
+    "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
+    "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
+    "TRAJECTORY_SHADOW_COORDINATOR_VERSION",
     "COUNTERFACTUAL_SHADOW",
     "ONLINE_SHADOW",
     "DEFAULT_MFAC_RUNTIME_CONFIG",
@@ -140,6 +168,11 @@ __all__ = [
     "MFACReplayConfig",
     "build_bootstrap_evidence",
     "finalize_bootstrap_profile",
+    "PHReplayConfig",
+    "PHBootstrapEvidence",
+    "PHBootstrapProfile",
+    "build_ph_bootstrap_evidence",
+    "finalize_ph_bootstrap_profile",
     "ContinuousTargetConfig",
     "ContinuousTargetDecision",
     "ContinuousTargetPublisher",
@@ -171,11 +204,18 @@ __all__ = [
     "PHResidualArbitrationConfig",
     "PHResidualArbitrationDecision",
     "PHResidualArbiter",
+    "PendingDoseGuardConfig",
+    "PendingDoseGuardDecision",
+    "PendingDoseGuard",
+    "FlowTrajectoryPlannerConfig",
+    "FlowTrajectoryPlan",
+    "FlowTrajectoryPlanner",
     "Scheme2RuntimeRestore",
     "Scheme2RuntimeStore",
     "Scheme2RuntimeCoordinatorConfig",
     "Scheme2RuntimeCycleResult",
     "Scheme2RuntimeCoordinator",
+    "Scheme2TrajectoryShadowCoordinator",
     "MFACPrimaryPolicy",
     "MFACUnifiedRuntimePolicy",
 ]
