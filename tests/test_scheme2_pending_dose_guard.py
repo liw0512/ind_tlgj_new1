@@ -44,7 +44,22 @@ class PendingDoseGuardTest(unittest.TestCase):
             min_confidence=0.5,
         )
 
-    def test_flow_step_creates_pending_ph_not_volume_times_phi(self):
+    @staticmethod
+    def advance(guard, start_second, end_second, flow, ph, state):
+        result = None
+        for second in range(start_second, end_second + 1, 10):
+            result = guard.update(
+                timestamp=(
+                    "2026-08-01T10:%02d:%02d"
+                    % ((second // 60) % 60, second % 60)
+                ),
+                actual_supply_flow_feedback=flow,
+                ph_value=ph,
+                state=state,
+            )
+        return result
+
+    def test_flow_step_creates_future_ph_risk_not_volume_times_phi(self):
         guard = PendingDoseGuard(self.config(), self.envelope())
         guard.update(
             timestamp="2026-08-01T10:00:00",
@@ -59,37 +74,37 @@ class PendingDoseGuardTest(unittest.TestCase):
             state=self.state(),
         )
         self.assertEqual(result.active_contribution_count, 1)
-        self.assertAlmostEqual(result.pending_equivalent_delta_q, 10.0)
+        self.assertAlmostEqual(result.pending_up_equivalent_delta_q, 10.0)
         self.assertAlmostEqual(result.pending_delta_ph, 0.10)
-        self.assertAlmostEqual(result.predicted_ph_after_pending, 6.30)
+        self.assertAlmostEqual(result.predicted_ph_upper, 6.30)
         self.assertEqual(result.status, "CLEAR")
         self.assertEqual(
             result.metadata["recent_volume_semantics"],
             "AUDIT_ONLY_NOT_CONTROL_DEBT",
         )
+        self.assertEqual(
+            result.metadata["future_extrema_method"],
+            "PIECEWISE_LINEAR_STEP_BREAKPOINTS",
+        )
 
-    def test_pending_fraction_reduces_as_response_is_realized(self):
+    def test_future_increment_reduces_as_step_response_is_realized(self):
         guard = PendingDoseGuard(self.config(), self.envelope())
+        state = self.state()
         guard.update(
             timestamp="2026-08-01T10:00:00",
             actual_supply_flow_feedback=30.0,
             ph_value=6.20,
-            state=self.state(),
+            state=state,
         )
         guard.update(
             timestamp="2026-08-01T10:00:10",
             actual_supply_flow_feedback=40.0,
             ph_value=6.20,
-            state=self.state(),
+            state=state,
         )
-        result = guard.update(
-            timestamp="2026-08-01T10:05:10",
-            actual_supply_flow_feedback=40.0,
-            ph_value=6.24,
-            state=self.state(),
-        )
-        self.assertLess(result.pending_equivalent_delta_q, 10.0)
-        self.assertGreater(result.pending_equivalent_delta_q, 0.0)
+        result = self.advance(guard, 20, 310, 40.0, 6.24, state)
+        self.assertLess(result.pending_up_equivalent_delta_q, 10.0)
+        self.assertGreater(result.pending_up_equivalent_delta_q, 0.0)
 
     def test_large_unrealized_positive_change_flags_upper_risk(self):
         guard = PendingDoseGuard(self.config(), self.envelope())
@@ -107,7 +122,33 @@ class PendingDoseGuardTest(unittest.TestCase):
             state=state,
         )
         self.assertEqual(result.status, "LIMIT_POSITIVE")
-        self.assertGreaterEqual(result.predicted_ph_after_pending, 6.65)
+        self.assertGreaterEqual(result.predicted_ph_upper, 6.65)
+
+    def test_return_to_baseline_does_not_erase_post_pulse_peak_risk(self):
+        guard = PendingDoseGuard(self.config(), self.envelope())
+        state = self.state(phi=0.02)
+        guard.update(
+            timestamp="2026-08-01T10:00:00",
+            actual_supply_flow_feedback=30.0,
+            ph_value=6.20,
+            state=state,
+        )
+        guard.update(
+            timestamp="2026-08-01T10:00:10",
+            actual_supply_flow_feedback=60.0,
+            ph_value=6.20,
+            state=state,
+        )
+        self.advance(guard, 20, 300, 60.0, 6.30, state)
+        result = guard.update(
+            timestamp="2026-08-01T10:05:10",
+            actual_supply_flow_feedback=30.0,
+            ph_value=6.30,
+            state=state,
+        )
+        self.assertGreater(result.pending_up_equivalent_delta_q, 0.0)
+        self.assertGreater(result.predicted_ph_upper, 6.30)
+        self.assertGreater(result.predicted_peak_horizon_seconds, 0.0)
 
     def test_large_sample_gap_discards_unattributable_pending_history(self):
         guard = PendingDoseGuard(self.config(), self.envelope())
