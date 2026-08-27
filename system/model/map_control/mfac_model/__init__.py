@@ -16,6 +16,13 @@ from .continuous_target import (
     ContinuousTargetPublisher,
 )
 from .context_resolver import MFACContextResolver
+from .dual_response_bootstrap import (
+    DUAL_RESPONSE_BOOTSTRAP_VERSION,
+    DualResponseBootstrapBuildResult,
+    DualResponseBootstrapBundle,
+    DualResponseBootstrapRejection,
+    build_dual_response_bootstrap_evidence,
+)
 from .episode_adapter import Scheme1EpisodeToMFACAdapter, adapt_episode_frame
 from .flow_trajectory_planner import (
     FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION,
@@ -208,6 +215,7 @@ __all__ = [
     "ONLINE_ADAPTATION_SEMANTICS_VERSION",
     "PH_ONLINE_ADAPTATION_SEMANTICS_VERSION",
     "PH_BOOTSTRAP_SEMANTICS_VERSION",
+    "DUAL_RESPONSE_BOOTSTRAP_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
@@ -253,6 +261,10 @@ __all__ = [
     "PHBootstrapProfile",
     "build_ph_bootstrap_evidence",
     "finalize_ph_bootstrap_profile",
+    "DualResponseBootstrapRejection",
+    "DualResponseBootstrapBundle",
+    "DualResponseBootstrapBuildResult",
+    "build_dual_response_bootstrap_evidence",
     "ContinuousTargetConfig",
     "ContinuousTargetDecision",
     "ContinuousTargetPublisher",
