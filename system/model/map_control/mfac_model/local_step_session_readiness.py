@@ -7,9 +7,11 @@ A manual identification session may be considered only when:
 1. the identification/safety design is fully reviewed;
 2. the independent tracking + SO2/pH observation profile is fully reviewed;
 3. the requested trial-matrix level is reviewed and has explicit evidence
-   requirements.
+   requirements;
+4. duplicated safety/check semantics across those reviewed profiles are
+   consistent instead of silently overriding each other.
 
-This module is read-only.  It does not schedule, execute or approve a plant
+This module is read-only. It does not schedule, execute or approve a plant
 command and cannot grant runtime learning or DCS authority.
 """
 
@@ -24,7 +26,7 @@ from .local_step_trial_matrix import LocalStepTrialMatrix
 
 
 LOCAL_STEP_SESSION_READINESS_VERSION = (
-    "SCHEME2_LOCAL_STEP_SESSION_READINESS_V1_THREE_GATE"
+    "SCHEME2_LOCAL_STEP_SESSION_READINESS_V2_CROSS_PROFILE_CONSISTENCY"
 )
 
 
@@ -37,6 +39,7 @@ class LocalStepSessionReadiness:
     design_ready: bool = False
     observation_ready: bool = False
     matrix_level_ready: bool = False
+    cross_profile_consistent: bool = False
     automatic_execution_allowed: bool = False
     dcs_write_enabled: bool = False
     learning_permission: bool = False
@@ -55,6 +58,62 @@ class LocalStepSessionReadiness:
         value = asdict(self)
         value["blockers"] = list(self.blockers)
         return value
+
+
+def _cross_profile_blockers(
+    design: LocalStepIdentificationDesignProfile,
+    observation: LocalStepObservationProfile,
+) -> Tuple[str, ...]:
+    if not design.can_build_manual_trial_configs or not observation.can_build_monitors:
+        return ()
+
+    manual = design.build_manual_trial_configs()
+    tracking = dict(observation.reviewed_tracking)
+    so2 = dict(observation.reviewed_so2_response)
+    ph = dict(observation.reviewed_ph_response)
+    blockers = []
+
+    # Data continuity is one physical fact. If all monitoring/evidence layers
+    # use it, they must agree rather than rely on last-writer-wins semantics.
+    trial_gap = float(manual.trial.max_sample_gap_seconds)
+    gap_values = (
+        float(tracking["max_sample_gap_seconds"]),
+        float(so2["max_sample_gap_seconds"]),
+        float(ph["max_sample_gap_seconds"]),
+    )
+    if any(abs(value - trial_gap) > 1e-9 for value in gap_values):
+        blockers.append("MAX_SAMPLE_GAP_PROFILE_MISMATCH")
+
+    # The tracker must be able to see the reviewed identification step as a
+    # material target change.
+    if float(tracking["target_change_deadband"]) >= float(
+        manual.identification.step_up_m3_h
+    ):
+        blockers.append("TRACKING_DEADBAND_NOT_BELOW_IDENTIFICATION_STEP")
+
+    # Tracking tolerance must not be looser than the later evidence gate that
+    # checks whether the real delta-Q matches the reviewed test step.
+    if float(tracking["reach_tolerance"]) > float(
+        manual.trial.max_abs_step_error_m3_h
+    ):
+        blockers.append("TRACKING_REACH_TOLERANCE_EXCEEDS_TRIAL_STEP_ERROR")
+
+    # The configured monitor horizon is measured from actual_flow_reached_time:
+    # delay_onset + observation. It must cover the evidence minimum required by
+    # the trial protocol; otherwise a monitor could finish before the trial is
+    # even eligible for promotion.
+    so2_horizon = float(so2["delay_onset_seconds"]) + float(
+        so2["observation_seconds"]
+    )
+    ph_horizon = float(ph["delay_onset_seconds"]) + float(
+        ph["observation_seconds"]
+    )
+    if so2_horizon < float(manual.trial.minimum_so2_observation_seconds):
+        blockers.append("SO2_MONITOR_HORIZON_SHORTER_THAN_TRIAL_REQUIREMENT")
+    if ph_horizon < float(manual.trial.minimum_ph_observation_seconds):
+        blockers.append("PH_MONITOR_HORIZON_SHORTER_THAN_TRIAL_REQUIREMENT")
+
+    return tuple(dict.fromkeys(blockers))
 
 
 def evaluate_local_step_session_readiness(
@@ -93,8 +152,20 @@ def evaluate_local_step_session_readiness(
             if level.required_independent_days is None:
                 blockers.append("TRIAL_LEVEL_REQUIRED_INDEPENDENT_DAYS_UNRESOLVED")
 
+    consistency_blockers = _cross_profile_blockers(design, observation)
+    blockers.extend(consistency_blockers)
+    cross_profile_consistent = (
+        design_ready and observation_ready and not consistency_blockers
+    )
+
     blockers = tuple(dict.fromkeys(blockers))
-    ready = design_ready and observation_ready and matrix_level_ready and not blockers
+    ready = (
+        design_ready
+        and observation_ready
+        and matrix_level_ready
+        and cross_profile_consistent
+        and not blockers
+    )
     return LocalStepSessionReadiness(
         ready=ready,
         status="READY_FOR_SUPERVISED_MANUAL_SESSION" if ready else "NOT_READY",
@@ -103,6 +174,7 @@ def evaluate_local_step_session_readiness(
         design_ready=design_ready,
         observation_ready=observation_ready,
         matrix_level_ready=matrix_level_ready,
+        cross_profile_consistent=cross_profile_consistent,
         automatic_execution_allowed=False,
         dcs_write_enabled=False,
         learning_permission=False,
@@ -112,6 +184,12 @@ def evaluate_local_step_session_readiness(
             "matrix_id": matrix.matrix_id,
             "manual_human_approval_still_required_after_readiness": True,
             "normal_runtime_activation_allowed": False,
+            "cross_profile_semantics": {
+                "max_sample_gap": "MUST_MATCH",
+                "tracking_target_deadband": "MUST_BE_BELOW_TEST_STEP",
+                "tracking_reach_tolerance": "MUST_NOT_EXCEED_STEP_ERROR_GATE",
+                "response_horizon": "MUST_COVER_TRIAL_MINIMUM_OBSERVATION",
+            },
         },
     )
 
