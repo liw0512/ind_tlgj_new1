@@ -79,6 +79,12 @@ class Scheme2SingleSourceParameterTest(unittest.TestCase):
         self.assertEqual(status["target_hard_min"], target["minimum"])
         self.assertEqual(status["target_hard_max"], target["maximum"])
 
+    def test_feedback_column_must_match_tower_supply_flow_mapping(self):
+        plant = copy.deepcopy(PLANT_CONFIG)
+        plant["scheme2"]["target_supply_flow"]["feedback_column"] = "wrong_flow"
+        with self.assertRaises(ValueError):
+            primary_tower_contract(plant)
+
     def test_ph_arbitration_plant_values_are_derived_from_primary_tower(self):
         tower = primary_tower_contract()
         ph = ph_arbitration_plant_values()
