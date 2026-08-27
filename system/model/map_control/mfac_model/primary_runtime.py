@@ -1,23 +1,16 @@
 # -*- coding: utf-8 -*-
 """Unified primary runtime policy for Scheme 2 MFAC.
 
-This module is the single second-module runtime facade used after
-``condition_model``.  It owns Dynamic Qbase calculation exactly once per
-10-second decision frame and then chooses one of two *mutually exclusive*
-execution modes:
+This is the single second-module runtime facade after ``condition_model``.  It
+calculates Dynamic Qbase exactly once per 10-second decision frame and executes
+one, and only one, target path:
 
-1. SAFE_PRIMARY_FALLBACK
-   No calibrated coordinator has been installed yet.  The runtime publishes
-   ``clip(Qbase + 0, 0, 70)`` and does not claim tracking, learning, residual
-   control or DCS application.
-2. COORDINATOR_SHADOW
-   A calibrated ``Scheme2RuntimeCoordinator`` has been installed.  The same
-   already-computed Qbase is passed into that coordinator, which becomes the
-   sole owner of target publication, flow tracking, SO2/pH response state,
-   online adaptation and residual HOLD semantics.
+- SAFE_PRIMARY_FALLBACK: ``clip(Qbase + 0, 0, 70)``;
+- COORDINATOR_SHADOW: the already-computed Qbase enters the dual-response
+  ``Scheme2RuntimeCoordinator``, which becomes the sole target owner.
 
-The two paths never execute in the same cycle.  Historical/actual slurry flow
-is audit/response evidence only and is never an algorithm-target fallback.
+Actual slurry flow remains tracking/response evidence only and is never an
+algorithm-target fallback.
 """
 
 from __future__ import annotations
@@ -32,7 +25,7 @@ from .qbase import DynamicQbaseCalculator
 from .runtime_coordinator import Scheme2RuntimeCoordinator
 
 
-MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V2_UNIFIED"
+MFAC_PRIMARY_RUNTIME_VERSION = "SCHEME2_MFAC_PRIMARY_RUNTIME_V3_UNIFIED"
 
 
 def _active_version(pointer: Optional[Mapping[str, Any]], fallback: str = "") -> str:
@@ -133,9 +126,9 @@ class MFACUnifiedRuntimePolicy:
     ) -> None:
         """Install the calibrated coordinator as the unique target owner.
 
-        This production bridge is deliberately fail-closed at the current
-        activation stage.  Learning, non-zero residual control and DCS write
-        remain prohibited until those stages are separately reviewed.
+        Last-valid target continuity is transferred from the fallback publisher
+        into a newly installed coordinator.  This prevents an invalid-input
+        cycle at the mode boundary from losing HOLD_LAST state.
         """
         if not isinstance(coordinator, Scheme2RuntimeCoordinator):
             raise TypeError("coordinator must be Scheme2RuntimeCoordinator")
@@ -149,10 +142,27 @@ class MFACUnifiedRuntimePolicy:
             context_resolver, MFACContextResolver
         ):
             raise TypeError("context_resolver must be MFACContextResolver")
+
+        previous_target = self._fallback_target_publisher.last_valid_algorithm_target
+        if (
+            previous_target is not None
+            and coordinator.target_publisher.last_valid_algorithm_target is None
+        ):
+            coordinator.target_publisher.restore_last_valid_algorithm_target(
+                previous_target
+            )
         self._runtime_coordinator = coordinator
         self._configured_context_resolver = context_resolver
 
     def clear_runtime_coordinator(self) -> None:
+        """Return to safe fallback without losing the last algorithm target."""
+        coordinator = self._runtime_coordinator
+        if coordinator is not None:
+            previous_target = coordinator.target_publisher.last_valid_algorithm_target
+            if previous_target is not None:
+                self._fallback_target_publisher.restore_last_valid_algorithm_target(
+                    previous_target
+                )
         self._runtime_coordinator = None
         self._configured_context_resolver = None
 
@@ -191,8 +201,6 @@ class MFACUnifiedRuntimePolicy:
             )
             return algorithm, 0.0, None, "SAFE_PRIMARY_FALLBACK"
 
-        # The coordinator is the only target publisher in this branch.  Qbase
-        # has already been calculated above and is not recalculated here.
         context = self._context(row)
         self._coordinator_cycle_count += 1
         cycle = coordinator.process_cycle(
@@ -210,8 +218,7 @@ class MFACUnifiedRuntimePolicy:
             base_condition_id=context.base_condition_id,
             grid_id=context.grid_id,
             policy_region_id=context.policy_region_id,
-            # Current production integration cannot claim a DCS command was
-            # applied.  Formal application/readback remains a future adapter.
+            # No formal DCS application/readback adapter is active yet.
             target_was_applied=False,
             dcs_applied_target_supply_flow=None,
             replay_semantics=ONLINE_SHADOW,
@@ -348,8 +355,6 @@ class MFACUnifiedRuntimePolicy:
         return decision
 
     def record_execution(self, feedback: Dict[str, Any]) -> Dict[str, Any]:
-        # Keep this fail-closed until a formal DCS application/readback adapter
-        # is reviewed and connected to the coordinator.
         return {
             "accepted": False,
             "status": "MFAC_FORMAL_DCS_ADAPTER_NOT_ENABLED",
@@ -406,5 +411,5 @@ class MFACUnifiedRuntimePolicy:
         }
 
 
-# Temporary API alias.  New code should use MFACUnifiedRuntimePolicy.
+# Temporary API alias. New code should use MFACUnifiedRuntimePolicy.
 MFACPrimaryPolicy = MFACUnifiedRuntimePolicy
