@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """Evidence-first offline bootstrap for the positive pH response channel.
 
-Only LOCAL_GAIN events may seed ``phi_ph``.  Historical pulse/boost actions are
+Only LOCAL_GAIN events may seed ``phi_ph``. Historical pulse/boost actions are
 kept for dynamic and safety evidence but are intentionally excluded from this
 local sensitivity estimator.
+
+Manual local-step evidence must additionally pass an explicit multi-trial
+cohort bootstrap review. Individual reviewed trials cannot seed ``phi_ph`` by
+themselves.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -109,6 +113,22 @@ def _historical_local_gain_allowed(event: ActionResponseEvent) -> bool:
     return metadata.get("historical_local_gain_eligible") is True
 
 
+def _manual_local_gain_bootstrap_allowed(event: ActionResponseEvent) -> bool:
+    """Require explicit cohort approval for supervised manual local-step data."""
+    if str(event.action_source or "").upper() != (
+        "MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED"
+    ):
+        return True
+    metadata = dict(event.metadata or {})
+    return (
+        metadata.get("evidence_role") == "LOCAL_GAIN"
+        and metadata.get("manual_evidence_review_approved") is True
+        and metadata.get("cohort_bootstrap_review_approved") is True
+        and metadata.get("offline_bootstrap_evidence_allowed") is True
+        and metadata.get("automatic_online_adaptation_allowed") is False
+    )
+
+
 def _event_phi(event: ActionResponseEvent) -> Optional[float]:
     delta_q = _finite(event.delta_q_actual)
     delta_ph = _finite(event.delta_ph)
@@ -176,6 +196,8 @@ def build_ph_bootstrap_evidence(
             continue
         if not _historical_local_gain_allowed(event):
             continue
+        if not _manual_local_gain_bootstrap_allowed(event):
+            continue
         phi = _event_phi(event)
         if phi is None or phi <= 0.0:
             continue
@@ -218,6 +240,7 @@ def build_ph_bootstrap_evidence(
                 metadata={
                     "confidence_status": "NOT_CALIBRATED",
                     "evidence_role_required": "LOCAL_GAIN",
+                    "manual_local_gain_requires_cohort_review": True,
                     "operator_action_imitation": False,
                     "replay_eta": float(replay_config.eta),
                     "replay_mu": float(replay_config.mu),
