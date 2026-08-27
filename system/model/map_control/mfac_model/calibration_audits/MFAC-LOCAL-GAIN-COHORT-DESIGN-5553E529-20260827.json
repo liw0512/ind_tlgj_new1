@@ -1,0 +1,57 @@
+{
+  "semantics_version": "SCHEME2_LOCAL_GAIN_COHORT_PROFILE_V1_REVIEW_GATED",
+  "profile_id": "MFAC-LOCAL-GAIN-COHORT-DESIGN-5553E529-20260827",
+  "source_design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
+  "source_trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
+  "status": "INCOMPLETE_REVIEW_REQUIRED",
+  "activation_status": "NOT_ACTIVATABLE",
+  "automatic_execution_allowed": false,
+  "dcs_write_enabled": false,
+  "learning_permission": false,
+  "count_day_authority": {
+    "owner": "LocalStepTrialMatrix",
+    "duplicated_here": false,
+    "required_valid_trials": "READ_FROM_REVIEWED_TRIAL_LEVEL",
+    "required_independent_days": "READ_FROM_REVIEWED_TRIAL_LEVEL"
+  },
+  "review_candidate_parameters": {
+    "max_relative_mad_delta_q": null,
+    "max_relative_mad_phi_so2": null,
+    "max_relative_mad_phi_ph": null,
+    "max_relative_deviation_delta_q": null,
+    "max_relative_deviation_phi_so2": null,
+    "max_relative_deviation_phi_ph": null
+  },
+  "reviewed_parameters": {
+    "max_relative_mad_delta_q": null,
+    "max_relative_mad_phi_so2": null,
+    "max_relative_mad_phi_ph": null,
+    "max_relative_deviation_delta_q": null,
+    "max_relative_deviation_phi_so2": null,
+    "max_relative_deviation_phi_ph": null
+  },
+  "decision_contract": {
+    "individual_reviewed_trial": "NOT_BOOTSTRAP_ELIGIBLE_BY_ITSELF",
+    "minimum_count_and_days": "OWNED_BY_TRIAL_MATRIX",
+    "cross_trial_statistics": "MEDIAN_MAD_AND_MAX_RELATIVE_DEVIATION",
+    "quantitative_pass_status": "ADEQUATE_FOR_BOOTSTRAP_REVIEW",
+    "quantitative_pass_grants_learning_permission": false,
+    "explicit_human_cohort_review_required": true,
+    "approved_event_output": "BOOTSTRAP_ELIGIBLE_COPY_ONLY",
+    "automatic_online_adaptation_allowed": false,
+    "normal_runtime_activation_allowed": false
+  },
+  "evidence_gap": {
+    "reviewed_local_gain_trial_count": 0,
+    "consistency_thresholds": "UNIDENTIFIED_REVIEW_REQUIRED",
+    "reason": "Historical large operator pulses are DYNAMIC/SAFETY evidence and must not be used to fabricate local +2 m3/h cross-trial consistency limits."
+  },
+  "notes": [
+    "No relative-MAD or max-relative-deviation threshold is inferred from historical large pulses.",
+    "The Trial Matrix remains the only authority for required_valid_trials and required_independent_days.",
+    "A single individually reviewed +2 m3/h event remains insufficient for SO2 or pH bootstrap.",
+    "Both phi_so2 and phi_ph must pass the same cohort identity binding but have independent dispersion checks.",
+    "Passing this quantitative gate only creates ADEQUATE_FOR_BOOTSTRAP_REVIEW; a further explicit human cohort review is required.",
+    "Production remains LEARN=0, Residual=0, DCS write=off."
+  ]
+}
