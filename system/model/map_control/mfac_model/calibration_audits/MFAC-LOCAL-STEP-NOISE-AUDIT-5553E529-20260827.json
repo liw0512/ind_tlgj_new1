@@ -1,0 +1,89 @@
+{
+  "semantics_version": "SCHEME2_LOCAL_STEP_NOISE_AUDIT_V1",
+  "audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
+  "source_file": "new_data_train_10s.csv",
+  "source_sha256": "5553e529b1f222544b40b9e31e992584e87b4c4c1cbb51eea2bf460595b3ea23",
+  "source_rows": 298875,
+  "activation_status": "NOT_ACTIVATABLE",
+  "review_status": "REVIEW_REQUIRED",
+  "timestamp_gap_audit": {
+    "interval_count": 298874,
+    "exact_10s_count": 298774,
+    "exact_10s_ratio": 0.9996654108,
+    "gap_gt_30s_count": 91,
+    "gap_gt_60s_count": 49,
+    "gap_gt_120s_count": 30,
+    "maximum_gap_seconds": 145140.0,
+    "max_sample_gap_review_candidate_seconds": 30.0,
+    "candidate_semantics": "allows up to two missing nominal 10s samples; larger gaps invalidate causal trial continuity"
+  },
+  "two_minute_stability_audit": {
+    "complete_2min_windows": 24837,
+    "stable_in_supply_windows": 922,
+    "stable_in_supply_filter": {
+      "pump_2a_frequency_min_gt_hz": 1.0,
+      "actual_supply_flow_median_gt_m3_h": 2.0,
+      "ph_median_range": [6.05, 6.35],
+      "actual_supply_flow_range_max_m3_h": 0.51
+    },
+    "ph_range_with_outlet_so2_first_last_change_le_2_count": 224,
+    "ph_range_with_outlet_so2_first_last_change_le_2": {
+      "p25": 0.0218,
+      "p50": 0.0480,
+      "p75": 0.0700,
+      "p90": 0.0997,
+      "p95": 0.1257
+    },
+    "max_ph_baseline_range_review_candidate": 0.05,
+    "candidate_basis": "approximately the median 2-minute pH range among stable-flow windows whose outlet SO2 first-last change is <=2 mg/Nm3"
+  },
+  "strict_low_disturbance_noise_windows": {
+    "count": 43,
+    "filter": {
+      "pump_2a_frequency_min_gt_hz": 1.0,
+      "actual_supply_flow_median_gt_m3_h": 2.0,
+      "ph_median_range": [6.05, 6.35],
+      "actual_supply_flow_range_max_m3_h": 0.51,
+      "abs_inlet_so2_first_last_change_max_mg_nm3": 50.0,
+      "abs_outlet_so2_first_last_change_max_mg_nm3": 2.0,
+      "ph_range_max": 0.05
+    },
+    "method": "absolute difference between first-minute and second-minute medians inside each independent 2-minute window",
+    "ph_half_window_median_difference": {
+      "p50": 0.0180,
+      "p90": 0.0268,
+      "p95": 0.0295,
+      "p99": 0.0346,
+      "max": 0.0380
+    },
+    "outlet_so2_half_window_median_difference_mg_nm3": {
+      "p50": 0.5805,
+      "p90": 1.1022,
+      "p95": 1.4098,
+      "p99": 2.1638,
+      "max": 2.2390
+    },
+    "inlet_so2_half_window_median_difference_mg_nm3": {
+      "p50": 15.6445,
+      "p90": 30.3921,
+      "p95": 34.2262,
+      "p99": 37.2351,
+      "max": 37.6135
+    }
+  },
+  "review_implications": {
+    "max_sample_gap_seconds": 30.0,
+    "max_ph_baseline_range": 0.05,
+    "min_abs_delta_ph": null,
+    "min_abs_delta_so2": null,
+    "min_effect_rule": "reviewed minimum effect must be explicitly selected above the empirical low-disturbance noise floor; this audit does not choose the safety multiplier",
+    "max_abs_inlet_so2_change": null,
+    "max_abs_actual_minus_qbase": null,
+    "notes": [
+      "The 43 strict noise windows are sufficient to expose an empirical noise floor but not to define a production confidence multiplier by themselves.",
+      "Historical CSV lacks the runtime outlet_so2_target needed to reconstruct strict Qbase proximity, so max_abs_actual_minus_qbase cannot be calibrated from this file alone.",
+      "The inlet-SO2 <=50 mg/Nm3 condition is part of the strict-noise selection and therefore cannot be claimed as newly estimated from that same selected subset.",
+      "All values remain audit/review candidates; no runtime or manual test permission is granted."
+    ]
+  }
+}
