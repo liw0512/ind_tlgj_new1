@@ -35,6 +35,12 @@ from .local_step_identification import (
     LocalStepIdentificationGate,
     LocalStepIdentificationProposal,
 )
+from .local_step_observation_profile import (
+    LOCAL_STEP_OBSERVATION_PROFILE_VERSION,
+    LocalStepObservationMonitors,
+    LocalStepObservationProfile,
+    load_local_step_observation_profile,
+)
 from .local_step_trial_matrix import (
     LOCAL_STEP_TRIAL_MATRIX_VERSION,
     LocalStepTrialLevel,
@@ -194,6 +200,7 @@ __all__ = [
     "FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION",
     "LOCAL_STEP_DESIGN_PROFILE_VERSION",
     "LOCAL_STEP_IDENTIFICATION_VERSION",
+    "LOCAL_STEP_OBSERVATION_PROFILE_VERSION",
     "LOCAL_STEP_TRIAL_PROTOCOL_VERSION",
     "LOCAL_STEP_TRIAL_MATRIX_VERSION",
     "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
@@ -272,6 +279,9 @@ __all__ = [
     "LocalStepIdentificationConfig",
     "LocalStepIdentificationProposal",
     "LocalStepIdentificationGate",
+    "LocalStepObservationMonitors",
+    "LocalStepObservationProfile",
+    "load_local_step_observation_profile",
     "LocalStepTrialProtocolConfig",
     "LocalStepTrialPlan",
     "approve_local_step_proposal",
