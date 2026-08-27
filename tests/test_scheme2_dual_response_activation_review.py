@@ -1,15 +1,20 @@
 import unittest
 
+from system.model.map_control.mfac_model.channel_calibration_review import (
+    ObservedResponseTimingEvidence,
+    approve_channel_calibration,
+)
 from system.model.map_control.mfac_model.dual_response_activation_review import (
     DualResponseActivationPrerequisites,
     evaluate_dual_response_activation_readiness,
 )
 from system.model.map_control.mfac_model.dual_response_calibration_profile import (
-    CHANNEL_CALIBRATED,
     CHANNEL_INSUFFICIENT_EVIDENCE,
+    CHANNEL_LOCAL_GAIN_READY,
     DualResponseCalibrationProfile,
     DualResponseChannelCalibration,
 )
+from system.model.map_control.mfac_model.mfac_schema import DelayProfile
 
 
 class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
@@ -28,28 +33,57 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
         }
 
     @classmethod
-    def channel(cls, name):
+    def local_gain(cls, name):
         return DualResponseChannelCalibration(
             channel=name,
-            status=CHANNEL_CALIBRATED,
+            status=CHANNEL_LOCAL_GAIN_READY,
             phi_prior=-4.0 if name == "SO2" else 0.05,
             phi_live0=-4.1 if name == "SO2" else 0.051,
-            confidence=0.8,
             valid_event_count=3,
             independent_days=2,
-            response_config=cls.response_config(),
             evidence_event_ids=("E1", "E2", "E3"),
+        )
+
+    @staticmethod
+    def timing(name):
+        return ObservedResponseTimingEvidence(
+            evidence_id="TIMING-%s" % name,
+            channel=name,
+            condition_snapshot_version="v001",
+            mfac_context_id="CTX",
+            delay_profile=DelayProfile(
+                onset_p50_seconds=80.0,
+                onset_p90_seconds=100.0,
+                response_p50_seconds=400.0,
+                response_p90_seconds=550.0,
+            ),
+            event_ids=("E1", "E2"),
+            observed_event_count=2,
+            independent_days=2,
         )
 
     @classmethod
     def calibrated_profile(cls):
-        return DualResponseCalibrationProfile(
+        profile = DualResponseCalibrationProfile(
             profile_id="CAL-P1",
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
-            so2=cls.channel("SO2"),
-            ph=cls.channel("PH"),
+            so2=cls.local_gain("SO2"),
+            ph=cls.local_gain("PH"),
         )
+        for channel in ("SO2", "PH"):
+            result = approve_channel_calibration(
+                profile,
+                channel=channel,
+                timing_evidence=cls.timing(channel),
+                response_config=cls.response_config(),
+                confidence=0.8,
+                human_approved=True,
+                reviewer_id="activation-fixture-cal-review",
+                review_time="2026-08-27T17:35:00+08:00",
+            )
+            profile = result.profile
+        return profile
 
     @staticmethod
     def prerequisites(**overrides):
@@ -110,13 +144,23 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
             profile_id="CAL-P2",
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
-            so2=self.channel("SO2"),
+            so2=self.local_gain("SO2"),
             ph=DualResponseChannelCalibration(
                 channel="PH",
                 status=CHANNEL_INSUFFICIENT_EVIDENCE,
                 reason_codes=("INSUFFICIENT_EVIDENCE",),
             ),
         )
+        profile = approve_channel_calibration(
+            profile,
+            channel="SO2",
+            timing_evidence=self.timing("SO2"),
+            response_config=self.response_config(),
+            confidence=0.8,
+            human_approved=True,
+            reviewer_id="activation-fixture-cal-review",
+            review_time="2026-08-27T17:35:00+08:00",
+        ).profile
         result = evaluate_dual_response_activation_readiness(
             profile,
             self.prerequisites(),
