@@ -9,7 +9,7 @@ from .data_loader import assign_continuous_segments, load_input_data
 from .episode_extractor import extract_decision_episodes
 from .historical_evidence import enrich_historical_episode_frame
 from .schema import freeze_condition_axes
-from .signal_processing import add_clean_supply_flow_columns
+from .signal_processing import add_clean_supply_flow_columns, clean_supply_flow_column
 
 
 ProgressCallback = Callable[[float, str], None]
@@ -68,6 +68,40 @@ def _validate_previous_semantics(previous_effective_config: dict[str, Any] | Non
         raise ValueError("供浆流量测点拓扑已变化，请重新初次训练。")
 
 
+def _evidence_history_with_clean_flow(
+    raw_df: pd.DataFrame,
+    plant: dict[str, Any],
+) -> pd.DataFrame:
+    """Use the detector's cleaned tower flow for offline dose metrics.
+
+    Historical episode baselines are measured on ``__clean_supply_flow__*``.
+    For the current one-meter-per-tower evidence contract, expose that same
+    signal under the physical meter name in an isolated copy so dose integrals
+    and event deltas share one signal basis.  The caller's frame is untouched.
+    """
+    result = raw_df
+    copied = False
+    for tower in plant.get("towers", []) or []:
+        if not tower.get("enabled", True):
+            continue
+        tower_id = str(tower.get("tower_id") or "").strip()
+        meters = [
+            str(item.get("column") or "").strip()
+            for item in tower.get("supply_flows", []) or []
+            if str(item.get("column") or "").strip()
+        ]
+        if len(meters) != 1:
+            continue
+        clean_column = clean_supply_flow_column(tower_id)
+        if clean_column not in raw_df.columns:
+            continue
+        if not copied:
+            result = raw_df.copy()
+            copied = True
+        result[meters[0]] = raw_df[clean_column]
+    return result
+
+
 def prepare_raw_data(input_specs: list[str] | str, plant: dict[str, Any], training: dict[str, Any], progress: ProgressCallback | None = None) -> tuple[pd.DataFrame, list[str]]:
     training = freeze_condition_axes(training)
     df, warnings = load_input_data(input_specs, plant, training, progress=_emit_range(progress, 0.00, 0.72))
@@ -106,7 +140,7 @@ def run_episode_pipeline(
             progress(0.64, "生成MFAC历史剂量指标并执行LOCAL/DYNAMIC/SAFETY证据分流")
         episodes = enrich_historical_episode_frame(
             episodes,
-            raw_df,
+            _evidence_history_with_clean_flow(raw_df, plant),
             plant,
             routing_config=training.get("mfac_historical_evidence", {}),
         )
@@ -121,8 +155,6 @@ def run_episode_pipeline(
             previous_effective_config.get("response", training.get("response", {}))
         )
     else:
-        # 流量动作的峰值、最终值、持续时间和响应时间直接在
-        # supply_flow_prototype 中按分布学习。
         effective_action = {"semantics": "ACTUAL_SUPPLY_FLOW_V1"}
         effective_response = copy.deepcopy(training.get("response", {}))
 
@@ -154,9 +186,7 @@ def run_episode_pipeline(
             % (len(valid), len(invalid), local_gain_count, dynamic_count, safety_count),
         )
 
-    aggregated = {
-        "conditions": {},
-    }
+    aggregated = {"conditions": {}}
     if progress:
         progress(1.0, "供浆流量动作提取完成，等待生成MFAC历史证据")
 
