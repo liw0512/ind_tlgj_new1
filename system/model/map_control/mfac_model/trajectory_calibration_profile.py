@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Audit-only calibration profiles for delayed pH memory and staircase planning.
+"""Audit-only calibration profiles for delayed pH rise, recovery and trajectory planning.
 
-The profile deliberately separates observed historical evidence from reviewed
-runtime calibration. A profile produced by this module is NEVER activatable by
-itself and cannot silently become ``PendingDoseGuardConfig`` or
-``FlowTrajectoryPlannerConfig``.
+The profile separates three distinct physical questions:
+
+* PendingDoseGuard: how long until a new delta-Q starts affecting pH and reaches
+  its full step-response effect (onset/peak);
+* pulse recovery: what happens after a later negative return step starts
+  cancelling an earlier positive step (half-decay/recovery-to-baseline band);
+* trajectory planning: how long to HOLD before observing enough SO2 response and
+  what step magnitudes are supported.
+
+No object in this module can activate runtime control or silently convert audit
+evidence into production calibration.
 """
 
 from __future__ import annotations
@@ -15,6 +22,9 @@ from typing import Any, Dict, Mapping, Optional
 
 
 TRAJECTORY_CALIBRATION_PROFILE_VERSION = (
+    "SCHEME2_TRAJECTORY_CALIBRATION_PROFILE_V2_RECOVERY_SEPARATED"
+)
+LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION = (
     "SCHEME2_TRAJECTORY_CALIBRATION_PROFILE_V1_AUDIT_ONLY"
 )
 
@@ -61,31 +71,83 @@ class CalibrationQuantiles:
 
 @dataclass(frozen=True)
 class PendingDoseCalibrationCandidate:
+    """Only onset/peak belong to pending future-effect prediction."""
+
     ph_onset_seconds: CalibrationQuantiles
     ph_peak_seconds: CalibrationQuantiles
-    memory_observation_window_seconds: float
-    memory_event_count: int
-    memory_half_decay_observed_count: int
-    memory_right_censored_ratio: float
     response_onset_candidate_seconds: Optional[float]
     response_peak_candidate_seconds: Optional[float]
-    response_memory_candidate_seconds: Optional[float]
-    response_memory_lower_bound_seconds: Optional[float]
     status: str = "REVIEW_REQUIRED"
-    reason: str = "FULL_PH_MEMORY_NOT_IDENTIFIED"
+    reason: str = "PENDING_RISE_TIMING_REQUIRES_REVIEW"
 
     def __post_init__(self) -> None:
-        if int(self.memory_event_count) < 0:
-            raise ValueError("memory_event_count must be >= 0")
-        observed = int(self.memory_half_decay_observed_count)
-        if observed < 0 or observed > int(self.memory_event_count):
-            raise ValueError("invalid memory_half_decay_observed_count")
-        ratio = _finite(self.memory_right_censored_ratio)
-        if ratio is None or not 0.0 <= ratio <= 1.0:
-            raise ValueError("memory_right_censored_ratio must be within [0, 1]")
-        window = _finite(self.memory_observation_window_seconds)
-        if window is None or window <= 0.0:
-            raise ValueError("memory_observation_window_seconds must be > 0")
+        onset = _finite(self.response_onset_candidate_seconds)
+        peak = _finite(self.response_peak_candidate_seconds)
+        if self.response_onset_candidate_seconds is not None and (
+            onset is None or onset < 0.0
+        ):
+            raise ValueError("response_onset_candidate_seconds must be >= 0")
+        if self.response_peak_candidate_seconds is not None and (
+            peak is None or peak <= 0.0
+        ):
+            raise ValueError("response_peak_candidate_seconds must be > 0")
+        if onset is not None and peak is not None and peak <= onset:
+            raise ValueError("pending response peak must be after onset")
+
+
+@dataclass(frozen=True)
+class PHRecoveryCalibrationAudit:
+    """Pulse-recovery evidence; never a PendingDoseGuard response-memory input."""
+
+    pulse_end_to_peak_seconds: CalibrationQuantiles
+    peak_to_half_decay_seconds: CalibrationQuantiles
+    pulse_end_to_half_decay_seconds: CalibrationQuantiles
+    pulse_end_to_recovery_band_seconds: CalibrationQuantiles
+    analyzed_event_count: int
+    half_decay_observed_count: int
+    recovery_observed_count: int
+    recovery_band_above_baseline: float
+    recovery_sustain_seconds: float
+    quiet_time_review_candidate_seconds: Optional[float] = None
+    status: str = "REVIEW_REQUIRED"
+    reason: str = "PULSE_RECOVERY_IS_NOT_PENDING_STEP_MEMORY"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        total = int(self.analyzed_event_count)
+        half = int(self.half_decay_observed_count)
+        recovered = int(self.recovery_observed_count)
+        if total < 0 or half < 0 or recovered < 0:
+            raise ValueError("recovery event counts must be >= 0")
+        if half > total or recovered > total:
+            raise ValueError("recovery observed counts cannot exceed total")
+        band = _finite(self.recovery_band_above_baseline)
+        sustain = _finite(self.recovery_sustain_seconds)
+        if band is None or band < 0.0:
+            raise ValueError("recovery_band_above_baseline must be >= 0")
+        if sustain is None or sustain <= 0.0:
+            raise ValueError("recovery_sustain_seconds must be > 0")
+        quiet = _finite(self.quiet_time_review_candidate_seconds)
+        if self.quiet_time_review_candidate_seconds is not None and (
+            quiet is None or quiet <= 0.0
+        ):
+            raise ValueError("quiet_time_review_candidate_seconds must be > 0")
+
+    @property
+    def half_decay_right_censored_ratio(self) -> float:
+        if self.analyzed_event_count <= 0:
+            return 1.0
+        return 1.0 - float(self.half_decay_observed_count) / float(
+            self.analyzed_event_count
+        )
+
+    @property
+    def recovery_right_censored_ratio(self) -> float:
+        if self.analyzed_event_count <= 0:
+            return 1.0
+        return 1.0 - float(self.recovery_observed_count) / float(
+            self.analyzed_event_count
+        )
 
 
 @dataclass(frozen=True)
@@ -132,6 +194,7 @@ class Scheme2TrajectoryCalibrationProfile:
     clean_dynamic_candidate_count: int
     validated_dynamic_event_count: int
     pending_dose: PendingDoseCalibrationCandidate
+    ph_recovery: PHRecoveryCalibrationAudit
     trajectory_planner: TrajectoryPlannerCalibrationCandidate
     safety: HistoricalSafetyEvidenceSummary
     local_gain_status: str = "INSUFFICIENT_EVIDENCE"
@@ -149,27 +212,64 @@ class Scheme2TrajectoryCalibrationProfile:
         if cadence is None or cadence <= 0.0:
             raise ValueError("source_cadence_seconds must be > 0")
         if str(self.activation_status) != "NOT_ACTIVATABLE":
-            raise ValueError("V1 historical candidate profile must remain NOT_ACTIVATABLE")
-        if str(self.semantics_version) != TRAJECTORY_CALIBRATION_PROFILE_VERSION:
+            raise ValueError("historical candidate profile must remain NOT_ACTIVATABLE")
+        if str(self.semantics_version) not in {
+            TRAJECTORY_CALIBRATION_PROFILE_VERSION,
+            LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION,
+        }:
             raise ValueError("unsupported trajectory calibration profile semantics")
+
+    @staticmethod
+    def _legacy_recovery(pending: Mapping[str, Any]) -> PHRecoveryCalibrationAudit:
+        """Preserve V1 audit history without treating it as a runtime memory."""
+        total = int(pending.get("memory_event_count", 0))
+        half = int(pending.get("memory_half_decay_observed_count", 0))
+        return PHRecoveryCalibrationAudit(
+            pulse_end_to_peak_seconds=CalibrationQuantiles(count=0),
+            peak_to_half_decay_seconds=CalibrationQuantiles(count=0),
+            pulse_end_to_half_decay_seconds=CalibrationQuantiles(count=0),
+            pulse_end_to_recovery_band_seconds=CalibrationQuantiles(count=0),
+            analyzed_event_count=total,
+            half_decay_observed_count=half,
+            recovery_observed_count=0,
+            recovery_band_above_baseline=0.05,
+            recovery_sustain_seconds=120.0,
+            quiet_time_review_candidate_seconds=None,
+            status="LEGACY_AUDIT_ONLY",
+            reason="V1_MEMORY_FIELDS_RETAINED_FOR_TRACEABILITY_NOT_PENDING_CONTROL",
+            metadata={
+                "legacy_memory_observation_window_seconds": pending.get(
+                    "memory_observation_window_seconds"
+                ),
+                "legacy_response_memory_candidate_seconds": pending.get(
+                    "response_memory_candidate_seconds"
+                ),
+                "legacy_response_memory_lower_bound_seconds": pending.get(
+                    "response_memory_lower_bound_seconds"
+                ),
+                "legacy_memory_right_censored_ratio": pending.get(
+                    "memory_right_censored_ratio"
+                ),
+            },
+        )
 
     @classmethod
     def from_audit_mapping(
         cls,
         value: Mapping[str, Any],
     ) -> "Scheme2TrajectoryCalibrationProfile":
-        """Validate one serialized historical audit artifact.
-
-        This loader intentionally does not expose an activation conversion. It
-        only turns the audit JSON into a typed, fail-closed object.
-        """
         payload = dict(value or {})
         source = dict(payload.get("source") or {})
         extraction = dict(payload.get("extraction") or {})
         timing = dict(payload.get("observed_timing_seconds") or {})
         pending = dict(payload.get("pending_dose_candidate") or {})
+        recovery = dict(payload.get("ph_recovery_audit") or {})
         planner = dict(payload.get("trajectory_planner_candidate") or {})
         safety = dict(payload.get("safety") or {})
+        semantics = str(
+            payload.get("semantics_version")
+            or TRAJECTORY_CALIBRATION_PROFILE_VERSION
+        )
 
         ph_onset = CalibrationQuantiles.from_mapping(
             dict(timing.get("ph_turn_onset") or {})
@@ -187,31 +287,53 @@ class Scheme2TrajectoryCalibrationProfile:
         pending_candidate = PendingDoseCalibrationCandidate(
             ph_onset_seconds=ph_onset,
             ph_peak_seconds=ph_peak,
-            memory_observation_window_seconds=pending.get(
-                "memory_observation_window_seconds"
-            ),
-            memory_event_count=int(pending.get("memory_event_count", 0)),
-            memory_half_decay_observed_count=int(
-                pending.get("memory_half_decay_observed_count", 0)
-            ),
-            memory_right_censored_ratio=pending.get(
-                "memory_right_censored_ratio"
-            ),
             response_onset_candidate_seconds=pending.get(
                 "response_onset_candidate_seconds"
             ),
             response_peak_candidate_seconds=pending.get(
                 "response_peak_candidate_seconds"
             ),
-            response_memory_candidate_seconds=pending.get(
-                "response_memory_candidate_seconds"
-            ),
-            response_memory_lower_bound_seconds=pending.get(
-                "response_memory_lower_bound_seconds"
-            ),
             status=str(pending.get("status") or "REVIEW_REQUIRED"),
             reason=str(pending.get("reason") or ""),
         )
+
+        if recovery:
+            recovery_audit = PHRecoveryCalibrationAudit(
+                pulse_end_to_peak_seconds=CalibrationQuantiles.from_mapping(
+                    dict(recovery.get("pulse_end_to_peak_seconds") or {})
+                ),
+                peak_to_half_decay_seconds=CalibrationQuantiles.from_mapping(
+                    dict(recovery.get("peak_to_half_decay_seconds") or {})
+                ),
+                pulse_end_to_half_decay_seconds=CalibrationQuantiles.from_mapping(
+                    dict(recovery.get("pulse_end_to_half_decay_seconds") or {})
+                ),
+                pulse_end_to_recovery_band_seconds=CalibrationQuantiles.from_mapping(
+                    dict(recovery.get("pulse_end_to_recovery_band_seconds") or {})
+                ),
+                analyzed_event_count=int(recovery.get("analyzed_event_count", 0)),
+                half_decay_observed_count=int(
+                    recovery.get("half_decay_observed_count", 0)
+                ),
+                recovery_observed_count=int(
+                    recovery.get("recovery_observed_count", 0)
+                ),
+                recovery_band_above_baseline=float(
+                    recovery.get("recovery_band_above_baseline", 0.05)
+                ),
+                recovery_sustain_seconds=float(
+                    recovery.get("recovery_sustain_seconds", 120.0)
+                ),
+                quiet_time_review_candidate_seconds=recovery.get(
+                    "quiet_time_review_candidate_seconds"
+                ),
+                status=str(recovery.get("status") or "REVIEW_REQUIRED"),
+                reason=str(recovery.get("reason") or ""),
+                metadata=dict(recovery.get("metadata") or {}),
+            )
+        else:
+            recovery_audit = cls._legacy_recovery(pending)
+
         planner_candidate = TrajectoryPlannerCalibrationCandidate(
             so2_onset_seconds=so2_onset,
             so2_trough_seconds=so2_trough,
@@ -262,6 +384,7 @@ class Scheme2TrajectoryCalibrationProfile:
                 extraction.get("validated_dynamic_event_count", 0)
             ),
             pending_dose=pending_candidate,
+            ph_recovery=recovery_audit,
             trajectory_planner=planner_candidate,
             safety=safety_summary,
             local_gain_status=str(
@@ -276,11 +399,10 @@ class Scheme2TrajectoryCalibrationProfile:
                 "permissions": dict(payload.get("permissions") or {}),
                 "notes": list(payload.get("notes") or []),
                 "actual_flow_reach": dict(timing.get("actual_flow_reach") or {}),
+                "legacy_profile_loaded": semantics
+                == LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION,
             },
-            semantics_version=str(
-                payload.get("semantics_version")
-                or TRAJECTORY_CALIBRATION_PROFILE_VERSION
-            ),
+            semantics_version=semantics,
         )
 
     @property
@@ -294,13 +416,22 @@ class Scheme2TrajectoryCalibrationProfile:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        value["ph_recovery"]["half_decay_right_censored_ratio"] = (
+            self.ph_recovery.half_decay_right_censored_ratio
+        )
+        value["ph_recovery"]["recovery_right_censored_ratio"] = (
+            self.ph_recovery.recovery_right_censored_ratio
+        )
+        return value
 
 
 __all__ = [
     "TRAJECTORY_CALIBRATION_PROFILE_VERSION",
+    "LEGACY_TRAJECTORY_CALIBRATION_PROFILE_VERSION",
     "CalibrationQuantiles",
     "PendingDoseCalibrationCandidate",
+    "PHRecoveryCalibrationAudit",
     "TrajectoryPlannerCalibrationCandidate",
     "HistoricalSafetyEvidenceSummary",
     "Scheme2TrajectoryCalibrationProfile",
