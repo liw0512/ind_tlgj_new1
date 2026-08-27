@@ -4,8 +4,9 @@
 The protocol deliberately reuses the existing actual-flow tracking and
 independent SO2/pH response events. It does not issue a command, replace the
 normal MFAC target, write DCS, or update online ``phi``. A successful trial is
-only an evidence candidate until a second explicit human evidence review
-promotes it to a canonical ``ActionResponseEvent``.
+only an evidence candidate until a second explicit human evidence review records
+one canonical event. Even that single reviewed event remains non-learning until
+a later multi-trial cohort review creates bootstrap-eligible copies.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from .process_response import ProcessResponseEvent
 
 
 LOCAL_STEP_TRIAL_PROTOCOL_VERSION = (
-    "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V2_SINGLE_ACTION_BINDING"
+    "SCHEME2_LOCAL_STEP_TRIAL_PROTOCOL_V3_SINGLE_EVENT_NON_LEARNING"
 )
 
 
@@ -583,7 +584,13 @@ def promote_local_step_evidence(
     grid_id: str = "",
     policy_region_id: str = "",
 ) -> ActionResponseEvent:
-    """Promote a successful trial after a second explicit evidence review."""
+    """Record one human-reviewed trial as non-learning LOCAL_GAIN evidence.
+
+    One successful trial is not enough to seed MFAC.  The returned event is
+    canonical evidence for later cohort consistency review, but only
+    ``approve_local_gain_cohort_for_bootstrap`` may create learning-eligible
+    copies after multi-trial review.
+    """
     if not bool(human_evidence_approved):
         raise ValueError("explicit human evidence approval is required")
     reviewer = str(reviewer_id or "").strip()
@@ -633,7 +640,7 @@ def promote_local_step_evidence(
         target_changed=False,
         condition_changed=False,
         data_quality_ok=True,
-        learning_eligible=True,
+        learning_eligible=False,
         reject_reason="",
         phi_event=outcome.phi_so2_event,
         quality_score=None,
@@ -645,8 +652,11 @@ def promote_local_step_evidence(
             "evidence_reviewer_id": reviewer,
             "phi_ph_event": outcome.phi_ph_event,
             "operator_action_imitation": False,
+            "cohort_bootstrap_review_required": True,
+            "cohort_bootstrap_review_approved": False,
+            "offline_bootstrap_evidence_allowed": False,
             "automatic_online_adaptation_allowed": False,
-            "offline_bootstrap_evidence_allowed": True,
+            "normal_runtime_activation_allowed": False,
             "return_to_baseline_learning_allowed": False,
             "manual_return_target_supply_flow": plan.manual_return_target_supply_flow,
             "trial_outcome": outcome.to_dict(),
