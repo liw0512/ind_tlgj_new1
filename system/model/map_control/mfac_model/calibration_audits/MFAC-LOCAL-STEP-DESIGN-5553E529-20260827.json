@@ -4,6 +4,7 @@
   "trial_matrix_version": "SCHEME2_LOCAL_STEP_TRIAL_MATRIX_V1_REVIEW_GATED",
   "design_id": "MFAC-LOCAL-STEP-DESIGN-5553E529-20260827",
   "source_profile_id": "MFAC-TRAJ-AUDIT-5553E529-20260827",
+  "source_noise_audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
   "status": "INCOMPLETE_REVIEW_REQUIRED",
   "activation_status": "NOT_ACTIVATABLE",
   "automatic_execution_allowed": false,
@@ -13,7 +14,9 @@
   "evidence_gap": {
     "historical_local_gain": "INSUFFICIENT_EVIDENCE",
     "low_flow_staircase_support": "OUT_OF_HISTORICAL_SUPPORT",
-    "ph_memory_upper_bound": "UNIDENTIFIED"
+    "ph_memory_upper_bound": "UNIDENTIFIED",
+    "minimum_effect_multiplier": "REVIEW_REQUIRED",
+    "qbase_proximity_without_historical_target": "UNIDENTIFIED"
   },
   "review_candidate_parameters": {
     "step_up_m3_h": 2.0,
@@ -29,22 +32,25 @@
     "ph_lower_margin_inside_operating": 0.05,
     "ph_upper_margin_inside_operating": 0.05,
     "action_timeout_seconds": 300.0,
-    "max_sample_gap_seconds": null,
+    "max_sample_gap_seconds": 30.0,
     "minimum_so2_observation_seconds": 600.0,
     "minimum_ph_observation_seconds": 900.0,
     "effect_timeout_seconds": 1800.0,
     "min_candidate_interval_seconds": 3600.0,
     "min_quiet_seconds": null,
     "max_abs_inlet_so2_change": null,
-    "max_ph_baseline_range": null,
+    "max_ph_baseline_range": 0.05,
     "outlet_so2_headroom_to_safe_max": null,
     "min_abs_delta_so2": null,
     "min_abs_delta_ph": null,
     "notes": [
       "2.0 m3/h is the inherited first-phase manual identification candidate from the 2026-08-25 design; it is not a control step limit.",
       "0.5 m3/h max_abs_step_error is only a review candidate inherited from the prior reach-tolerance candidate.",
+      "30 s max_sample_gap is supported by the 10 s cadence audit: only 91 of 298874 adjacent intervals exceed 30 s; it remains a review candidate, not a reviewed value.",
+      "0.05 pH baseline range is supported as approximately the median 2-minute pH range among stable-flow windows with outlet-SO2 first-last change <=2 mg/Nm3; it remains a review candidate.",
       "600 s is retained as an SO2 early-observation floor; dual-channel closure now requires at least 900 s so the pH P90 peak candidate near 886 s is not truncated.",
       "1800 s remains an observation timeout candidate, not a proven pH memory constant; the current pH memory lower bound is >=1800 s.",
+      "min_abs_delta_SO2/pH remain null because the CSV identifies an empirical noise floor but does not choose the engineering safety multiplier above that floor.",
       "Fields left null still require plant review or new evidence."
     ]
   },
@@ -96,7 +102,14 @@
     "planner_hold_review_candidate_seconds": 360.0,
     "sustained_extra_flow_p05_m3_h": 51.0720,
     "sustained_extra_flow_p95_m3_h": 86.3891,
-    "note": "These values constrain review but do not fill reviewed identification parameters automatically."
+    "nominal_sample_cadence_seconds": 10.0,
+    "timestamp_gap_gt_30s_count": 91,
+    "strict_noise_window_count": 43,
+    "ph_half_window_median_difference_p95": 0.0295,
+    "ph_half_window_median_difference_p99": 0.0346,
+    "outlet_so2_half_window_median_difference_p95_mg_nm3": 1.4098,
+    "outlet_so2_half_window_median_difference_p99_mg_nm3": 2.1638,
+    "note": "Timing and noise values constrain review but do not fill reviewed identification parameters automatically. Minimum-effect thresholds must be explicitly chosen above the empirical noise floor."
   },
   "required_preconditions": [
     "request explicitly enabled for a supervised identification session",
@@ -163,7 +176,7 @@
   },
   "notes": [
     "No numeric value from unit tests is a site calibration default.",
-    "Review candidates are inherited engineering candidates, not reviewed plant parameters.",
+    "Review candidates are inherited engineering or data-derived candidates, not reviewed plant parameters.",
     "The +2.0 m3/h identification stimulus is not the runtime planner max_step_up and is never a 10-second recurrent increment.",
     "A completed test must pass actual-flow tracking, independent SO2/pH response attribution and the trial evidence gate before it can inform phi.",
     "Production remains LEARN=0, Residual=0, DCS write=off."
