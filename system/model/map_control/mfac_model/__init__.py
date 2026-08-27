@@ -23,6 +23,17 @@ from .dual_response_bootstrap import (
     DualResponseBootstrapRejection,
     build_dual_response_bootstrap_evidence,
 )
+from .dual_response_calibration_profile import (
+    CHANNEL_CALIBRATED,
+    CHANNEL_INSUFFICIENT_EVIDENCE,
+    CHANNEL_LOCAL_GAIN_READY,
+    CHANNEL_REVIEW_REQUIRED,
+    CHANNEL_UNCONFIGURED,
+    DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION,
+    DualResponseCalibrationProfile,
+    DualResponseChannelCalibration,
+    build_calibration_profile_from_dual_bootstrap,
+)
 from .episode_adapter import Scheme1EpisodeToMFACAdapter, adapt_episode_frame
 from .flow_trajectory_planner import (
     FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION,
@@ -216,6 +227,7 @@ __all__ = [
     "PH_ONLINE_ADAPTATION_SEMANTICS_VERSION",
     "PH_BOOTSTRAP_SEMANTICS_VERSION",
     "DUAL_RESPONSE_BOOTSTRAP_VERSION",
+    "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
     "RESIDUAL_CONTROL_SEMANTICS_VERSION",
     "PH_ARBITRATION_SEMANTICS_VERSION",
     "PENDING_DOSE_GUARD_SEMANTICS_VERSION",
@@ -234,6 +246,11 @@ __all__ = [
     "SCHEME2_RUNTIME_STORE_VERSION",
     "SCHEME2_RUNTIME_COORDINATOR_VERSION",
     "TRAJECTORY_SHADOW_COORDINATOR_VERSION",
+    "CHANNEL_UNCONFIGURED",
+    "CHANNEL_INSUFFICIENT_EVIDENCE",
+    "CHANNEL_REVIEW_REQUIRED",
+    "CHANNEL_LOCAL_GAIN_READY",
+    "CHANNEL_CALIBRATED",
     "COUNTERFACTUAL_SHADOW",
     "ONLINE_SHADOW",
     "DEFAULT_MFAC_RUNTIME_CONFIG",
@@ -265,6 +282,9 @@ __all__ = [
     "DualResponseBootstrapBundle",
     "DualResponseBootstrapBuildResult",
     "build_dual_response_bootstrap_evidence",
+    "DualResponseChannelCalibration",
+    "DualResponseCalibrationProfile",
+    "build_calibration_profile_from_dual_bootstrap",
     "ContinuousTargetConfig",
     "ContinuousTargetDecision",
     "ContinuousTargetPublisher",
