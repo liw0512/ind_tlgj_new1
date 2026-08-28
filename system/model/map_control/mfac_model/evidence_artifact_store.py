@@ -11,8 +11,10 @@ Layout::
       objects/<sha256[:2]>/<sha256>.json
       bundles/<bundle_id>.json
 
-Loading never trusts filenames alone: every object is parsed, hashed again,
-rebuilt into typed evidence, and passed through the existing provenance verifier.
+Objects are immutable content addresses. Bundle identifiers are append-only:
+re-saving the exact same review chain is idempotent, while reusing a bundle ID
+for different provenance is rejected. Loading re-hashes every object and then
+re-runs the existing provenance verifier.
 """
 
 from __future__ import annotations
@@ -53,6 +55,18 @@ EVIDENCE_ARTIFACT_STORE_VERSION = (
 )
 
 _SAFE_BUNDLE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_MANIFEST_IDENTITY_KEYS = (
+    "schema_version",
+    "bundle_id",
+    "provenance_bundle_sha256",
+    "provenance_bundle",
+    "object_sha256",
+    "review_chain_complete",
+    "activation_status",
+    "learning_enabled",
+    "residual_control_enabled",
+    "dcs_write_enabled",
+)
 
 
 def _utc_now() -> str:
@@ -67,7 +81,6 @@ def _bundle_id(value: Any) -> str:
 
 
 def _resolve_paths(root: Optional[str | Path]) -> Tuple[Path, Path, Path]:
-    """Use the canonical production path contract unless a test root is explicit."""
     if root is None:
         return (
             Path(MFAC_EVIDENCE_ROOT),
@@ -123,6 +136,18 @@ def _object_path(objects_root: Path, sha256: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("object digest must be lowercase SHA256")
     return objects_root / digest[:2] / (digest + ".json")
+
+
+def _manifest_identity(value: Mapping[str, Any]) -> Dict[str, Any]:
+    payload = dict(value or {})
+    return {key: payload.get(key) for key in _MANIFEST_IDENTITY_KEYS}
+
+
+def _validate_existing_manifest(existing: Any, expected: Mapping[str, Any]) -> None:
+    if not isinstance(existing, dict):
+        raise ValueError("existing evidence bundle manifest is corrupt")
+    if _manifest_identity(existing) != _manifest_identity(expected):
+        raise ValueError("bundle_id already exists with different or corrupt provenance")
 
 
 def _event_payload(events: Iterable[ActionResponseEvent]) -> Tuple[Dict[str, Any], ...]:
@@ -186,18 +211,13 @@ def _ref_payloads(
     confidence_evidence: Mapping[str, ChannelConfidenceEvidence],
     calibration_profile: DualResponseCalibrationProfile,
 ) -> Dict[str, Any]:
-    """Map provenance digests to the exact semantic payload that they address."""
     payloads: Dict[str, Any] = {}
     _put_payload(
         payloads,
         bundle.cohort_approved_events_ref.sha256,
         _event_payload(cohort_approved_events),
     )
-
-    raw_by_sha = {
-        canonical_sha256(item.to_dict()): item.to_dict()
-        for item in raw_trace_bundles
-    }
+    raw_by_sha = {canonical_sha256(item.to_dict()): item.to_dict() for item in raw_trace_bundles}
     timing_by_sha = {
         canonical_sha256(item.to_dict()): item.to_dict()
         for item in dict(timing_evidence or {}).values()
@@ -206,7 +226,6 @@ def _ref_payloads(
         canonical_sha256(item.to_dict()): item.to_dict()
         for item in dict(confidence_evidence or {}).values()
     }
-
     for ref in bundle.raw_trace_refs:
         if ref.sha256 not in raw_by_sha:
             raise ValueError("raw trace payload is missing for provenance ref %s" % ref.artifact_id)
@@ -219,10 +238,11 @@ def _ref_payloads(
         if ref.sha256 not in confidence_by_sha:
             raise ValueError("confidence payload is missing for provenance ref %s" % ref.artifact_id)
         _put_payload(payloads, ref.sha256, confidence_by_sha[ref.sha256])
-
-    profile_payload = calibration_profile.to_dict()
-    _put_payload(payloads, bundle.calibration_profile_ref.sha256, profile_payload)
-
+    _put_payload(
+        payloads,
+        bundle.calibration_profile_ref.sha256,
+        calibration_profile.to_dict(),
+    )
     for ref in _all_refs(bundle):
         if ref.sha256 not in payloads:
             raise ValueError("provenance object payload is missing for %s" % ref.artifact_id)
@@ -292,7 +312,7 @@ class EvidenceArtifactLoadResult:
 
 
 class EvidenceArtifactStore:
-    """Atomic writer for content-addressed Scheme-2 review evidence."""
+    """Atomic append-only writer for content-addressed review evidence."""
 
     def __init__(self, root: Optional[str | Path] = None) -> None:
         self.root, self.objects_root, self.bundles_root = _resolve_paths(root)
@@ -315,7 +335,6 @@ class EvidenceArtifactStore:
         raw = tuple(raw_trace_bundles)
         timing = dict(timing_evidence or {})
         confidence = dict(confidence_evidence or {})
-
         verification = verify_evidence_provenance_bundle(
             bundle,
             cohort_approved_events=events,
@@ -329,7 +348,6 @@ class EvidenceArtifactStore:
                 "cannot persist mismatched provenance evidence: %s"
                 % ";".join(verification.reasons)
             )
-
         payloads = _ref_payloads(
             bundle,
             cohort_approved_events=events,
@@ -342,6 +360,21 @@ class EvidenceArtifactStore:
         if sorted(payloads) != expected_digests:
             raise ValueError("resolved evidence payload set does not match provenance refs")
 
+        manifest = {
+            "schema_version": EVIDENCE_ARTIFACT_STORE_VERSION,
+            "bundle_id": safe_id,
+            "provenance_bundle_sha256": canonical_sha256(bundle.to_dict()),
+            "provenance_bundle": bundle.to_dict(),
+            "object_sha256": expected_digests,
+            "review_chain_complete": bundle.is_complete_review_chain,
+            "activation_status": "NOT_ACTIVATABLE",
+            "learning_enabled": False,
+            "residual_control_enabled": False,
+            "dcs_write_enabled": False,
+            "written_at_utc": _utc_now(),
+        }
+        manifest_path = self.bundles_root / (safe_id + ".json")
+
         with self.lock:
             for digest, payload in payloads.items():
                 path = _object_path(self.objects_root, digest)
@@ -352,21 +385,10 @@ class EvidenceArtifactStore:
                 else:
                     _atomic_write_json(path, payload)
 
-            manifest = {
-                "schema_version": EVIDENCE_ARTIFACT_STORE_VERSION,
-                "bundle_id": safe_id,
-                "provenance_bundle_sha256": canonical_sha256(bundle.to_dict()),
-                "provenance_bundle": bundle.to_dict(),
-                "object_sha256": expected_digests,
-                "review_chain_complete": bundle.is_complete_review_chain,
-                "activation_status": "NOT_ACTIVATABLE",
-                "learning_enabled": False,
-                "residual_control_enabled": False,
-                "dcs_write_enabled": False,
-                "written_at_utc": _utc_now(),
-            }
-            manifest_path = self.bundles_root / (safe_id + ".json")
-            _atomic_write_json(manifest_path, manifest)
+            if manifest_path.exists():
+                _validate_existing_manifest(_read_json(manifest_path), manifest)
+            else:
+                _atomic_write_json(manifest_path, manifest)
 
         return EvidenceArtifactStoreWriteResult(
             status="STORED_REVIEW_EVIDENCE",
@@ -395,7 +417,6 @@ class EvidenceArtifactLoader:
                 loaded=False,
                 reasons=("MANIFEST_NOT_FOUND",),
             )
-
         try:
             manifest = _read_json(manifest_path)
             if not isinstance(manifest, dict):
@@ -466,7 +487,6 @@ class EvidenceArtifactLoader:
             profile = DualResponseCalibrationProfile.from_dict(
                 payload_by_digest[bundle.calibration_profile_ref.sha256]
             )
-
             verification = verify_evidence_provenance_bundle(
                 bundle,
                 cohort_approved_events=events,
@@ -480,7 +500,6 @@ class EvidenceArtifactLoader:
                     "provenance verification failed: %s"
                     % ";".join(verification.reasons)
                 )
-
             return EvidenceArtifactLoadResult(
                 status="VERIFIED_REVIEW_EVIDENCE",
                 loaded=True,
