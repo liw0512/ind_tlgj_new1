@@ -2,8 +2,18 @@
 """pH arbitration for the SO2-led Scheme 2 residual controller.
 
 SO2 remains the only control-producing MFAC channel.  pH never creates an
-additive slurry-flow command; it can only pass, scale, or block the SO2 residual
-candidate according to current pH and the learned positive ``phi_ph``.
+additive slurry-flow command; it can only pass, scale, or block the *increment*
+from the currently held SO2 residual to the newly desired SO2 residual.
+
+The important semantic boundary is::
+
+    requested_delta_residual = desired_residual - held_residual
+    final_residual = held_residual + scale * requested_delta_residual
+
+This prevents a SCALE decision from accidentally shrinking or reversing an
+already-held residual.  Optional pending pH extrema may be supplied by the
+PendingDoseGuard so the new increment is judged from the future pH base that is
+already in flight, rather than current pH alone.
 """
 
 from __future__ import annotations
@@ -16,7 +26,9 @@ from .mfac_schema import MFACRuntimeState
 from .residual_control import MFACResidualDecision
 
 
-PH_ARBITRATION_SEMANTICS_VERSION = "SCHEME2_PH_ARBITRATION_V1"
+PH_ARBITRATION_SEMANTICS_VERSION = (
+    "SCHEME2_PH_ARBITRATION_V2_INCREMENTAL_PENDING_AWARE"
+)
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -72,10 +84,16 @@ class PHResidualArbitrationDecision:
     source_residual: float
     residual_scale: float
     final_residual: float
+    held_residual: float = 0.0
+    requested_delta_residual: float = 0.0
+    allowed_delta_residual: float = 0.0
     ph_value: Optional[float] = None
     phi_ph_live: Optional[float] = None
     confidence_ph_live: Optional[float] = None
     predicted_ph: Optional[float] = None
+    pending_base_ph: Optional[float] = None
+    pending_predicted_ph_upper: Optional[float] = None
+    pending_predicted_ph_lower: Optional[float] = None
     reason: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
     semantics_version: str = PH_ARBITRATION_SEMANTICS_VERSION
@@ -85,7 +103,11 @@ class PHResidualArbitrationDecision:
 
 
 class PHResidualArbiter:
-    """Constrain an SO2 residual without producing a second control command."""
+    """Constrain the incremental change of an SO2 residual.
+
+    ``source_residual`` is the absolute SO2 desired residual.  ``held_residual``
+    is the residual already in force.  pH arbitrates only their difference.
+    """
 
     def __init__(self, config: PHResidualArbitrationConfig) -> None:
         self.config = config
@@ -97,26 +119,45 @@ class PHResidualArbiter:
         state: Optional[MFACRuntimeState],
         so2_residual: MFACResidualDecision,
         arbitration_enabled: bool,
+        held_residual: Any = 0.0,
+        pending_predicted_ph_upper: Any = None,
+        pending_predicted_ph_lower: Any = None,
     ) -> PHResidualArbitrationDecision:
         source = _finite(so2_residual.candidate_residual)
         source_value = 0.0 if source is None else source
+        held = _finite(held_residual)
+        held_value = 0.0 if held is None else held
+        requested_delta = source_value - held_value
+        pending_upper = _finite(pending_predicted_ph_upper)
+        pending_lower = _finite(pending_predicted_ph_lower)
+
         if not bool(arbitration_enabled):
             return self._decision(
                 "ARBITRATION_DISABLED",
                 source_value,
+                held_value,
+                requested_delta,
                 1.0,
                 ph_value=_finite(ph_value),
                 state=state,
                 reason="PH_ARBITRATION_DISABLED",
+                pending_base_ph=_finite(ph_value),
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
         if so2_residual.status != "CALCULATED" or source is None:
             return self._decision(
                 "SOURCE_NOT_CALCULATED",
                 source_value,
+                held_value,
+                0.0,
                 0.0,
                 ph_value=_finite(ph_value),
                 state=state,
                 reason=so2_residual.status,
+                pending_base_ph=_finite(ph_value),
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
 
         ph = _finite(ph_value)
@@ -124,41 +165,61 @@ class PHResidualArbiter:
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=None,
                 state=state,
                 reason="INVALID_PH_INPUT",
+                pending_base_ph=None,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
         if ph < float(self.config.safe_min) or ph > float(self.config.safe_max):
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=ph,
                 state=state,
                 reason="PH_OUTSIDE_SAFE_RANGE",
+                pending_base_ph=ph,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
 
-        # Even without a learned pH model, current pH and the known physical
-        # direction protect against commands that would move farther outside
-        # the configured operating range.
-        if source_value > 0.0 and ph >= float(self.config.operating_max):
+        # Direction protection is based on the new increment, not the absolute
+        # residual.  Reducing a positive held residual is therefore allowed at
+        # high pH, while increasing it is blocked.
+        if requested_delta > 0.0 and ph >= float(self.config.operating_max):
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=ph,
                 state=state,
-                reason="POSITIVE_RESIDUAL_WORSENS_HIGH_PH",
+                reason="POSITIVE_INCREMENT_WORSENS_HIGH_PH",
+                pending_base_ph=ph,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
-        if source_value < 0.0 and ph <= float(self.config.operating_min):
+        if requested_delta < 0.0 and ph <= float(self.config.operating_min):
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=ph,
                 state=state,
-                reason="NEGATIVE_RESIDUAL_WORSENS_LOW_PH",
+                reason="NEGATIVE_INCREMENT_WORSENS_LOW_PH",
+                pending_base_ph=ph,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
 
         phi_ph = _finite(state.phi_ph_live) if state is not None else None
@@ -174,59 +235,86 @@ class PHResidualArbiter:
             return self._decision(
                 "PASS_CURRENT_PH_ONLY",
                 source_value,
+                held_value,
+                requested_delta,
                 1.0,
                 ph_value=ph,
                 state=state,
                 reason="PH_MODEL_UNAVAILABLE_OR_LOW_CONFIDENCE",
+                pending_base_ph=ph,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
             )
 
-        predicted_delta = phi_ph * source_value
-        predicted_ph = ph + predicted_delta
+        if requested_delta > 0.0:
+            pending_base = pending_upper if pending_upper is not None else ph
+        elif requested_delta < 0.0:
+            pending_base = pending_lower if pending_lower is not None else ph
+        else:
+            pending_base = ph
+
+        predicted_delta = float(phi_ph) * requested_delta
+        predicted_ph = float(pending_base) + predicted_delta
         safe_upper_guard = float(self.config.safe_max) - float(self.config.guard_band)
         safe_lower_guard = float(self.config.safe_min) + float(self.config.guard_band)
 
-        if source_value > 0.0 and ph >= safe_upper_guard:
+        if requested_delta > 0.0 and float(pending_base) >= safe_upper_guard:
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=ph,
                 state=state,
                 predicted_ph=predicted_ph,
-                reason="UPPER_PH_GUARD_BAND",
+                pending_base_ph=pending_base,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
+                reason="PENDING_UPPER_PH_GUARD_BAND",
             )
-        if source_value < 0.0 and ph <= safe_lower_guard:
+        if requested_delta < 0.0 and float(pending_base) <= safe_lower_guard:
             return self._decision(
                 "BLOCK",
                 source_value,
+                held_value,
+                requested_delta,
                 0.0,
                 ph_value=ph,
                 state=state,
                 predicted_ph=predicted_ph,
-                reason="LOWER_PH_GUARD_BAND",
+                pending_base_ph=pending_base,
+                pending_upper=pending_upper,
+                pending_lower=pending_lower,
+                reason="PENDING_LOWER_PH_GUARD_BAND",
             )
 
         scale = 1.0
         reason = "WITHIN_PH_OPERATING_ENVELOPE"
-        if source_value > 0.0 and predicted_ph > float(self.config.operating_max):
-            allowed = max(0.0, float(self.config.operating_max) - ph)
+        if requested_delta > 0.0 and predicted_ph > float(self.config.operating_max):
+            allowed = max(0.0, float(self.config.operating_max) - float(pending_base))
             needed = max(abs(predicted_delta), 1e-12)
             scale = min(1.0, allowed / needed)
-            reason = "SCALE_TO_PH_OPERATING_MAX"
-        elif source_value < 0.0 and predicted_ph < float(self.config.operating_min):
-            allowed = max(0.0, ph - float(self.config.operating_min))
+            reason = "SCALE_INCREMENT_TO_PH_OPERATING_MAX"
+        elif requested_delta < 0.0 and predicted_ph < float(self.config.operating_min):
+            allowed = max(0.0, float(pending_base) - float(self.config.operating_min))
             needed = max(abs(predicted_delta), 1e-12)
             scale = min(1.0, allowed / needed)
-            reason = "SCALE_TO_PH_OPERATING_MIN"
+            reason = "SCALE_INCREMENT_TO_PH_OPERATING_MIN"
 
         status = "PASS" if scale >= 1.0 - 1e-12 else "SCALE"
         return self._decision(
             status,
             source_value,
+            held_value,
+            requested_delta,
             scale,
             ph_value=ph,
             state=state,
             predicted_ph=predicted_ph,
+            pending_base_ph=pending_base,
+            pending_upper=pending_upper,
+            pending_lower=pending_lower,
             reason=reason,
         )
 
@@ -234,31 +322,47 @@ class PHResidualArbiter:
         self,
         status: str,
         source: float,
+        held: float,
+        requested_delta: float,
         scale: float,
         *,
         ph_value: Optional[float],
         state: Optional[MFACRuntimeState],
         reason: str,
         predicted_ph: Optional[float] = None,
+        pending_base_ph: Optional[float] = None,
+        pending_upper: Optional[float] = None,
+        pending_lower: Optional[float] = None,
     ) -> PHResidualArbitrationDecision:
         bounded_scale = max(0.0, min(1.0, float(scale)))
         phi_ph = _finite(state.phi_ph_live) if state is not None else None
         confidence = (
             _finite(state.confidence_ph_live) if state is not None else None
         )
-        final_residual = float(source) * bounded_scale
+        allowed_delta = float(requested_delta) * bounded_scale
+        final_residual = float(held) + allowed_delta
         return PHResidualArbitrationDecision(
             status=status,
             source_residual=float(source),
             residual_scale=bounded_scale,
             final_residual=final_residual,
+            held_residual=float(held),
+            requested_delta_residual=float(requested_delta),
+            allowed_delta_residual=float(allowed_delta),
             ph_value=ph_value,
             phi_ph_live=phi_ph,
             confidence_ph_live=confidence,
             predicted_ph=predicted_ph,
+            pending_base_ph=pending_base_ph,
+            pending_predicted_ph_upper=pending_upper,
+            pending_predicted_ph_lower=pending_lower,
             reason=reason,
             metadata={
-                "control_semantics": "SO2_RESIDUAL_THEN_PH_ARBITRATION",
+                "control_semantics": "SO2_RESIDUAL_INCREMENT_THEN_PH_ARBITRATION",
+                "residual_scale_applies_to": "CANDIDATE_MINUS_HELD",
+                "pending_ph_base_used": pending_base_ph is not None and (
+                    pending_upper is not None or pending_lower is not None
+                ),
                 "additive_ph_residual": False,
             },
         )
