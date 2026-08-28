@@ -1,6 +1,7 @@
 import unittest
 
 from system.model.map_control.mfac_model.observed_timing_extraction_profile import (
+    LEGACY_OBSERVED_TIMING_EXTRACTION_PROFILE_VERSION,
     ObservedTimingExtractionProfile,
 )
 from system.model.map_control.mfac_model.observed_timing_extractor import (
@@ -33,6 +34,8 @@ class Scheme2ObservedTimingExtractionProfileTest(unittest.TestCase):
             "status": status,
             "activation_status": "NOT_ACTIVATABLE",
             "extractor_semantics": OBSERVED_TIMING_EXTRACTOR_VERSION,
+            "reviewer_id": "timing-reviewer" if status == "REVIEWED_MANUAL_ONLY" else "",
+            "review_time": "2026-08-28T09:00:00+08:00" if status == "REVIEWED_MANUAL_ONLY" else "",
             "review_candidate_so2": {"onset_abs_threshold": 0.03},
             "review_candidate_ph": {"onset_abs_threshold": 0.02},
             "reviewed_so2": cls.reviewed_values() if reviewed_so2 is None else reviewed_so2,
@@ -55,6 +58,12 @@ class Scheme2ObservedTimingExtractionProfileTest(unittest.TestCase):
         self.assertFalse(hasattr(profile, "execute"))
         with self.assertRaises(ValueError):
             profile.to_runtime_config()
+
+    def test_reviewed_status_requires_reviewer_and_time(self):
+        with self.assertRaises(ValueError):
+            self.profile(reviewer_id="")
+        with self.assertRaises(ValueError):
+            self.profile(review_time="")
 
     def test_incomplete_reviewed_parameters_cannot_borrow_candidates(self):
         reviewed = self.reviewed_values()
@@ -88,6 +97,21 @@ class Scheme2ObservedTimingExtractionProfileTest(unittest.TestCase):
     def test_extractor_semantics_mismatch_is_rejected(self):
         with self.assertRaises(ValueError):
             self.profile(extractor_semantics="OTHER")
+
+    def test_legacy_reviewed_profile_requires_re_review(self):
+        payload = {
+            "design_id": "LEGACY",
+            "status": "REVIEWED_MANUAL_ONLY",
+            "activation_status": "NOT_ACTIVATABLE",
+            "extractor_semantics": OBSERVED_TIMING_EXTRACTOR_VERSION,
+            "semantics_version": LEGACY_OBSERVED_TIMING_EXTRACTION_PROFILE_VERSION,
+            "reviewed_parameters": {
+                "SO2": self.reviewed_values(),
+                "PH": self.reviewed_values(),
+            },
+        }
+        with self.assertRaises(ValueError):
+            ObservedTimingExtractionProfile.from_mapping(payload)
 
 
 if __name__ == "__main__":
