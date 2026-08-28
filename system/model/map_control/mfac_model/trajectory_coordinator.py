@@ -29,7 +29,7 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V4_PENDING_ARBITRATION_HOOK"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V5_ONLINE_EVIDENCE_OWNERSHIP"
 )
 
 
@@ -37,10 +37,14 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
     """Run one SO2-led coordinator and append non-authoritative trajectory advice.
 
     The historical map is filtered to reviewed scalar runtime priors.  The
-    PendingDoseGuard is also evaluated *before* the base pH arbitration stage
-    through the protected ``_ph_arbitration_context`` hook.  Thus there remains
-    exactly one residual controller and one pH arbiter; this subclass supplies
-    only delayed-response context and staircase advice.
+    PendingDoseGuard is evaluated before the base pH arbitration stage through
+    the protected ``_ph_arbitration_context`` hook.  Thus there remains exactly
+    one residual controller and one pH arbiter.
+
+    Historical priors own a channel only until the first clean online evidence
+    for that channel.  This includes a clean wrong-direction event that updates
+    confidence but deliberately leaves phi unchanged; such negative evidence
+    must not be erased by re-seeding the historical confidence next cycle.
     """
 
     def __init__(
@@ -103,6 +107,27 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             runtime_state.mfac_context_id,
         )
 
+    @staticmethod
+    def _channel_has_online_evidence(
+        state: MFACRuntimeState,
+        channel: str,
+    ) -> bool:
+        if channel == "SO2":
+            if int(state.valid_event_count) > 0:
+                return True
+            metadata_key = "online_confidence_so2"
+        elif channel == "PH":
+            if int(state.ph_valid_event_count) > 0:
+                return True
+            metadata_key = "online_confidence_ph"
+        else:
+            raise ValueError("unknown MFAC channel")
+        evidence = dict((state.metadata or {}).get(metadata_key) or {})
+        try:
+            return float(evidence.get("effective_event_count") or 0.0) > 0.0
+        except (TypeError, ValueError, OverflowError):
+            return False
+
     def _mapped_state(
         self,
         snapshot: str,
@@ -136,13 +161,13 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                     "historical_prior_model_complexity": "SCALAR",
                     "historical_prior_runtime_reviewed": True,
                     "historical_prior_online_override_policy": (
-                        "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
+                        "PER_CHANNEL_AFTER_FIRST_CLEAN_ONLINE_EVIDENCE"
                     ),
                 },
             )
 
-        update_so2 = int(existing.valid_event_count) <= 0
-        update_ph = int(existing.ph_valid_event_count) <= 0
+        update_so2 = not self._channel_has_online_evidence(existing, "SO2")
+        update_ph = not self._channel_has_online_evidence(existing, "PH")
         if not update_so2 and not update_ph:
             return existing
 
@@ -152,7 +177,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         metadata["historical_prior_model_complexity"] = "SCALAR"
         metadata["historical_prior_runtime_reviewed"] = True
         metadata["historical_prior_online_override_policy"] = (
-            "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
+            "PER_CHANNEL_AFTER_FIRST_CLEAN_ONLINE_EVIDENCE"
         )
         return MFACRuntimeState(
             condition_snapshot_version=existing.condition_snapshot_version,
