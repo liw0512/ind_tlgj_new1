@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Atomic content-addressed persistence for Scheme-2 MFAC review evidence.
 
-This module persists *existing* review evidence.  It does not define plant or
-algorithm parameters and it grants no runtime permission.  Production paths
-come from ``system.model.config.mfac_paths``; tests may inject a temporary root.
+This module persists *existing* review evidence. It does not define plant or
+algorithm parameters and grants no runtime permission. Production paths are
+owned by ``system.model.config.mfac_paths``; tests may inject a temporary root.
 
 Layout::
 
@@ -11,11 +11,8 @@ Layout::
       objects/<sha256[:2]>/<sha256>.json
       bundles/<bundle_id>.json
 
-Object filenames are content addresses from ``EvidenceArtifactRef.sha256``.
-Bundle manifests contain the serialized provenance bundle plus its own canonical
-SHA256. Loading never trusts filenames alone: every object is parsed, hashed
-again, rebuilt into typed evidence, and passed through
-``verify_evidence_provenance_bundle``.
+Loading never trusts filenames alone: every object is parsed, hashed again,
+rebuilt into typed evidence, and passed through the existing provenance verifier.
 """
 
 from __future__ import annotations
@@ -29,7 +26,11 @@ import re
 import threading
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
-from system.model.config.mfac_paths import MFAC_EVIDENCE_ROOT
+from system.model.config.mfac_paths import (
+    MFAC_EVIDENCE_BUNDLES_DIR,
+    MFAC_EVIDENCE_OBJECTS_DIR,
+    MFAC_EVIDENCE_ROOT,
+)
 
 from .channel_calibration_review import ObservedResponseTimingEvidence
 from .channel_confidence_evidence import ChannelConfidenceEvidence
@@ -63,6 +64,18 @@ def _bundle_id(value: Any) -> str:
     if not _SAFE_BUNDLE_ID.fullmatch(text) or ".." in text:
         raise ValueError("bundle_id must be a safe non-path identifier")
     return text
+
+
+def _resolve_paths(root: Optional[str | Path]) -> Tuple[Path, Path, Path]:
+    """Use the canonical production path contract unless a test root is explicit."""
+    if root is None:
+        return (
+            Path(MFAC_EVIDENCE_ROOT),
+            Path(MFAC_EVIDENCE_OBJECTS_DIR),
+            Path(MFAC_EVIDENCE_BUNDLES_DIR),
+        )
+    resolved = Path(root)
+    return resolved, resolved / "objects", resolved / "bundles"
 
 
 def _json_bytes(value: Any, *, pretty: bool = False) -> bytes:
@@ -146,6 +159,24 @@ def _raw_trace_from_dict(value: Mapping[str, Any]) -> LocalStepRawTraceBundle:
     return LocalStepRawTraceBundle(**payload)
 
 
+def _all_refs(bundle: DualResponseEvidenceProvenanceBundle) -> Tuple[EvidenceArtifactRef, ...]:
+    return (
+        (bundle.cohort_approved_events_ref,)
+        + tuple(bundle.raw_trace_refs)
+        + tuple(bundle.timing_refs)
+        + tuple(bundle.confidence_refs)
+        + (bundle.calibration_profile_ref,)
+    )
+
+
+def _put_payload(payloads: Dict[str, Any], digest: str, payload: Any) -> None:
+    if canonical_sha256(payload) != digest:
+        raise ValueError("evidence payload does not match its provenance digest")
+    if digest in payloads and canonical_sha256(payloads[digest]) != digest:
+        raise ValueError("conflicting payloads share one provenance digest")
+    payloads[digest] = payload
+
+
 def _ref_payloads(
     bundle: DualResponseEvidenceProvenanceBundle,
     *,
@@ -157,11 +188,16 @@ def _ref_payloads(
 ) -> Dict[str, Any]:
     """Map provenance digests to the exact semantic payload that they address."""
     payloads: Dict[str, Any] = {}
+    _put_payload(
+        payloads,
+        bundle.cohort_approved_events_ref.sha256,
+        _event_payload(cohort_approved_events),
+    )
 
-    cohort_payload = _event_payload(cohort_approved_events)
-    payloads[bundle.cohort_approved_events_ref.sha256] = cohort_payload
-
-    raw_by_sha = {canonical_sha256(item.to_dict()): item.to_dict() for item in raw_trace_bundles}
+    raw_by_sha = {
+        canonical_sha256(item.to_dict()): item.to_dict()
+        for item in raw_trace_bundles
+    }
     timing_by_sha = {
         canonical_sha256(item.to_dict()): item.to_dict()
         for item in dict(timing_evidence or {}).values()
@@ -170,42 +206,27 @@ def _ref_payloads(
         canonical_sha256(item.to_dict()): item.to_dict()
         for item in dict(confidence_evidence or {}).values()
     }
-    profile_payload = calibration_profile.to_dict()
-    profile_sha = canonical_sha256(profile_payload)
 
     for ref in bundle.raw_trace_refs:
         if ref.sha256 not in raw_by_sha:
             raise ValueError("raw trace payload is missing for provenance ref %s" % ref.artifact_id)
-        payloads[ref.sha256] = raw_by_sha[ref.sha256]
+        _put_payload(payloads, ref.sha256, raw_by_sha[ref.sha256])
     for ref in bundle.timing_refs:
         if ref.sha256 not in timing_by_sha:
             raise ValueError("timing payload is missing for provenance ref %s" % ref.artifact_id)
-        payloads[ref.sha256] = timing_by_sha[ref.sha256]
+        _put_payload(payloads, ref.sha256, timing_by_sha[ref.sha256])
     for ref in bundle.confidence_refs:
         if ref.sha256 not in confidence_by_sha:
             raise ValueError("confidence payload is missing for provenance ref %s" % ref.artifact_id)
-        payloads[ref.sha256] = confidence_by_sha[ref.sha256]
-    if bundle.calibration_profile_ref.sha256 != profile_sha:
-        raise ValueError("calibration profile payload does not match provenance ref")
-    payloads[profile_sha] = profile_payload
+        _put_payload(payloads, ref.sha256, confidence_by_sha[ref.sha256])
+
+    profile_payload = calibration_profile.to_dict()
+    _put_payload(payloads, bundle.calibration_profile_ref.sha256, profile_payload)
 
     for ref in _all_refs(bundle):
-        payload = payloads.get(ref.sha256)
-        if payload is None:
+        if ref.sha256 not in payloads:
             raise ValueError("provenance object payload is missing for %s" % ref.artifact_id)
-        if canonical_sha256(payload) != ref.sha256:
-            raise ValueError("provenance object digest mismatch for %s" % ref.artifact_id)
     return payloads
-
-
-def _all_refs(bundle: DualResponseEvidenceProvenanceBundle) -> Tuple[EvidenceArtifactRef, ...]:
-    return (
-        (bundle.cohort_approved_events_ref,)
-        + tuple(bundle.raw_trace_refs)
-        + tuple(bundle.timing_refs)
-        + tuple(bundle.confidence_refs)
-        + (bundle.calibration_profile_ref,)
-    )
 
 
 @dataclass(frozen=True)
@@ -273,10 +294,8 @@ class EvidenceArtifactLoadResult:
 class EvidenceArtifactStore:
     """Atomic writer for content-addressed Scheme-2 review evidence."""
 
-    def __init__(self, root: str | Path = MFAC_EVIDENCE_ROOT) -> None:
-        self.root = Path(root)
-        self.objects_root = self.root / "objects"
-        self.bundles_root = self.root / "bundles"
+    def __init__(self, root: Optional[str | Path] = None) -> None:
+        self.root, self.objects_root, self.bundles_root = _resolve_paths(root)
         self.lock = threading.RLock()
 
     def save(
@@ -319,6 +338,9 @@ class EvidenceArtifactStore:
             confidence_evidence=confidence,
             calibration_profile=calibration_profile,
         )
+        expected_digests = sorted(set(ref.sha256 for ref in _all_refs(bundle)))
+        if sorted(payloads) != expected_digests:
+            raise ValueError("resolved evidence payload set does not match provenance refs")
 
         with self.lock:
             for digest, payload in payloads.items():
@@ -327,8 +349,6 @@ class EvidenceArtifactStore:
                     existing = _read_json(path)
                     if canonical_sha256(existing) != digest:
                         raise ValueError("existing content-addressed evidence object is corrupt")
-                    if canonical_sha256(payload) != digest:
-                        raise ValueError("incoming evidence payload digest mismatch")
                 else:
                     _atomic_write_json(path, payload)
 
@@ -337,7 +357,7 @@ class EvidenceArtifactStore:
                 "bundle_id": safe_id,
                 "provenance_bundle_sha256": canonical_sha256(bundle.to_dict()),
                 "provenance_bundle": bundle.to_dict(),
-                "object_sha256": sorted(payloads),
+                "object_sha256": expected_digests,
                 "review_chain_complete": bundle.is_complete_review_chain,
                 "activation_status": "NOT_ACTIVATABLE",
                 "learning_enabled": False,
@@ -352,7 +372,7 @@ class EvidenceArtifactStore:
             status="STORED_REVIEW_EVIDENCE",
             bundle_id=safe_id,
             manifest_path=str(manifest_path),
-            object_count=len(payloads),
+            object_count=len(expected_digests),
             review_chain_complete=bundle.is_complete_review_chain,
         )
 
@@ -360,10 +380,8 @@ class EvidenceArtifactStore:
 class EvidenceArtifactLoader:
     """Fail-closed loader that reconstructs and re-verifies every evidence object."""
 
-    def __init__(self, root: str | Path = MFAC_EVIDENCE_ROOT) -> None:
-        self.root = Path(root)
-        self.objects_root = self.root / "objects"
-        self.bundles_root = self.root / "bundles"
+    def __init__(self, root: Optional[str | Path] = None) -> None:
+        self.root, self.objects_root, self.bundles_root = _resolve_paths(root)
 
     def load(self, bundle_id: str) -> EvidenceArtifactLoadResult:
         try:
@@ -388,7 +406,11 @@ class EvidenceArtifactLoader:
                 raise ValueError("evidence manifest bundle ID mismatch")
             if manifest.get("activation_status") != "NOT_ACTIVATABLE":
                 raise ValueError("evidence manifest activation status is invalid")
-            if manifest.get("learning_enabled") or manifest.get("residual_control_enabled") or manifest.get("dcs_write_enabled"):
+            if (
+                manifest.get("learning_enabled")
+                or manifest.get("residual_control_enabled")
+                or manifest.get("dcs_write_enabled")
+            ):
                 raise ValueError("evidence manifest cannot enable runtime permissions")
 
             bundle_payload = manifest.get("provenance_bundle")
@@ -400,10 +422,14 @@ class EvidenceArtifactLoader:
             bundle = DualResponseEvidenceProvenanceBundle.from_dict(bundle_payload)
             if bundle.bundle_id != safe_id:
                 raise ValueError("provenance bundle ID mismatch")
+            if bool(manifest.get("review_chain_complete")) != bundle.is_complete_review_chain:
+                raise ValueError("manifest review-chain status does not match provenance bundle")
 
-            refs = _all_refs(bundle)
-            expected_digests = sorted(ref.sha256 for ref in refs)
-            if sorted(manifest.get("object_sha256") or ()) != expected_digests:
+            expected_digests = sorted(set(ref.sha256 for ref in _all_refs(bundle)))
+            manifest_digests = list(manifest.get("object_sha256") or ())
+            if len(manifest_digests) != len(set(manifest_digests)):
+                raise ValueError("manifest contains duplicate object digests")
+            if sorted(manifest_digests) != expected_digests:
                 raise ValueError("manifest object digest list does not match provenance refs")
 
             payload_by_digest: Dict[str, Any] = {}
@@ -419,8 +445,10 @@ class EvidenceArtifactLoader:
             cohort_payload = payload_by_digest[bundle.cohort_approved_events_ref.sha256]
             if not isinstance(cohort_payload, list):
                 raise ValueError("cohort evidence object must be a JSON array")
-            events = tuple(ActionResponseEvent.from_dict(dict(item or {})) for item in cohort_payload)
-
+            events = tuple(
+                ActionResponseEvent.from_dict(dict(item or {}))
+                for item in cohort_payload
+            )
             raw = tuple(
                 _raw_trace_from_dict(payload_by_digest[ref.sha256])
                 for ref in bundle.raw_trace_refs
