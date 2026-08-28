@@ -62,7 +62,7 @@ def _timestamp_text(value: Any) -> str:
         raise ValueError("review_time must be a valid ISO timestamp") from exc
 
 
-def _timing_extraction_provenance(evidence: "ObservedResponseTimingEvidence") -> Dict[str, str]:
+def _timing_extraction_provenance(evidence: "ObservedResponseTimingEvidence") -> Dict[str, Any]:
     metadata = dict(evidence.metadata or {})
     if metadata.get("timing_extraction_profile_reviewed") is not True:
         raise ValueError("timing evidence requires a reviewed extraction profile")
@@ -76,7 +76,7 @@ def _timing_extraction_provenance(evidence: "ObservedResponseTimingEvidence") ->
         "timing_extraction_reviewer_id",
         "timing_extraction_review_time",
     )
-    values: Dict[str, str] = {}
+    values: Dict[str, Any] = {}
     for key in required:
         value = str(metadata.get(key) or "").strip()
         if not value:
@@ -88,6 +88,7 @@ def _timing_extraction_provenance(evidence: "ObservedResponseTimingEvidence") ->
     reviewed_parameters = metadata.get("reviewed_extraction_parameters")
     if not isinstance(reviewed_parameters, Mapping) or not dict(reviewed_parameters):
         raise ValueError("timing evidence is missing reviewed extraction parameters")
+    values["reviewed_extraction_parameters"] = dict(reviewed_parameters)
     return values
 
 
@@ -222,7 +223,6 @@ def approve_channel_calibration(
     reviewer_id: str,
     review_time: Any,
 ) -> ChannelCalibrationReviewResult:
-    """Review one channel and promote only that channel to CALIBRATED."""
     if not bool(human_approved):
         raise ValueError("explicit human channel calibration approval is required")
     reviewer = str(reviewer_id or "").strip()
@@ -309,6 +309,8 @@ def approve_channel_calibration(
         "timing_extraction_profile_semantics": timing_provenance["timing_extraction_profile_semantics"],
         "timing_extraction_reviewer_id": timing_provenance["timing_extraction_reviewer_id"],
         "timing_extraction_review_time": timing_provenance["timing_extraction_review_time"],
+        "timing_extraction_reviewed_parameters": dict(timing_provenance["reviewed_extraction_parameters"]),
+        "timing_extraction_candidate_parameters_used": False,
         "configured_window_boundary_used_as_observed_timing": False,
         "response_config_review_approved": True,
         "confidence_review_approved": True,
