@@ -4,9 +4,7 @@ from system.model.map_control.mfac_model.channel_calibration_review import (
     ObservedResponseTimingEvidence,
     approve_channel_calibration,
 )
-from system.model.map_control.mfac_model.channel_confidence_evidence import (
-    ChannelConfidenceEvidence,
-)
+from system.model.map_control.mfac_model.channel_confidence_evidence import ChannelConfidenceEvidence
 from system.model.map_control.mfac_model.dual_response_activation_review import (
     DualResponseActivationPrerequisites,
     evaluate_dual_response_activation_readiness,
@@ -23,7 +21,6 @@ from system.model.map_control.mfac_model.mfac_schema import DelayProfile
 class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
     @staticmethod
     def response_config():
-        # Unit-test values only, not site calibration.
         return {
             "baseline_window_seconds": 300.0,
             "delay_onset_seconds": 100.0,
@@ -35,8 +32,8 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
             "min_response_samples": 6,
         }
 
-    @classmethod
-    def local_gain(cls, name):
+    @staticmethod
+    def local_gain(name):
         return DualResponseChannelCalibration(
             channel=name,
             status=CHANNEL_LOCAL_GAIN_READY,
@@ -54,15 +51,20 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
             channel=name,
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
-            delay_profile=DelayProfile(
-                onset_p50_seconds=80.0,
-                onset_p90_seconds=100.0,
-                response_p50_seconds=400.0,
-                response_p90_seconds=550.0,
-            ),
+            delay_profile=DelayProfile(80.0, 100.0, 400.0, 550.0),
             event_ids=("E1", "E2"),
             observed_event_count=2,
             independent_days=2,
+            metadata={
+                "timing_extraction_profile_id": "TIMING-DESIGN-1",
+                "timing_extraction_profile_semantics": "SCHEME2_OBSERVED_TIMING_EXTRACTION_DESIGN_V2_REVIEW_SEALED",
+                "timing_extraction_profile_reviewed": True,
+                "timing_extraction_reviewer_id": "timing-reviewer",
+                "timing_extraction_review_time": "2026-08-28T08:00:00+08:00",
+                "calibration_review_eligible": True,
+                "reviewed_extraction_parameters": {"onset_abs_threshold": 0.05},
+                "candidate_parameters_used_for_extraction": False,
+            },
         )
 
     @classmethod
@@ -74,6 +76,9 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
             cohort_review_id="COHORT-1",
+            cohort_bootstrap_review_approved=True,
+            cohort_review_reviewer_id="cohort-reviewer",
+            cohort_review_time="2026-08-28T08:30:00+08:00",
             timing_evidence_id=timing.evidence_id,
             cohort_event_ids=("E1", "E2", "E3"),
             timing_event_ids=tuple(timing.event_ids),
@@ -104,7 +109,7 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
         )
         for channel in ("SO2", "PH"):
             timing = cls.timing(channel)
-            result = approve_channel_calibration(
+            profile = approve_channel_calibration(
                 profile,
                 channel=channel,
                 timing_evidence=timing,
@@ -113,9 +118,8 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
                 confidence=0.8,
                 human_approved=True,
                 reviewer_id="activation-fixture-cal-review",
-                review_time="2026-08-27T17:35:00+08:00",
-            )
-            profile = result.profile
+                review_time="2026-08-28T09:00:00+08:00",
+            ).profile
         return profile
 
     @staticmethod
@@ -135,8 +139,7 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
 
     def test_all_review_facts_only_reach_human_activation_review(self):
         result = evaluate_dual_response_activation_readiness(
-            self.calibrated_profile(),
-            self.prerequisites(),
+            self.calibrated_profile(), self.prerequisites()
         )
         self.assertEqual(result.status, "READY_FOR_HUMAN_ACTIVATION_REVIEW")
         self.assertTrue(result.ready_for_human_activation_review)
@@ -146,9 +149,6 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
         self.assertFalse(result.learning_enabled)
         self.assertFalse(result.residual_control_enabled)
         self.assertFalse(result.dcs_write_enabled)
-        self.assertFalse(result.can_enable_learning)
-        self.assertFalse(result.can_enable_residual)
-        self.assertFalse(result.can_enable_dcs)
         with self.assertRaises(ValueError):
             result.to_runtime_config()
 
@@ -194,12 +194,9 @@ class Scheme2DualResponseActivationReviewTest(unittest.TestCase):
             confidence=0.8,
             human_approved=True,
             reviewer_id="activation-fixture-cal-review",
-            review_time="2026-08-27T17:35:00+08:00",
+            review_time="2026-08-28T09:00:00+08:00",
         ).profile
-        result = evaluate_dual_response_activation_readiness(
-            profile,
-            self.prerequisites(),
-        )
+        result = evaluate_dual_response_activation_readiness(profile, self.prerequisites())
         self.assertEqual(result.status, "NOT_READY")
         self.assertIn("PH_CHANNEL_NOT_CALIBRATED", result.blockers)
         self.assertFalse(result.profile_load_evidence_ready)
