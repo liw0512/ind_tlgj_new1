@@ -1,11 +1,20 @@
 # -*- coding: utf-8 -*-
 """Adapt canonical HistoricalEpisodeEngine output for model-based LOCAL_GAIN.
 
-The adapter does not reclassify large operator pulses as direct LOCAL_GAIN.
-It selects reviewed-quality DYNAMIC evidence and builds an event-level frame for
-``model_based_local_gain_trainer``.  This keeps event detection/condition
-binding in the canonical historical engine and makes the model-based route
-reproducible instead of depending on one-off CSV segmentation scripts.
+Large operator pulses are never reclassified as direct LOCAL_GAIN.  This adapter
+selects clean DYNAMIC evidence and converts it into the event-level training
+frame consumed by the robust marginal-gain trainer.
+
+V2 separates two very different ideas that used to share one rejection flag:
+
+* offline snapshot remap: an old, already-completed episode is reassigned by its
+  immutable grid_id when ConditionSnapshot vN changes to vN+1;
+* within-event drift: grid/condition changed while the physical action/response
+  was happening.
+
+The first may be explicitly accepted by the periodic offline lifecycle so
+historical evidence can accumulate across versions.  The second remains a
+causal-contamination blocker.
 """
 
 from __future__ import annotations
@@ -19,7 +28,7 @@ from .context_resolver import MFACContextResolver
 
 
 HISTORICAL_MODEL_BASED_GAIN_ADAPTER_VERSION = (
-    "SCHEME2_HISTORICAL_MODEL_BASED_GAIN_ADAPTER_V1_CANONICAL_EPISODES"
+    "SCHEME2_HISTORICAL_MODEL_BASED_GAIN_ADAPTER_V2_REMAP_SEPARATED"
 )
 
 
@@ -30,7 +39,12 @@ class HistoricalModelBasedGainAdapterConfig:
     require_condition_valid: bool = True
     reject_safety_evidence: bool = True
     reject_followup_action: bool = True
+    # Backward-compatible default: ad-hoc callers still reject an episode that
+    # was reassigned by a newer ConditionSnapshot unless they opt in.
     reject_condition_remap: bool = True
+    # Independent causal guard.  Periodic offline retraining may set
+    # reject_condition_remap=False while keeping this True.
+    reject_within_event_condition_change: bool = True
 
     def __post_init__(self) -> None:
         if not str(self.tower_id or "").strip():
@@ -96,9 +110,10 @@ def _reject_reason(
         return "CONDITION_INVALID"
     if config.reject_followup_action and _bool(row.get("followup_action_in_response"), False):
         return "FOLLOWUP_ACTION_IN_RESPONSE"
-    if config.reject_condition_remap and (
-        _bool(row.get("condition_remapped"), False)
-        or int(_numeric(row.get("grid_change_count")) or 0) > 0
+    if config.reject_condition_remap and _bool(row.get("condition_remapped"), False):
+        return "OFFLINE_CONDITION_SNAPSHOT_REMAP_REJECTED"
+    if config.reject_within_event_condition_change and (
+        int(_numeric(row.get("grid_change_count")) or 0) > 0
         or int(_numeric(row.get("condition_label_change_count")) or 0) > 0
     ):
         return "CONDITION_OR_GRID_CHANGED_DURING_EVENT"
@@ -172,6 +187,7 @@ def adapt_historical_episodes_for_model_based_gain(
                 "so2_pretrend": float(row["before_outlet_so2_rate"]),
                 "extra_volume_m3": float(row["flow_event_extra_slurry_volume"]),
                 "evidence_weight": float(_numeric(row.get("evidence_weight")) or 1.0),
+                "source_condition_remapped": _bool(row.get("condition_remapped"), False),
                 "adapter_semantics_version": HISTORICAL_MODEL_BASED_GAIN_ADAPTER_VERSION,
             }
         )
