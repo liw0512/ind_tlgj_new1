@@ -1,0 +1,239 @@
+{
+  "semantics_version": "SCHEME2_HISTORICAL_MODEL_BASED_GAIN_AUDIT_V1_GRID_UNBOUND",
+  "audit_id": "MFAC-HISTORICAL-MODEL-BASED-GAIN-AUDIT-5553E529-20260828",
+  "source_file": "new_data_train_10s.csv",
+  "source_sha256": "5553e529b1f222544b40b9e31e992584e87b4c4c1cbb51eea2bf460595b3ea23",
+  "source_rows": 298875,
+  "status": "AUDIT_ONLY_REVIEW_REQUIRED",
+  "activation_status": "NOT_ACTIVATABLE",
+  "learning_permission": false,
+  "residual_control_permission": false,
+  "dcs_write_permission": false,
+  "condition_snapshot_binding": {
+    "status": "UNBOUND_GRID_LEVEL",
+    "reason": "The historical CSV has no condition_snapshot_version/condition_label artifact binding. Current plant yyq_SO2 fixed-grid coordinates can be reconstructed, but the audit must not invent a historical final condition label.",
+    "future_binding_rule": "A reviewed grid-level model may be bound to a current condition snapshot only through the HistoricalSensitivityMap review/publish path; context remains an upper semantic layer over the lower fixed-grid coordinate."
+  },
+  "grid_contract": {
+    "axis_column": "yyq_SO2",
+    "minimum": 500.0,
+    "maximum": 5000.0,
+    "step": 100.0,
+    "single_axis_slot": "S1",
+    "out_of_range_policy_for_audit": "CLIP_FOR_GRID_COORDINATE_ONLY",
+    "note": "Grid identity is used for evidence grouping. Exact-state lookup is forbidden online."
+  },
+  "historical_event_cohort": {
+    "selection_semantics": "STRICT_ISOLATED_OPERATOR_PULSE_AUDIT",
+    "selected_event_count_before_complete_model_columns": 525,
+    "complete_modeled_event_count": 523,
+    "selection_summary": [
+      "pump-A active boundary derived from xstgjb_APL > 1 Hz with timestamp-gap segmentation",
+      "nominal active duration approximately 5-15 minutes",
+      "quiet/off pre-window and isolated post-window required",
+      "baseline pH inside approximately 6.0-6.4",
+      "sustained extra supply-flow signal at least approximately 40 m3/h",
+      "timestamp gaps above the audit continuity threshold are rejected",
+      "event outputs are delayed SO2 and pH responses, not contemporaneous correlations"
+    ],
+    "causal_warning": "These are observational operator interventions, not randomized experiments. The model estimates a historical marginal prior after nuisance adjustment; it is not proof of a causal site derivative."
+  },
+  "estimator": {
+    "implementation": "model_based_local_gain_trainer.py",
+    "semantics_version": "SCHEME2_MODEL_BASED_LOCAL_GAIN_TRAINER_V1_ROBUST_INTERACTION",
+    "family": "Huber robust local-linear response model with delta-Q by work-point interactions",
+    "target": "marginal derivative of delayed response with respect to actual delta-Q",
+    "direct_delta_y_over_delta_q_for_large_pulses": false,
+    "operator_action_imitation": false,
+    "surface_features_in_exploratory_fit": [
+      "baseline inlet SO2",
+      "baseline pH",
+      "baseline outlet SO2",
+      "baseline gas flow"
+    ],
+    "nuisance_features_in_exploratory_fit": [
+      "action duration",
+      "inlet SO2 change",
+      "gas-flow change",
+      "SO2 pretrend",
+      "pH pretrend"
+    ],
+    "huber_epsilon": 1.35,
+    "huber_alpha": 0.2,
+    "bootstrap_iterations_exploratory": 100,
+    "physical_sign_review_threshold": 0.8,
+    "minimum_event_count_for_grid_review": 20,
+    "review_rule": "Both SO2 marginal (<0) and pH marginal (>0) must have stable bootstrap direction. A populated grid with wrong/unstable physical direction is rejected and must not outrank a supported neighbor."
+  },
+  "pooled_fallback_exploratory": {
+    "event_count": 523,
+    "independent_days": 37,
+    "delta_q_center_m3_h": 69.836,
+    "delta_q_robust_scale_m3_h": 3.70445,
+    "delta_q_relative_scale": 0.05305,
+    "phi_so2_center": -0.017779,
+    "phi_ph_center": 0.004467,
+    "so2_bootstrap_negative_probability_50fit": 1.0,
+    "ph_bootstrap_positive_probability_50fit": 1.0,
+    "phi_so2_bootstrap": {
+      "p10": -0.02530,
+      "median": -0.01801,
+      "p90": -0.00901
+    },
+    "phi_ph_bootstrap": {
+      "p10": 0.003268,
+      "median": 0.004328,
+      "p90": 0.005641
+    },
+    "status": "POOLED_REVIEW_CANDIDATE_NOT_PUBLISHED",
+    "note": "The pooled model is physically stable in this exploratory fit and is intended only as a low-confidence fallback after explicit review."
+  },
+  "grid_results": [
+    {
+      "grid_id": "P9-S1",
+      "event_count": 42,
+      "independent_days": 20,
+      "phi_so2_center": 0.02892,
+      "so2_physical_sign_probability": 0.47,
+      "phi_ph_center": 0.006013,
+      "ph_physical_sign_probability": 0.58,
+      "delta_q_relative_scale": 0.03669,
+      "status": "REJECTED_DIRECTION_UNSTABLE"
+    },
+    {
+      "grid_id": "P10-S1",
+      "event_count": 50,
+      "independent_days": 22,
+      "phi_so2_center": -0.01021,
+      "so2_physical_sign_probability": 0.50,
+      "phi_ph_center": 0.002569,
+      "ph_physical_sign_probability": 0.77,
+      "delta_q_relative_scale": 0.03389,
+      "status": "REJECTED_DIRECTION_UNSTABLE"
+    },
+    {
+      "grid_id": "P11-S1",
+      "event_count": 47,
+      "independent_days": 23,
+      "phi_so2_center": -0.04416,
+      "so2_physical_sign_probability": 0.79,
+      "phi_ph_center": 0.007394,
+      "ph_physical_sign_probability": 0.96,
+      "delta_q_relative_scale": 0.03256,
+      "status": "REJECTED_SO2_SIGN_STABILITY_BELOW_REVIEW_THRESHOLD"
+    },
+    {
+      "grid_id": "P12-S1",
+      "event_count": 72,
+      "independent_days": 26,
+      "phi_so2_center": 0.03735,
+      "so2_physical_sign_probability": 0.06,
+      "phi_ph_center": -0.004626,
+      "ph_physical_sign_probability": 0.12,
+      "delta_q_relative_scale": 0.04952,
+      "phi_so2_bootstrap_p10_p90": [0.01386, 0.09492],
+      "phi_ph_bootstrap_p10_p90": [-0.01199, 0.000263],
+      "status": "REJECTED_WRONG_PHYSICAL_DIRECTION",
+      "note": "High event count does not make this profile usable. The grid is strongly operator-confounded/unstable under this estimator and must fall back to other supported evidence."
+    },
+    {
+      "grid_id": "P13-S1",
+      "event_count": 50,
+      "independent_days": 23,
+      "phi_so2_center": -0.09950,
+      "so2_physical_sign_probability": 0.95,
+      "phi_ph_center": 0.005599,
+      "ph_physical_sign_probability": 0.96,
+      "delta_q_relative_scale": 0.04708,
+      "phi_so2_bootstrap_p10_p90": [-0.15459, -0.03098],
+      "phi_ph_bootstrap_p10_p90": [0.002446, 0.016649],
+      "status": "MODEL_BASED_LOCAL_GAIN_REVIEW_CANDIDATE"
+    },
+    {
+      "grid_id": "P14-S1",
+      "event_count": 45,
+      "independent_days": 23,
+      "phi_so2_center": -0.10000,
+      "so2_physical_sign_probability": 0.99,
+      "phi_ph_center": 0.014849,
+      "ph_physical_sign_probability": 0.98,
+      "delta_q_relative_scale": 0.05135,
+      "phi_so2_bootstrap_p10_p90": [-0.22094, -0.03075],
+      "phi_ph_bootstrap_p10_p90": [0.003895, 0.021183],
+      "status": "MODEL_BASED_LOCAL_GAIN_REVIEW_CANDIDATE"
+    },
+    {
+      "grid_id": "P15-S1",
+      "event_count": 40,
+      "independent_days": 24,
+      "phi_so2_center": -0.13003,
+      "so2_physical_sign_probability": 0.94,
+      "phi_ph_center": 0.024650,
+      "ph_physical_sign_probability": 0.93,
+      "delta_q_relative_scale": 0.03974,
+      "phi_so2_bootstrap_p10_p90": [-0.24955, -0.04198],
+      "phi_ph_bootstrap_p10_p90": [0.002126, 0.04210],
+      "status": "MODEL_BASED_LOCAL_GAIN_REVIEW_CANDIDATE"
+    },
+    {
+      "grid_id": "P16-S1",
+      "event_count": 31,
+      "independent_days": 20,
+      "phi_so2_center": -0.02647,
+      "so2_physical_sign_probability": 0.58,
+      "phi_ph_center": 0.004131,
+      "ph_physical_sign_probability": 0.55,
+      "delta_q_relative_scale": 0.06968,
+      "status": "REJECTED_DIRECTION_UNSTABLE"
+    },
+    {
+      "grid_id": "P17-S1",
+      "event_count": 26,
+      "independent_days": 16,
+      "phi_so2_center": -0.01201,
+      "so2_physical_sign_probability": 0.5758,
+      "phi_ph_center": 0.001360,
+      "ph_physical_sign_probability": 0.4242,
+      "delta_q_relative_scale": 0.17584,
+      "status": "REJECTED_DIRECTION_UNSTABLE"
+    },
+    {
+      "grid_id": "P18-S1",
+      "event_count": 23,
+      "independent_days": 14,
+      "phi_so2_center": -0.05120,
+      "so2_physical_sign_probability": 0.82,
+      "phi_ph_center": 0.003041,
+      "ph_physical_sign_probability": 0.76,
+      "delta_q_relative_scale": 0.03385,
+      "status": "REJECTED_PH_SIGN_STABILITY_BELOW_REVIEW_THRESHOLD"
+    }
+  ],
+  "online_mapping_implication": {
+    "exact_state_lookup": false,
+    "resolution_order": [
+      "EXACT_CONTEXT",
+      "EXACT_GRID",
+      "NEIGHBOR_INTERPOLATED",
+      "POOLED_FALLBACK",
+      "MFAC_PRIOR_UNAVAILABLE_BUT_QBASE_STILL_AVAILABLE"
+    ],
+    "bad_grid_policy": "A grid rejected for wrong/unstable physical direction is treated as unsupported, not as an authoritative exact-grid model.",
+    "unseen_workpoint_policy": "Evaluate the continuous surface inside support; outside support lower confidence and mark extrapolation. Do not remove Dynamic Qbase recommendation merely because exact history is unseen.",
+    "online_learning_policy": "Historical prior may refresh an unlearned channel at the current work point. After that channel has accepted online evidence, online state has priority and the historical map must not overwrite it."
+  },
+  "open_items_before_reviewed_map_publish": [
+    "freeze the historical episode-to-model training adapter so the event cohort is reproducible from the canonical historical engine",
+    "review the physical-sign threshold and minimum delta-Q variation policy rather than treating exploratory values as plant defaults",
+    "bind reviewed grid evidence to a condition snapshot/map artifact without inventing historical condition labels",
+    "review whether baseline gas flow remains a response-surface dimension or is nuisance-only; current online query may omit it and therefore evaluates that dimension at the profile center",
+    "perform rolling/blocked holdout validation across days before publishing any grid surface",
+    "retain pooled fallback at lower confidence than exact/neighbor supported profiles"
+  ],
+  "notes": [
+    "This audit implements the corrected main route: historical data is used to estimate model-based marginal LOCAL_GAIN priors; supervised +2 m3/h trials are optional validation/supplement rather than a prerequisite.",
+    "P13-P15 are review candidates under the exploratory estimator, not approved runtime sensitivities.",
+    "P12 demonstrates why event count alone is not a validity criterion.",
+    "No value in this file enables LEARN, Residual or DCS write."
+  ]
+}
