@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Add delayed-response memory, historical gain mapping and staircase Shadow advice."""
+"""Add delayed-response memory, reviewed historical priors and staircase Shadow advice."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .historical_runtime_prior import resolve_reviewed_scalar_runtime_prior
 from .historical_sensitivity_map import (
     HistoricalSensitivityMap,
     HistoricalSensitivityQuery,
@@ -24,18 +25,21 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V2_HISTORICAL_PRIOR_MAPPING"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V3_REVIEWED_SCALAR_PRIOR"
 )
 
 
 class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
     """Run the existing coordinator, then append non-authoritative trajectory advice.
 
-    An optional historical sensitivity map supplies SO2/pH priors only when no
-    persisted/learned channel state exists. Before a channel has any online
-    accepted event, its historical prior may be re-evaluated every cycle at the
-    current work point. Once that channel has learned online, historical mapping
-    never overwrites it.
+    The attached historical map is a research/review artifact and may contain
+    complex surfaces. Runtime seeding is deliberately narrower: only profiles
+    that pass ``resolve_reviewed_scalar_runtime_prior`` are visible here.
+
+    Persisted online state has first priority.  Before a channel has any online
+    accepted event, an approved scalar historical prior may be re-evaluated at
+    the current context/grid. Once that channel has learned online, historical
+    mapping never overwrites it.
     """
 
     def __init__(
@@ -80,7 +84,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         self,
         value: Optional[HistoricalSensitivityMap],
     ) -> None:
-        """Attach/detach a reviewed historical-prior map without enabling control."""
+        """Attach/detach a historical map; runtime still applies scalar review gate."""
         self._historical_sensitivity_map = value
         self._last_historical_mapping = None
 
@@ -110,7 +114,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if query.condition_snapshot_version != snapshot or query.mfac_context_id != context_id:
             return existing
 
-        decision = mapping.resolve(query)
+        decision = resolve_reviewed_scalar_runtime_prior(mapping, query)
         self._last_historical_mapping = decision
         if not decision.available:
             return existing
@@ -126,6 +130,8 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                 metadata={
                     "historical_prior_seeded": True,
                     "historical_prior_mapping": decision.to_dict(),
+                    "historical_prior_model_complexity": "SCALAR",
+                    "historical_prior_runtime_reviewed": True,
                     "historical_prior_online_override_policy": (
                         "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
                     ),
@@ -140,6 +146,8 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         metadata = dict(existing.metadata or {})
         metadata["historical_prior_seeded"] = True
         metadata["historical_prior_mapping"] = decision.to_dict()
+        metadata["historical_prior_model_complexity"] = "SCALAR"
+        metadata["historical_prior_runtime_reviewed"] = True
         metadata["historical_prior_online_override_policy"] = (
             "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
         )
@@ -254,6 +262,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                     if self._last_historical_mapping is not None
                     else None
                 ),
+                "historical_runtime_prior_policy": "REVIEWED_SCALAR_ONLY",
                 "historical_prior_replaces_qbase": False,
                 "historical_prior_enables_learning": False,
                 "historical_prior_enables_residual": False,
