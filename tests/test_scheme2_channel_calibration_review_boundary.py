@@ -171,6 +171,26 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 DualResponseCalibrationProfile.from_dict(payload)
 
+    def test_serialized_calibrated_profile_rejects_missing_or_forged_provenance(self):
+        payload = self.approve_so2().profile.to_dict()
+        restored = DualResponseCalibrationProfile.from_dict(payload)
+        self.assertTrue(restored.so2_calibrated)
+
+        missing_timing = self.approve_so2().profile.to_dict()
+        del missing_timing["so2"]["metadata"]["timing_extraction_profile_id"]
+        with self.assertRaises(ValueError):
+            DualResponseCalibrationProfile.from_dict(missing_timing)
+
+        missing_cohort_approval = self.approve_so2().profile.to_dict()
+        missing_cohort_approval["so2"]["metadata"]["cohort_bootstrap_review_approved"] = False
+        with self.assertRaises(ValueError):
+            DualResponseCalibrationProfile.from_dict(missing_cohort_approval)
+
+        candidate_used = self.approve_so2().profile.to_dict()
+        candidate_used["so2"]["metadata"]["timing_extraction_candidate_parameters_used"] = True
+        with self.assertRaises(ValueError):
+            DualResponseCalibrationProfile.from_dict(candidate_used)
+
 
 if __name__ == "__main__":
     unittest.main()
