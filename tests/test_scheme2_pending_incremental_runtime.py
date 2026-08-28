@@ -99,12 +99,12 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
         )
 
     @staticmethod
-    def cycle(coordinator, timestamp, *, ph, actual_flow):
+    def cycle(coordinator, timestamp, *, ph, actual_flow, outlet_so2=28.0):
         return coordinator.process_cycle(
             timestamp=timestamp,
             qbase_effective=30.0,
             qbase_inputs_valid=True,
-            outlet_so2=28.0,
+            outlet_so2=outlet_so2,
             so2_target=20.0,
             condition_snapshot_version="v1",
             mfac_context_id="MFAC-COND-C1",
@@ -118,6 +118,28 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
             dcs_applied_target_supply_flow=None,
             fast_active=False,
             data_quality_ok=True,
+        )
+
+    @staticmethod
+    def trajectory(coordinator_config, root, *, initial_hold):
+        return Scheme2TrajectoryShadowCoordinator(
+            coordinator_config,
+            Scheme2RuntimeStore(root, enabled=False),
+            runtime_state=Scheme2PendingIncrementalRuntimeTest.state(),
+            initial_residual_mfac_hold=initial_hold,
+            pending_dose_config=PendingDoseGuardConfig(
+                flow_change_deadband=0.5,
+                response_onset_seconds=0.0,
+                response_peak_seconds=100.0,
+                max_sample_gap_seconds=15.0,
+                min_confidence=0.5,
+            ),
+            trajectory_planner_config=FlowTrajectoryPlannerConfig(
+                max_step_up=2.0,
+                max_step_down=2.0,
+                min_hold_seconds=20.0,
+                demand_deadband=0.1,
+            ),
         )
 
     def test_base_runtime_arbitrates_candidate_minus_current_hold(self):
@@ -143,47 +165,58 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
                 result.metadata["ph_arbitration_context"]["pending_source"],
                 "NONE",
             )
-            # No completed dual-response event yet, so the held residual itself
-            # is not replaced in this cycle.
             self.assertAlmostEqual(result.residual_hold.held_residual, 3.0)
+
+    def test_trajectory_gate_allows_one_clean_initial_residual_decision(self):
+        with tempfile.TemporaryDirectory() as root:
+            coordinator = self.trajectory(self.config(), root, initial_hold=0.0)
+            result = self.cycle(
+                coordinator,
+                "2026-08-28T12:00:00+08:00",
+                ph=6.20,
+                actual_flow=30.0,
+                outlet_so2=28.0,
+            )
+            self.assertAlmostEqual(result.residual_decision.candidate_residual, 4.0)
+            self.assertEqual(
+                result.metadata["residual_decision_permission"]["status"],
+                "ALLOW_INITIAL_DECISION",
+            )
+            self.assertAlmostEqual(result.residual_hold.held_residual, 4.0)
+            self.assertTrue(coordinator.residual_decision_gate.awaiting_response)
+            # Target for this cycle was calculated from the previous held value;
+            # the new residual becomes the target input on the next cycle.
+            self.assertAlmostEqual(result.algorithm_target.algorithm_target_supply_flow, 30.0)
 
     def test_pending_guard_future_ph_is_used_by_same_runtime_arbiter(self):
         with tempfile.TemporaryDirectory() as root:
-            coordinator = Scheme2TrajectoryShadowCoordinator(
-                self.config(),
-                Scheme2RuntimeStore(root, enabled=False),
-                runtime_state=self.state(),
-                initial_residual_mfac_hold=3.0,
-                pending_dose_config=PendingDoseGuardConfig(
-                    flow_change_deadband=0.5,
-                    response_onset_seconds=0.0,
-                    response_peak_seconds=100.0,
-                    max_sample_gap_seconds=15.0,
-                    min_confidence=0.5,
-                ),
-                trajectory_planner_config=FlowTrajectoryPlannerConfig(
-                    max_step_up=2.0,
-                    max_step_down=2.0,
-                    min_hold_seconds=20.0,
-                    demand_deadband=0.1,
-                ),
-            )
+            coordinator = self.trajectory(self.config(), root, initial_hold=3.0)
 
+            # First cycle has no desired residual change, so the decision gate
+            # remains free while PendingDoseGuard establishes its flow baseline.
             first = self.cycle(
                 coordinator,
                 "2026-08-28T12:00:00+08:00",
                 ph=6.20,
                 actual_flow=30.0,
+                outlet_so2=26.0,
             )
-            self.assertEqual(first.ph_arbitration.status, "PASS")
-            self.assertAlmostEqual(first.ph_arbitration.final_residual, 4.0)
-            self.assertTrue(first.metadata["pending_used_by_ph_arbitration"])
+            self.assertAlmostEqual(first.residual_decision.candidate_residual, 3.0)
+            self.assertAlmostEqual(first.residual_hold.held_residual, 3.0)
+            self.assertEqual(
+                first.metadata["residual_decision_permission"]["status"],
+                "NO_CHANGE_REQUIRED",
+            )
 
+            # Actual flow then moves +2.  SO2 alone wants residual 4, but the
+            # still-pending pH response raises the future base to 6.4, so the
+            # pH arbiter removes the +1 increment and leaves the held residual 3.
             second = self.cycle(
                 coordinator,
                 "2026-08-28T12:00:10+08:00",
                 ph=6.20,
                 actual_flow=32.0,
+                outlet_so2=28.0,
             )
             pending = second.metadata["pending_dose_guard"]
             self.assertAlmostEqual(pending["pending_up_equivalent_delta_q"], 2.0)
@@ -196,18 +229,11 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
             self.assertEqual(second.ph_arbitration.status, "SCALE")
             self.assertAlmostEqual(second.ph_arbitration.residual_scale, 0.0)
             self.assertAlmostEqual(second.ph_arbitration.final_residual, 3.0)
-            # Pending pH risk has already removed the desired +1 residual
-            # increment upstream.  Planner therefore sees no upward demand gap
-            # and correctly remains AT_DEMAND instead of applying a redundant
-            # second HOLD_PENDING_PH gate.
             self.assertEqual(
-                second.metadata["trajectory_plan"]["status"],
-                "AT_DEMAND",
+                second.metadata["residual_decision_permission"]["status"],
+                "NO_CHANGE_REQUIRED",
             )
-            self.assertAlmostEqual(
-                second.metadata["trajectory_plan"]["planned_target"],
-                second.algorithm_target.algorithm_target_supply_flow,
-            )
+            self.assertEqual(second.metadata["trajectory_plan"]["status"], "AT_DEMAND")
 
 
 if __name__ == "__main__":
