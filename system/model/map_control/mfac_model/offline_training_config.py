@@ -17,6 +17,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Tuple
 
+from system.model.config.mfac_training_lifecycle import (
+    INCREMENTAL_OFFLINE_TRAINING_DAYS,
+    INITIAL_OFFLINE_TRAINING_DAYS,
+    OFFLINE_TRAINING_ORDER,
+    ONLINE_MFAC_UPDATE_TRIGGER,
+)
+
 from .historical_model_based_gain_adapter import (
     HistoricalModelBasedGainAdapterConfig,
 )
@@ -28,7 +35,7 @@ from .model_based_local_gain_trainer import ModelBasedLocalGainTrainerConfig
 
 
 MFAC_OFFLINE_TRAINING_CONFIG_VERSION = (
-    "SCHEME2_MFAC_OFFLINE_TRAINING_V2_7DAY_CUMULATIVE_SCALAR_PRIOR_HANDOFF"
+    "SCHEME2_MFAC_OFFLINE_TRAINING_V3_7DAY_INITIAL_3DAY_INCREMENTAL_SCALAR_PRIOR_HANDOFF"
 )
 
 
@@ -148,15 +155,22 @@ def historical_adapter_config(tower_id: str) -> HistoricalModelBasedGainAdapterC
     )
 
 
+# The only numeric offline cadence source is mfac_training_lifecycle.py.
+# Process4 consumes the same constants; this contract is persisted so a version
+# cannot claim a different 7d/3d lifecycle during activation.
 OFFLINE_ONLINE_LIFECYCLE_CONTRACT: Dict[str, Any] = {
-    "periodic_offline_retrain_days": 7,
-    "offline_order": ["CONDITION", "MFAC"],
+    "initial_training_days": int(INITIAL_OFFLINE_TRAINING_DAYS),
+    "incremental_training_days": int(INCREMENTAL_OFFLINE_TRAINING_DAYS),
+    "incremental_trigger_rule": (
+        "AFTER_AT_LEAST_INCREMENTAL_TRAINING_DAYS_OF_NEW_DATA"
+    ),
+    "offline_order": list(OFFLINE_TRAINING_ORDER),
     "offline_prior_role": "COLD_START_OR_NEW_CONTEXT_BASELINE",
-    "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+    "online_update_trigger": ONLINE_MFAC_UPDATE_TRIGGER,
     "online_update_is_periodic": False,
     "persisted_online_state_precedes_offline_prior_within_same_context": True,
     "runtime_state_namespace": ["condition_snapshot_version", "mfac_context_id"],
-    # Weekly version handoff is explicit rather than generic state reuse.
+    # Version handoff is explicit rather than generic state reuse.
     "cross_snapshot_online_state_reuse": True,
     "cross_snapshot_online_state_reuse_policy": "SAME_MFAC_CONTEXT_AND_GRID_ONLY",
     "cross_snapshot_online_state_requires_runtime_grid_id": True,
