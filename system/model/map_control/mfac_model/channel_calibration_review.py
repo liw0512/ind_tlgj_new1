@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """Explicit human review for LOCAL_GAIN_READY -> CALIBRATED channel promotion.
 
-A configured response window is not observed process timing. This module only
-accepts timing evidence explicitly derived from observed process traces, bound
-to the same condition/context and to events from the reviewed LOCAL_GAIN cohort.
-
-Channel confidence also requires an auditable confidence-evidence record. The
-candidate score is not a probability and does not replace explicit human review.
+Observed timing must come from raw process traces through a reviewed timing-
+extraction profile. Confidence must come from an adequate quantitative cohort,
+human cohort-bootstrap approval, and the same reviewed timing evidence.
 
 The review can calibrate SO2 and pH independently. It grants no runtime
 learning, residual-control or DCS authority.
@@ -37,9 +34,7 @@ from .dual_response_calibration_profile import (
 from .mfac_schema import DelayProfile
 
 
-CHANNEL_CALIBRATION_REVIEW_VERSION = (
-    CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION
-)
+CHANNEL_CALIBRATION_REVIEW_VERSION = CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION
 TIMING_SOURCE_OBSERVED_PROCESS_TRACE = "OBSERVED_PROCESS_TRACE"
 
 
@@ -65,6 +60,35 @@ def _timestamp_text(value: Any) -> str:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
     except ValueError as exc:
         raise ValueError("review_time must be a valid ISO timestamp") from exc
+
+
+def _timing_extraction_provenance(evidence: "ObservedResponseTimingEvidence") -> Dict[str, str]:
+    metadata = dict(evidence.metadata or {})
+    if metadata.get("timing_extraction_profile_reviewed") is not True:
+        raise ValueError("timing evidence requires a reviewed extraction profile")
+    if metadata.get("calibration_review_eligible") is not True:
+        raise ValueError("timing evidence is not eligible for channel calibration review")
+    if metadata.get("candidate_parameters_used_for_extraction") is not False:
+        raise ValueError("timing evidence cannot use unreviewed candidate extraction parameters")
+    required = (
+        "timing_extraction_profile_id",
+        "timing_extraction_profile_semantics",
+        "timing_extraction_reviewer_id",
+        "timing_extraction_review_time",
+    )
+    values: Dict[str, str] = {}
+    for key in required:
+        value = str(metadata.get(key) or "").strip()
+        if not value:
+            raise ValueError("timing evidence is missing %s" % key)
+        values[key] = value
+    values["timing_extraction_review_time"] = _timestamp_text(
+        values["timing_extraction_review_time"]
+    )
+    reviewed_parameters = metadata.get("reviewed_extraction_parameters")
+    if not isinstance(reviewed_parameters, Mapping) or not dict(reviewed_parameters):
+        raise ValueError("timing evidence is missing reviewed extraction parameters")
+    return values
 
 
 @dataclass(frozen=True)
@@ -100,9 +124,7 @@ class ObservedResponseTimingEvidence:
         if self.response_source != TIMING_SOURCE_OBSERVED_PROCESS_TRACE:
             raise ValueError("response timing must come from observed process trace")
         if self.configured_window_boundary_used_as_observed_timing:
-            raise ValueError(
-                "configured response-window boundaries cannot be timing evidence"
-            )
+            raise ValueError("configured response-window boundaries cannot be timing evidence")
         event_ids = tuple(str(value or "").strip() for value in self.event_ids)
         if not event_ids or any(not value for value in event_ids):
             raise ValueError("observed timing evidence requires event IDs")
@@ -200,12 +222,7 @@ def approve_channel_calibration(
     reviewer_id: str,
     review_time: Any,
 ) -> ChannelCalibrationReviewResult:
-    """Review one channel and promote only that channel to CALIBRATED.
-
-    The function is deliberately non-activating. A later activation review is
-    still required even when both channels eventually become CALIBRATED.
-    """
-
+    """Review one channel and promote only that channel to CALIBRATED."""
     if not bool(human_approved):
         raise ValueError("explicit human channel calibration approval is required")
     reviewer = str(reviewer_id or "").strip()
@@ -216,9 +233,7 @@ def approve_channel_calibration(
     if channel_name not in {"SO2", "PH"}:
         raise ValueError("channel must be SO2 or PH")
 
-    base: DualResponseChannelCalibration = (
-        profile.so2 if channel_name == "SO2" else profile.ph
-    )
+    base: DualResponseChannelCalibration = profile.so2 if channel_name == "SO2" else profile.ph
     if base.status != CHANNEL_LOCAL_GAIN_READY:
         if base.status == CHANNEL_CALIBRATED:
             raise ValueError("channel is already CALIBRATED")
@@ -230,13 +245,12 @@ def approve_channel_calibration(
         raise ValueError("timing evidence condition snapshot mismatch")
     if timing_evidence.mfac_context_id != profile.mfac_context_id:
         raise ValueError("timing evidence MFAC context mismatch")
+    timing_provenance = _timing_extraction_provenance(timing_evidence)
 
     gain_ids = set(base.evidence_event_ids)
     timing_ids = set(timing_evidence.event_ids)
     if not timing_ids.issubset(gain_ids):
-        raise ValueError(
-            "observed timing evidence must come from the reviewed LOCAL_GAIN cohort"
-        )
+        raise ValueError("observed timing evidence must come from the reviewed LOCAL_GAIN cohort")
     if timing_evidence.independent_days > base.independent_days:
         raise ValueError("timing independent days exceed LOCAL_GAIN evidence days")
 
@@ -256,6 +270,8 @@ def approve_channel_calibration(
         raise ValueError("confidence/timing event IDs mismatch")
     if set(confidence_evidence.cohort_event_ids) != gain_ids:
         raise ValueError("confidence evidence cohort does not match LOCAL_GAIN evidence")
+    if confidence_evidence.cohort_bootstrap_review_approved is not True:
+        raise ValueError("confidence evidence requires human cohort bootstrap approval")
     if confidence_evidence.human_review_required is not True:
         raise ValueError("confidence evidence must remain human-review gated")
     if confidence_evidence.confidence_candidate_is_probability:
@@ -288,6 +304,11 @@ def approve_channel_calibration(
         "timing_independent_days": timing_evidence.independent_days,
         "timing_onset_source": timing_evidence.onset_source,
         "timing_response_source": timing_evidence.response_source,
+        "timing_extraction_profile_reviewed": True,
+        "timing_extraction_profile_id": timing_provenance["timing_extraction_profile_id"],
+        "timing_extraction_profile_semantics": timing_provenance["timing_extraction_profile_semantics"],
+        "timing_extraction_reviewer_id": timing_provenance["timing_extraction_reviewer_id"],
+        "timing_extraction_review_time": timing_provenance["timing_extraction_review_time"],
         "configured_window_boundary_used_as_observed_timing": False,
         "response_config_review_approved": True,
         "confidence_review_approved": True,
@@ -295,6 +316,10 @@ def approve_channel_calibration(
         "confidence_evidence_semantics": confidence_evidence.semantics_version,
         "confidence_review_candidate": confidence_evidence.conservative_confidence_candidate,
         "confidence_candidate_is_probability": False,
+        "cohort_bootstrap_review_approved": True,
+        "cohort_review_id": confidence_evidence.cohort_review_id,
+        "cohort_review_reviewer_id": confidence_evidence.cohort_review_reviewer_id,
+        "cohort_review_time": confidence_evidence.cohort_review_time,
         "automatic_online_adaptation_allowed": False,
         "normal_runtime_activation_allowed": False,
         "separate_activation_review_required": True,
@@ -315,10 +340,11 @@ def approve_channel_calibration(
             "separate_activation_artifact_required": True,
         }
     )
-    if channel_name == "SO2":
-        updated_profile = replace(profile, so2=calibrated, metadata=profile_metadata)
-    else:
-        updated_profile = replace(profile, ph=calibrated, metadata=profile_metadata)
+    updated_profile = (
+        replace(profile, so2=calibrated, metadata=profile_metadata)
+        if channel_name == "SO2"
+        else replace(profile, ph=calibrated, metadata=profile_metadata)
+    )
 
     review = ChannelCalibrationReviewRecord(
         review_id=review_id,
@@ -340,7 +366,10 @@ def approve_channel_calibration(
         metadata={
             "local_gain_event_ids": list(base.evidence_event_ids),
             "timing_event_ids_are_local_gain_subset": True,
+            "timing_extraction_profile_reviewed": True,
+            "timing_extraction_profile_id": timing_provenance["timing_extraction_profile_id"],
             "configured_window_is_not_observed_timing": True,
+            "cohort_bootstrap_review_approved": True,
             "confidence_candidate_is_not_probability": True,
             "human_confidence_value_explicitly_reviewed": True,
             "other_channel_status_unchanged": True,
