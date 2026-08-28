@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Add delayed-response memory and staircase planning without changing target ownership."""
+"""Add delayed-response memory, historical gain mapping and staircase Shadow advice."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .historical_sensitivity_map import (
+    HistoricalSensitivityMap,
+    HistoricalSensitivityQuery,
+)
+from .mfac_schema import MFACRuntimeState
 from .pending_dose_guard import PendingDoseGuard, PendingDoseGuardConfig
 from .runtime_coordinator import (
     Scheme2RuntimeCoordinator,
@@ -18,11 +23,20 @@ from .runtime_coordinator import (
 from .runtime_store import Scheme2RuntimeStore
 
 
-TRAJECTORY_SHADOW_COORDINATOR_VERSION = "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V1"
+TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V2_HISTORICAL_PRIOR_MAPPING"
+)
 
 
 class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
-    """Run the existing coordinator, then append non-authoritative trajectory advice."""
+    """Run the existing coordinator, then append non-authoritative trajectory advice.
+
+    An optional historical sensitivity map supplies SO2/pH priors only when no
+    persisted/learned channel state exists.  Before a channel has any online
+    accepted event, its historical prior may be re-evaluated every cycle at the
+    current work point.  Once that channel has learned online, historical mapping
+    never overwrites it.
+    """
 
     def __init__(
         self,
@@ -34,12 +48,10 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         runtime_state=None,
         initial_residual_mfac_hold: float = 0.0,
         startup_setpoint_target: Optional[float] = None,
+        historical_sensitivity_map: Optional[HistoricalSensitivityMap] = None,
     ) -> None:
         if config.ph_arbitration is None:
             raise ValueError("trajectory shadow requires pH arbitration envelope")
-        # Initialize subclass-owned state before the base constructor. The base
-        # may restore runtime state and dispatch to our overridden
-        # ``set_runtime_state`` during construction.
         self.pending_dose_guard = PendingDoseGuard(
             pending_dose_config,
             config.ph_arbitration,
@@ -49,6 +61,9 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             config.continuous_target,
         )
         self._trajectory_context_key: Optional[Tuple[str, str]] = None
+        self._historical_sensitivity_map = historical_sensitivity_map
+        self._historical_query: Optional[HistoricalSensitivityQuery] = None
+        self._last_historical_mapping = None
         super().__init__(
             config,
             runtime_store,
@@ -56,6 +71,18 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             initial_residual_mfac_hold=initial_residual_mfac_hold,
             startup_setpoint_target=startup_setpoint_target,
         )
+
+    @property
+    def historical_sensitivity_map(self) -> Optional[HistoricalSensitivityMap]:
+        return self._historical_sensitivity_map
+
+    def set_historical_sensitivity_map(
+        self,
+        value: Optional[HistoricalSensitivityMap],
+    ) -> None:
+        """Attach/detach a reviewed historical-prior map without enabling control."""
+        self._historical_sensitivity_map = value
+        self._last_historical_mapping = None
 
     def set_runtime_state(self, runtime_state, *, residual_mfac_hold: float = 0.0) -> None:
         super().set_runtime_state(
@@ -69,6 +96,108 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             runtime_state.mfac_context_id,
         )
 
+    def _mapped_state(
+        self,
+        snapshot: str,
+        context_id: str,
+        *,
+        existing: Optional[MFACRuntimeState],
+    ) -> Optional[MFACRuntimeState]:
+        mapping = self._historical_sensitivity_map
+        query = self._historical_query
+        if mapping is None or query is None:
+            return existing
+        if query.condition_snapshot_version != snapshot or query.mfac_context_id != context_id:
+            return existing
+
+        decision = mapping.resolve(query)
+        self._last_historical_mapping = decision
+        if not decision.available:
+            return existing
+
+        if existing is None:
+            return MFACRuntimeState(
+                condition_snapshot_version=snapshot,
+                mfac_context_id=context_id,
+                phi_live=float(decision.phi_so2),
+                confidence_live=float(decision.confidence_so2),
+                phi_ph_live=float(decision.phi_ph),
+                confidence_ph_live=float(decision.confidence_ph),
+                metadata={
+                    "historical_prior_seeded": True,
+                    "historical_prior_mapping": decision.to_dict(),
+                    "historical_prior_online_override_policy": (
+                        "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
+                    ),
+                },
+            )
+
+        update_so2 = int(existing.valid_event_count) <= 0
+        update_ph = int(existing.ph_valid_event_count) <= 0
+        if not update_so2 and not update_ph:
+            return existing
+
+        metadata = dict(existing.metadata or {})
+        metadata["historical_prior_seeded"] = True
+        metadata["historical_prior_mapping"] = decision.to_dict()
+        metadata["historical_prior_online_override_policy"] = (
+            "PER_CHANNEL_AFTER_FIRST_ACCEPTED_ONLINE_EVENT"
+        )
+        return MFACRuntimeState(
+            condition_snapshot_version=existing.condition_snapshot_version,
+            mfac_context_id=existing.mfac_context_id,
+            phi_live=(
+                float(decision.phi_so2) if update_so2 else float(existing.phi_live)
+            ),
+            confidence_live=(
+                float(decision.confidence_so2)
+                if update_so2
+                else float(existing.confidence_live)
+            ),
+            bias_live=float(existing.bias_live),
+            valid_event_count=int(existing.valid_event_count),
+            last_event_id=str(existing.last_event_id),
+            last_update_time=str(existing.last_update_time),
+            phi_ph_live=(
+                float(decision.phi_ph)
+                if update_ph
+                else existing.phi_ph_live
+            ),
+            confidence_ph_live=(
+                float(decision.confidence_ph)
+                if update_ph
+                else float(existing.confidence_ph_live)
+            ),
+            ph_valid_event_count=int(existing.ph_valid_event_count),
+            ph_last_event_id=str(existing.ph_last_event_id),
+            ph_last_update_time=str(existing.ph_last_update_time),
+            metadata=metadata,
+            semantics_version=existing.semantics_version,
+        )
+
+    def _select_context(self, snapshot: str, context_id: str) -> str:
+        status = super()._select_context(snapshot, context_id)
+        if not snapshot or not context_id:
+            return status
+
+        previous = self.runtime_state
+        mapped = self._mapped_state(snapshot, context_id, existing=previous)
+        if mapped is previous:
+            return status
+        if mapped is not None:
+            self.runtime_state = mapped
+            self._active_context_key = (snapshot, context_id)
+            if previous is None:
+                self.residual_hold_manager.reset()
+                source = (
+                    self._last_historical_mapping.mapping_source
+                    if self._last_historical_mapping is not None
+                    else "UNKNOWN"
+                )
+                return "CONTEXT_HISTORICAL_PRIOR:%s" % source
+            return "CONTEXT_HISTORICAL_PRIOR_REFRESHED"
+        return status
+
     def process_cycle(self, **kwargs: Any) -> Scheme2RuntimeCycleResult:
         key = (
             str(kwargs.get("condition_snapshot_version") or ""),
@@ -78,6 +207,20 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             self.pending_dose_guard.reset("MFAC_CONTEXT_CHANGE")
             self.trajectory_planner.reset()
             self._trajectory_context_key = key
+
+        self._historical_query = HistoricalSensitivityQuery(
+            condition_snapshot_version=key[0],
+            mfac_context_id=key[1],
+            grid_id=str(kwargs.get("grid_id") or ""),
+            qbase=(
+                kwargs.get("qbase_effective")
+                if bool(kwargs.get("qbase_inputs_valid", False))
+                else None
+            ),
+            inlet_so2=kwargs.get("inlet_so2"),
+            ph=kwargs.get("ph"),
+            outlet_so2=kwargs.get("outlet_so2"),
+        )
 
         result = super().process_cycle(**kwargs)
         pending = self.pending_dose_guard.update(
@@ -104,6 +247,15 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                 "algorithm_target_replaced_by_trajectory_planner": False,
                 "trajectory_planner_dcs_write_enabled": False,
                 "dose_debt_semantics": False,
+                "historical_sensitivity_mapping": (
+                    self._last_historical_mapping.to_dict()
+                    if self._last_historical_mapping is not None
+                    else None
+                ),
+                "historical_prior_replaces_qbase": False,
+                "historical_prior_enables_learning": False,
+                "historical_prior_enables_residual": False,
+                "historical_prior_enables_dcs_write": False,
             }
         )
         result.metadata = metadata
