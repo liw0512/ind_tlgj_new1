@@ -2,160 +2,150 @@
 
 ## Purpose
 
-`LOCAL_GAIN_READY` means the channel has a reviewed local sensitivity seed from the controlled LOCAL_GAIN cohort. It does **not** mean the response timing, observation windows, confidence or runtime permissions are calibrated.
+`LOCAL_GAIN_READY` means a channel has a reviewed local sensitivity seed from the controlled LOCAL_GAIN cohort. It does **not** mean timing, observation windows, confidence or runtime permissions are calibrated.
 
-The supported promotion path is now:
+The supported path is:
 
 ```text
-LOCAL_GAIN_READY
-  + manual local-step raw 10 s process traces
-  + observed timing extraction
-  + confidence evidence
-  + reviewed response config
-  + explicit human confidence
-  + explicit human reviewer/time
-        ↓
-CALIBRATED
+manual +2 m3/h trial
+  -> raw 10 s SO2/pH trace
+  -> reviewed timing-extraction profile
+  -> observed timing evidence
+  -> quantitative LOCAL_GAIN cohort gate
+  -> human cohort-bootstrap approval
+  -> confidence evidence
+  -> reviewed response config + explicit final confidence
+  -> human channel calibration review
+  -> CALIBRATED
 ```
 
-SO2 and pH are reviewed independently. Reviewing one channel must not change the other channel state.
+SO2 and pH are reviewed independently. `CALIBRATED` is still not runtime activation permission.
 
 ## Raw trace is required
 
-The configured SO2/pH response monitors summarize configured windows. Their `response_start_time` and `response_end_time` fields are therefore **not** proof of physical onset or response timing.
+Configured SO2/pH response monitors summarize configured windows. Their `response_start_time` and `response_end_time` are **not** proof of physical onset or response timing.
 
-A controlled manual local-step trial must retain the raw SO2/pH trajectory through:
+`LocalStepRawTraceRecorder` retains the manual trial's raw SO2/pH trajectory around the real `actual_flow_reached_time`. It is evidence-only and has no execute API, DCS write, learning or normal-control authority.
 
-```text
-LocalStepRawTraceRecorder
-```
+An invalid raw-trace bundle is fail-closed: `so2_trace` and `ph_trace` are not exposed as usable timing inputs when the trial has context/snapshot drift, missing reach anchor, missing pre/post-reach data or an out-of-range reach timestamp.
 
-The recorder is manual-evidence-only. It has no execute API, no automatic control authority, no DCS write and no learning permission. It anchors the trace to the real `actual_flow_reached_time` and later binds the SO2 and pH traces to the same canonical LOCAL_GAIN event ID.
+## Reviewed timing extraction is a separate approval
 
-## Observed timing extraction
-
-The observed timing extractor semantics are:
+Low-level extraction semantics:
 
 ```text
 SCHEME2_OBSERVED_TIMING_EXTRACTOR_V1_RAW_PROCESS_TRACE
 ```
 
-and the resulting evidence semantics are:
+Calibration-eligible extraction profile semantics:
+
+```text
+SCHEME2_OBSERVED_TIMING_EXTRACTION_DESIGN_V2_REVIEW_SEALED
+```
+
+Observed timing evidence semantics:
 
 ```text
 SCHEME2_OBSERVED_RESPONSE_TIMING_V1_PROCESS_TRACE
 ```
 
-Extraction uses reviewed, explicit parameters only. No plant defaults exist for:
+The extractor has no site defaults for smoothing, onset threshold, sustain samples, response fraction, minimum amplitude or observation horizon. Candidate values never participate in calibration evidence.
 
-- smoothing window;
-- onset absolute threshold;
-- onset sustain samples;
-- response fraction of observed directional extremum;
-- response sustain samples;
-- minimum response amplitude;
-- observation horizon/sample requirements.
+Only `ObservedTimingExtractionProfile(status="REVIEWED_MANUAL_ONLY")` with complete reviewed parameters plus reviewer ID/time may create calibration-eligible timing evidence. That evidence carries:
 
-For each trace the extractor:
+```text
+timing_extraction_profile_reviewed = true
+timing_extraction_profile_id
+timing_extraction_reviewer_id
+timing_extraction_review_time
+reviewed_extraction_parameters
+candidate_parameters_used_for_extraction = false
+calibration_review_eligible = true
+```
 
-1. anchors to real `actual_flow_reached_time`;
-2. estimates the pre-reach baseline from raw samples;
-3. uses a reviewed trailing-median smoothing rule;
-4. finds the first sustained directional crossing of the reviewed onset threshold;
-5. finds the first sustained time reaching a reviewed fraction of the observed directional extremum;
-6. aggregates multiple accepted events into P50/P90 onset/response timing.
+A low-level extractor result without this provenance seal is useful for engineering analysis but cannot enter channel calibration.
 
-For SO2 the physical direction is negative; for pH it is positive. The extractor converts both into a positive directional-response magnitude only for timing detection.
+The current historical large-pulse timing candidates (`SO2 onset P90 ~= 310 s`, `pH onset P90 ~= 190 s`) remain audit candidates only. They are not observed timing for the unexecuted controlled +2 m3/h LOCAL_GAIN cohort.
 
-The following are forbidden as observed timing evidence:
+## Confidence evidence requires human cohort approval
 
-- `response_start_time` merely because it equals a configured `delay_onset_seconds` boundary;
-- `response_end_time` merely because it equals a configured observation-window boundary;
-- large-pulse timing candidates copied directly into the low-step LOCAL_GAIN calibration;
-- synthetic unit-test thresholds copied into site-reviewed extraction config;
-- fewer than two accepted timing events being called calibrated timing.
-
-The current historical large-pulse candidates (`SO2 onset P90 ~= 310 s`, `pH onset P90 ~= 190 s`) remain review candidates only. No controlled +2 m3/h local-step raw trace has yet been collected, so they cannot currently promote either channel to CALIBRATED.
-
-## Confidence evidence is separate from confidence review
-
-A channel confidence value can no longer be typed in without a bound evidence record.
-
-The evidence semantics are:
+Confidence evidence semantics:
 
 ```text
 SCHEME2_CHANNEL_CONFIDENCE_EVIDENCE_V1_REVIEW_CANDIDATE
 ```
 
-`ChannelConfidenceEvidence` combines already-reviewed facts:
+An `ADEQUATE_FOR_BOOTSTRAP_REVIEW` quantitative cohort is not sufficient by itself. `ChannelConfidenceEvidence` additionally requires the event copies produced by the explicit human cohort-bootstrap approval. Those copies must carry one coherent:
+
+```text
+cohort_review_id
+cohort_review_reviewer_id
+cohort_review_time
+cohort_bootstrap_review_approved = true
+offline_bootstrap_evidence_allowed = true
+learning_eligible = true
+automatic_online_adaptation_allowed = false
+```
+
+Confidence evidence also requires timing evidence created under the reviewed extraction-profile seal above.
+
+The candidate summarizes:
 
 - valid-trial count sufficiency;
 - independent-day sufficiency;
-- observed timing coverage of the LOCAL_GAIN cohort;
-- channel-specific phi relative MAD compared with its reviewed limit;
-- channel-specific phi maximum relative deviation compared with its reviewed limit.
+- timing coverage of the approved LOCAL_GAIN cohort;
+- channel-specific phi relative MAD against its reviewed limit;
+- channel-specific maximum relative deviation against its reviewed limit.
 
-It produces:
+The final candidate is the conservative minimum of those normalized audit scores. It is **not a probability** and is not automatically copied into runtime confidence. A human channel review still explicitly chooses the final confidence in `(0, 1]`.
 
-```text
-conservative_confidence_candidate
-```
+## Same physical evidence chain
 
-This candidate is deliberately **not a probability** and is not the final runtime confidence. It is only an auditable review input. The human channel review must still explicitly choose the final confidence in `(0, 1]`.
-
-The confidence evidence must bind the exact timing evidence ID/event IDs and the same LOCAL_GAIN cohort used by the channel profile.
-
-## Same evidence context
-
-Observed timing and confidence evidence must match the calibration profile's:
+For one channel calibration, all evidence must agree on:
 
 - `condition_snapshot_version`;
 - `mfac_context_id`;
-- channel (`SO2` or `PH`).
+- channel (`SO2` or `PH`);
+- LOCAL_GAIN cohort event set;
+- timing evidence ID/event subset;
+- human cohort-bootstrap review;
+- reviewed timing-extraction provenance.
 
-Timing event IDs must be a subset of the reviewed LOCAL_GAIN cohort. Confidence evidence must bind the same timing evidence and its cohort event set must match the channel's LOCAL_GAIN evidence set.
+SO2 and pH may be reviewed at different times, but when both have local gain they still share the same underlying LOCAL_GAIN physical cohort.
 
 ## CALIBRATED construction seal
 
-Calibration Profile V3 uses a package-private review seal. Ordinary code cannot create:
+Calibration Profile V3 cannot be validly produced by directly writing:
 
 ```python
 DualResponseChannelCalibration(status="CALIBRATED", ...)
 ```
 
-as a valid reviewed calibration. The object must be created through:
+The supported path remains:
 
 ```python
 approve_channel_calibration(...)
 ```
 
-or restored from a V3 serialized profile carrying complete timing-evidence and confidence-evidence review metadata.
-
-Old V1/V2 `LOCAL_GAIN_READY` profiles can migrate to V3. Old V1/V2 objects already marked `CALIBRATED` are rejected and require re-review because they predate the V3 timing+confidence evidence seal.
-
-## What the review validates
+The review now rejects timing evidence unless its reviewed extraction provenance is complete, and rejects confidence evidence unless it binds the same timing/cohort and records human cohort-bootstrap approval.
 
 A successful channel review requires:
 
-1. the channel is currently `LOCAL_GAIN_READY`;
-2. explicit human approval and non-empty reviewer ID;
-3. valid review timestamp;
-4. observed timing evidence from at least two bound events;
-5. complete ordered `DelayProfile`:
-   - `onset_p50 <= onset_p90`;
-   - `response_p50 <= response_p90`;
-   - response quantiles do not precede onset quantiles;
-6. a complete response config validated by the canonical monitor class:
-   - SO2 -> `ProcessResponseConfig`;
-   - pH -> `PHResponseConfig`;
-7. a bound `ChannelConfidenceEvidence` for the same channel/context/timing/cohort;
-8. explicitly human-reviewed final confidence in `(0, 1]`.
+1. channel status is `LOCAL_GAIN_READY`;
+2. reviewed timing-extraction provenance;
+3. at least two accepted observed timing events;
+4. ordered `DelayProfile`;
+5. complete canonical `ProcessResponseConfig` or `PHResponseConfig`;
+6. human cohort-approved LOCAL_GAIN evidence behind the confidence record;
+7. bound self-consistent `ChannelConfidenceEvidence`;
+8. explicit final confidence in `(0, 1]`;
+9. explicit channel reviewer and review time.
 
-The generated calibration metadata records reviewer, review time, timing-evidence ID/event IDs, confidence-evidence ID/candidate, timing semantics, response-config approval and confidence approval.
+Old local-gain-only profiles may migrate. Old objects already marked `CALIBRATED` without the current evidence seals must be re-reviewed.
 
 ## Permission boundary
 
-Channel calibration grants no production permissions:
+None of these evidence or calibration layers may enable production permissions:
 
 ```text
 learning_enabled         = false
@@ -164,7 +154,7 @@ dcs_write_enabled        = false
 activation_status        = NOT_ACTIVATABLE
 ```
 
-Even when both channels are `CALIBRATED`, a separate DualResponse Activation Review remains mandatory. The current formal primary runtime still has no reviewed causal target-application/readback adapter, so production remains:
+Even two `CALIBRATED` channels only become inputs to the separate DualResponse Activation Review. The formal primary runtime still lacks a reviewed target-applied/readback causal adapter, so current production state remains:
 
 ```text
 LEARN = 0
@@ -177,8 +167,8 @@ DCS write = off
 See:
 
 ```text
-calibration_audits/MFAC-CHANNEL-CALIBRATION-REVIEW-DESIGN-5553E529-20260827.json
 calibration_audits/MFAC-OBSERVED-TIMING-EXTRACTION-DESIGN-5553E529-20260827.json
+calibration_audits/MFAC-CHANNEL-CALIBRATION-REVIEW-DESIGN-5553E529-20260827.json
 ```
 
-At this checkpoint both SO2 and pH channel reviews remain `NOT_REVIEWED`: controlled local-step raw traces do not yet exist, timing-extractor parameters are not reviewed, and no channel confidence evidence has been produced.
+At this checkpoint no controlled +2 m3/h raw trace exists, timing-extraction reviewer/time are still unset, no human-approved local-step cohort exists, and both channel calibration states remain `NOT_REVIEWED`.
