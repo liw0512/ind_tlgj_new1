@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
@@ -15,7 +15,11 @@ from .historical_sensitivity_map import (
     HistoricalSensitivityQuery,
 )
 from .mfac_schema import MFACRuntimeState
-from .pending_dose_guard import PendingDoseGuard, PendingDoseGuardConfig
+from .pending_dose_guard import (
+    PendingDoseGuard,
+    PendingDoseGuardConfig,
+    PendingDoseGuardDecision,
+)
 from .runtime_coordinator import (
     Scheme2RuntimeCoordinator,
     Scheme2RuntimeCoordinatorConfig,
@@ -25,21 +29,18 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V3_REVIEWED_SCALAR_PRIOR"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V4_PENDING_ARBITRATION_HOOK"
 )
 
 
 class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
-    """Run the existing coordinator, then append non-authoritative trajectory advice.
+    """Run one SO2-led coordinator and append non-authoritative trajectory advice.
 
-    The attached historical map is a research/review artifact and may contain
-    complex surfaces. Runtime seeding is deliberately narrower: only profiles
-    that pass ``resolve_reviewed_scalar_runtime_prior`` are visible here.
-
-    Persisted online state has first priority.  Before a channel has any online
-    accepted event, an approved scalar historical prior may be re-evaluated at
-    the current context/grid. Once that channel has learned online, historical
-    mapping never overwrites it.
+    The historical map is filtered to reviewed scalar runtime priors.  The
+    PendingDoseGuard is also evaluated *before* the base pH arbitration stage
+    through the protected ``_ph_arbitration_context`` hook.  Thus there remains
+    exactly one residual controller and one pH arbiter; this subclass supplies
+    only delayed-response context and staircase advice.
     """
 
     def __init__(
@@ -68,6 +69,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         self._historical_sensitivity_map = historical_sensitivity_map
         self._historical_query: Optional[HistoricalSensitivityQuery] = None
         self._last_historical_mapping = None
+        self._pending_for_current_cycle: Optional[PendingDoseGuardDecision] = None
         super().__init__(
             config,
             runtime_store,
@@ -95,6 +97,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
         self.pending_dose_guard.reset("RUNTIME_STATE_SET")
         self.trajectory_planner.reset()
+        self._pending_for_current_cycle = None
         self._trajectory_context_key = (
             runtime_state.condition_snapshot_version,
             runtime_state.mfac_context_id,
@@ -208,6 +211,41 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             return "CONTEXT_HISTORICAL_PRIOR_REFRESHED"
         return status
 
+    def _ph_arbitration_context(
+        self,
+        *,
+        timestamp: Any,
+        actual_supply_flow_feedback: Any,
+        ph_value: Any,
+        state: Optional[MFACRuntimeState],
+        data_quality_ok: bool,
+    ) -> Dict[str, Any]:
+        base = super()._ph_arbitration_context(
+            timestamp=timestamp,
+            actual_supply_flow_feedback=actual_supply_flow_feedback,
+            ph_value=ph_value,
+            state=state,
+            data_quality_ok=data_quality_ok,
+        )
+        pending = self.pending_dose_guard.update(
+            timestamp=timestamp,
+            actual_supply_flow_feedback=actual_supply_flow_feedback,
+            ph_value=ph_value,
+            state=state,
+            data_quality_ok=bool(data_quality_ok),
+        )
+        self._pending_for_current_cycle = pending
+        base.update(
+            {
+                "pending_predicted_ph_upper": pending.predicted_ph_upper,
+                "pending_predicted_ph_lower": pending.predicted_ph_lower,
+                "pending_source": "PENDING_DOSE_GUARD",
+                "pending_status": pending.status,
+                "pending_reason": pending.reason,
+            }
+        )
+        return base
+
     def process_cycle(self, **kwargs: Any) -> Scheme2RuntimeCycleResult:
         key = (
             str(kwargs.get("condition_snapshot_version") or ""),
@@ -216,6 +254,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if key != self._trajectory_context_key:
             self.pending_dose_guard.reset("MFAC_CONTEXT_CHANGE")
             self.trajectory_planner.reset()
+            self._pending_for_current_cycle = None
             self._trajectory_context_key = key
 
         self._historical_query = HistoricalSensitivityQuery(
@@ -233,13 +272,10 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
 
         result = super().process_cycle(**kwargs)
-        pending = self.pending_dose_guard.update(
-            timestamp=kwargs.get("timestamp"),
-            actual_supply_flow_feedback=kwargs.get("actual_supply_flow_feedback"),
-            ph_value=kwargs.get("ph"),
-            state=result.runtime_state,
-            data_quality_ok=bool(kwargs.get("data_quality_ok", True)),
-        )
+        pending = self._pending_for_current_cycle
+        if pending is None:
+            raise RuntimeError("pending pH arbitration context was not produced")
+
         plan = self.trajectory_planner.plan(
             timestamp=kwargs.get("timestamp"),
             raw_demand=result.algorithm_target.algorithm_target_supply_flow,
@@ -253,6 +289,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                 "trajectory_shadow_enabled": True,
                 "trajectory_shadow_semantics_version": TRAJECTORY_SHADOW_COORDINATOR_VERSION,
                 "pending_dose_guard": pending.to_dict(),
+                "pending_used_by_ph_arbitration": True,
                 "trajectory_plan": plan.to_dict(),
                 "algorithm_target_replaced_by_trajectory_planner": False,
                 "trajectory_planner_dcs_write_enabled": False,
