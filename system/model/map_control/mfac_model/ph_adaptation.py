@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Event-driven positive-direction pH sensitivity adaptation.
+"""Event-driven positive-direction pH sensitivity and confidence adaptation.
 
 The pH channel learns ``phi_ph = delta pH / delta Q_actual`` independently from
 SO2.  It never creates an additive slurry-flow command; its learned state is
 consumed only by pH residual arbitration.
+
+Clean physical-direction events update both ``phi_ph`` and pH confidence.  A
+clean event with the wrong physical direction cannot drive ``phi_ph`` negative;
+it only lowers pH confidence.  Confounded/data-quality-invalid events change
+neither phi nor confidence.
 """
 
 from __future__ import annotations
@@ -13,10 +18,14 @@ import math
 from typing import Any, Dict, Optional
 
 from .mfac_schema import MFACRuntimeState
+from .online_confidence import (
+    OnlineConfidenceConfig,
+    update_online_confidence,
+)
 from .ph_response import PHResponseEvent
 
 
-PH_ONLINE_ADAPTATION_SEMANTICS_VERSION = "SCHEME2_PH_ONLINE_ADAPTATION_V1"
+PH_ONLINE_ADAPTATION_SEMANTICS_VERSION = "SCHEME2_PH_ONLINE_ADAPTATION_V2_CONFIDENCE"
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -36,6 +45,7 @@ class PHOnlineAdaptationConfig:
     max_single_update_abs: float
     min_abs_delta_q: float = 1e-12
     max_abs_qbase_drift: Optional[float] = None
+    confidence_reference_event_count: float = 5.0
 
     def __post_init__(self) -> None:
         eta = _finite(self.eta)
@@ -44,6 +54,7 @@ class PHOnlineAdaptationConfig:
         upper = _finite(self.phi_upper_bound)
         max_update = _finite(self.max_single_update_abs)
         min_delta_q = _finite(self.min_abs_delta_q)
+        confidence_reference = _finite(self.confidence_reference_event_count)
         if eta is None or eta <= 0.0:
             raise ValueError("eta must be finite and > 0")
         if mu is None or mu <= 0.0:
@@ -60,6 +71,8 @@ class PHOnlineAdaptationConfig:
             drift = _finite(self.max_abs_qbase_drift)
             if drift is None or drift < 0.0:
                 raise ValueError("max_abs_qbase_drift must be finite and >= 0")
+        if confidence_reference is None or confidence_reference <= 0.0:
+            raise ValueError("confidence_reference_event_count must be finite and > 0")
 
 
 @dataclass
@@ -71,6 +84,10 @@ class PHOnlineAdaptationResult:
     applied_update: float = 0.0
     event_id: str = ""
     runtime_state: Optional[MFACRuntimeState] = None
+    old_confidence: Optional[float] = None
+    new_confidence: Optional[float] = None
+    phi_updated: bool = False
+    confidence_updated: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
     semantics_version: str = PH_ONLINE_ADAPTATION_SEMANTICS_VERSION
 
@@ -87,6 +104,9 @@ class PHOnlineAdapter:
 
     def __init__(self, config: PHOnlineAdaptationConfig) -> None:
         self.config = config
+        self.confidence_config = OnlineConfidenceConfig(
+            reference_event_count=float(config.confidence_reference_event_count)
+        )
 
     def update(
         self,
@@ -94,8 +114,11 @@ class PHOnlineAdapter:
         event: PHResponseEvent,
     ) -> PHOnlineAdaptationResult:
         old_phi = _finite(state.phi_ph_live)
+        old_confidence = _finite(state.confidence_ph_live)
         if old_phi is None:
             return self._reject("NO_PH_LIVE_PHI", state, event, None)
+        if old_confidence is None or not 0.0 <= old_confidence <= 1.0:
+            return self._reject("INVALID_PH_LIVE_CONFIDENCE", state, event, old_phi)
         if state.condition_snapshot_version != event.condition_snapshot_version:
             return self._reject("SNAPSHOT_VERSION_MISMATCH", state, event, old_phi)
         if state.mfac_context_id != event.mfac_context_id:
@@ -128,10 +151,64 @@ class PHOnlineAdapter:
             return self._reject("PH_LIVE_PHI_OUTSIDE_PHYSICAL_BOUNDS", state, event, old_phi)
 
         phi_event = delta_ph / delta_q
-        if not math.isfinite(phi_event) or phi_event <= 0.0:
-            return self._reject("PH_PHYSICAL_DIRECTION_VIOLATION", state, event, old_phi)
+        direction_ok = math.isfinite(phi_event) and phi_event > 0.0
+        predicted_response = old_phi * delta_q
+        confidence_update, metadata = update_online_confidence(
+            current_confidence=old_confidence,
+            metadata=state.metadata,
+            metadata_key="online_confidence_ph",
+            observed_response=delta_ph,
+            predicted_response=predicted_response,
+            direction_ok=direction_ok,
+            quality_weight=1.0,
+            config=self.confidence_config,
+        )
+        event_time = (
+            event.response_end_time
+            or event.response_start_time
+            or event.actual_flow_reached_time
+        )
 
-        prediction_residual = delta_ph - old_phi * delta_q
+        if not direction_ok:
+            metadata["last_ph_online_adaptation"] = {
+                "event_id": event.response_event_id,
+                "delta_q_actual": delta_q,
+                "delta_ph": delta_ph,
+                "phi_ph_event": phi_event,
+                "prediction_residual": delta_ph - predicted_response,
+                "applied_update": 0.0,
+                "phi_update_rejected": True,
+                "confidence_update": confidence_update.to_dict(),
+            }
+            new_state = self._state(
+                state,
+                phi=old_phi,
+                confidence=confidence_update.new_confidence,
+                metadata=metadata,
+                valid_event_count=int(state.ph_valid_event_count),
+                last_event_id=event.response_event_id,
+                last_update_time=event_time,
+            )
+            return PHOnlineAdaptationResult(
+                updated=True,
+                reason="CONFIDENCE_DOWNGRADED_PHYSICAL_CONFLICT",
+                old_phi=old_phi,
+                new_phi=old_phi,
+                applied_update=0.0,
+                event_id=event.response_event_id,
+                runtime_state=new_state,
+                old_confidence=old_confidence,
+                new_confidence=confidence_update.new_confidence,
+                phi_updated=False,
+                confidence_updated=True,
+                metadata={
+                    "phi_ph_event": phi_event,
+                    "physical_direction_ok": False,
+                    "confidence_update": confidence_update.to_dict(),
+                },
+            )
+
+        prediction_residual = delta_ph - predicted_response
         raw_update = (
             float(self.config.eta)
             * delta_q
@@ -144,7 +221,6 @@ class PHOnlineAdapter:
         if not math.isfinite(candidate) or candidate <= 0.0:
             return self._reject("PH_PHYSICAL_DIRECTION_VIOLATION", state, event, old_phi)
 
-        metadata = dict(state.metadata or {})
         metadata["last_ph_online_adaptation"] = {
             "event_id": event.response_event_id,
             "delta_q_actual": delta_q,
@@ -153,27 +229,16 @@ class PHOnlineAdapter:
             "prediction_residual": prediction_residual,
             "raw_update": raw_update,
             "applied_update": candidate - old_phi,
+            "confidence_update": confidence_update.to_dict(),
         }
-        new_state = MFACRuntimeState(
-            condition_snapshot_version=state.condition_snapshot_version,
-            mfac_context_id=state.mfac_context_id,
-            phi_live=state.phi_live,
-            confidence_live=state.confidence_live,
-            bias_live=state.bias_live,
-            valid_event_count=state.valid_event_count,
-            last_event_id=state.last_event_id,
-            last_update_time=state.last_update_time,
-            phi_ph_live=candidate,
-            confidence_ph_live=state.confidence_ph_live,
-            ph_valid_event_count=int(state.ph_valid_event_count) + 1,
-            ph_last_event_id=event.response_event_id,
-            ph_last_update_time=(
-                event.response_end_time
-                or event.response_start_time
-                or event.actual_flow_reached_time
-            ),
+        new_state = self._state(
+            state,
+            phi=candidate,
+            confidence=confidence_update.new_confidence,
             metadata=metadata,
-            semantics_version=state.semantics_version,
+            valid_event_count=int(state.ph_valid_event_count) + 1,
+            last_event_id=event.response_event_id,
+            last_update_time=event_time,
         )
         return PHOnlineAdaptationResult(
             updated=True,
@@ -183,11 +248,45 @@ class PHOnlineAdapter:
             applied_update=candidate - old_phi,
             event_id=event.response_event_id,
             runtime_state=new_state,
+            old_confidence=old_confidence,
+            new_confidence=confidence_update.new_confidence,
+            phi_updated=True,
+            confidence_updated=True,
             metadata={
                 "phi_ph_event": phi_event,
                 "prediction_residual": prediction_residual,
                 "raw_update": raw_update,
+                "confidence_update": confidence_update.to_dict(),
             },
+        )
+
+    @staticmethod
+    def _state(
+        state: MFACRuntimeState,
+        *,
+        phi: float,
+        confidence: float,
+        metadata: Dict[str, Any],
+        valid_event_count: int,
+        last_event_id: str,
+        last_update_time: str,
+    ) -> MFACRuntimeState:
+        return MFACRuntimeState(
+            condition_snapshot_version=state.condition_snapshot_version,
+            mfac_context_id=state.mfac_context_id,
+            phi_live=state.phi_live,
+            confidence_live=state.confidence_live,
+            bias_live=state.bias_live,
+            valid_event_count=state.valid_event_count,
+            last_event_id=state.last_event_id,
+            last_update_time=state.last_update_time,
+            phi_ph_live=float(phi),
+            confidence_ph_live=float(confidence),
+            ph_valid_event_count=int(valid_event_count),
+            ph_last_event_id=str(last_event_id),
+            ph_last_update_time=str(last_update_time or ""),
+            metadata=metadata,
+            semantics_version=state.semantics_version,
         )
 
     @staticmethod
@@ -205,4 +304,8 @@ class PHOnlineAdapter:
             applied_update=0.0,
             event_id=event.response_event_id,
             runtime_state=state,
+            old_confidence=_finite(state.confidence_ph_live),
+            new_confidence=_finite(state.confidence_ph_live),
+            phi_updated=False,
+            confidence_updated=False,
         )
