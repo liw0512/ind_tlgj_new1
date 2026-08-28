@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
 """Fail-closed calibration profile for Scheme-2 SO2 + pH response channels.
 
-This profile separates local-gain evidence from full channel calibration. A
-channel may have a reviewed bootstrap gain while still lacking reviewed timing,
-confidence or response-window parameters. SO2 and pH statuses are independent.
-
-V3 seals ``CALIBRATED`` construction behind explicit observed-timing and
-confidence-evidence review. Merely constructing a dataclass with
-``status='CALIBRATED'`` is not an accepted calibration action.
-
-The profile remains deliberately non-activating: even two CALIBRATED channels
-cannot enable learning, residual control or DCS write without a later, separate
-activation artifact.
+The profile separates local-gain evidence from full channel calibration.  A
+CALIBRATED channel must carry explicit reviewed timing-extraction provenance,
+human cohort-bootstrap provenance, confidence evidence and response-config
+review.  Even two CALIBRATED channels remain non-activating.
 """
 
 from __future__ import annotations
@@ -36,7 +29,7 @@ DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION = (
     "SCHEME2_DUAL_RESPONSE_CALIBRATION_PROFILE_V3_TIMING_CONFIDENCE_EVIDENCE_SEALED"
 )
 CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION = (
-    "SCHEME2_CHANNEL_CALIBRATION_REVIEW_V2_OBSERVED_TIMING_AND_CONFIDENCE_EVIDENCE"
+    "SCHEME2_CHANNEL_CALIBRATION_REVIEW_V3_REVIEWED_TIMING_PROVENANCE"
 )
 OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION = (
     "SCHEME2_OBSERVED_RESPONSE_TIMING_V1_PROCESS_TRACE"
@@ -96,7 +89,6 @@ def _valid_confidence(value: Optional[float]) -> bool:
 
 
 def _validate_response_config(channel: str, value: Mapping[str, Any]) -> None:
-    """Reuse canonical online-monitor validation instead of duplicating it."""
     payload = dict(value or {})
     missing = [key for key in _REQUIRED_RESPONSE_KEYS if payload.get(key) is None]
     if missing:
@@ -140,8 +132,10 @@ def _validate_calibration_review_metadata(value: Mapping[str, Any]) -> None:
     required_true = (
         "calibration_review_approved",
         "timing_evidence_review_approved",
+        "timing_extraction_profile_reviewed",
         "response_config_review_approved",
         "confidence_review_approved",
+        "cohort_bootstrap_review_approved",
     )
     for key in required_true:
         if metadata.get(key) is not True:
@@ -152,28 +146,32 @@ def _validate_calibration_review_metadata(value: Mapping[str, Any]) -> None:
         "calibration_reviewer_id",
         "calibration_review_time",
         "timing_evidence_id",
+        "timing_extraction_profile_id",
+        "timing_extraction_profile_semantics",
+        "timing_extraction_reviewer_id",
+        "timing_extraction_review_time",
         "confidence_evidence_id",
+        "cohort_review_id",
+        "cohort_review_reviewer_id",
+        "cohort_review_time",
     )
     for key in required_text:
         if not str(metadata.get(key) or "").strip():
             raise ValueError("CALIBRATED channel is missing %s" % key)
 
-    if metadata.get("calibration_review_semantics") != (
-        CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION
-    ):
+    if metadata.get("calibration_review_semantics") != CHANNEL_CALIBRATION_REVIEW_AUTHORITY_VERSION:
         raise ValueError("CALIBRATED channel review semantics are invalid")
-    if metadata.get("timing_evidence_semantics") != (
-        OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION
-    ):
+    if metadata.get("timing_evidence_semantics") != OBSERVED_RESPONSE_TIMING_SEMANTICS_VERSION:
         raise ValueError("CALIBRATED channel requires observed timing evidence")
-    if metadata.get("confidence_evidence_semantics") != (
-        CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION
-    ):
+    if metadata.get("confidence_evidence_semantics") != CHANNEL_CONFIDENCE_EVIDENCE_SEMANTICS_VERSION:
         raise ValueError("CALIBRATED channel requires confidence evidence")
     if metadata.get("configured_window_boundary_used_as_observed_timing") is not False:
-        raise ValueError(
-            "configured response-window boundaries cannot be used as observed timing"
-        )
+        raise ValueError("configured response-window boundaries cannot be used as observed timing")
+    if metadata.get("timing_extraction_candidate_parameters_used") is not False:
+        raise ValueError("CALIBRATED timing cannot use candidate extraction parameters")
+    reviewed_parameters = metadata.get("timing_extraction_reviewed_parameters")
+    if not isinstance(reviewed_parameters, Mapping) or not dict(reviewed_parameters):
+        raise ValueError("CALIBRATED channel requires reviewed timing extraction parameters")
     if metadata.get("confidence_candidate_is_probability") is not False:
         raise ValueError("confidence candidate cannot be treated as a probability")
     candidate = _finite(metadata.get("confidence_review_candidate"))
@@ -277,7 +275,6 @@ def _build_reviewed_calibrated_channel(
     response_config: Mapping[str, Any],
     review_metadata: Mapping[str, Any],
 ) -> DualResponseChannelCalibration:
-    """Package-private constructor used only by explicit review workflows."""
     if base.status != CHANNEL_LOCAL_GAIN_READY:
         raise ValueError("channel must be LOCAL_GAIN_READY before calibration review")
     metadata = dict(base.metadata or {})
@@ -410,12 +407,6 @@ def build_calibration_profile_from_dual_bootstrap(
     *,
     profile_id: str,
 ) -> DualResponseCalibrationProfile:
-    """Promote same-cohort bootstrap evidence into a non-activating profile.
-
-    This only establishes LOCAL_GAIN_READY for each channel. It intentionally
-    does not invent reviewed confidence or response timing/window parameters.
-    """
-
     so2 = DualResponseChannelCalibration(
         channel="SO2",
         status=CHANNEL_LOCAL_GAIN_READY,
