@@ -17,6 +17,12 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from system.model.config.mfac_plant_contract import plant_contract_snapshot
+from system.model.config.mfac_training_lifecycle import (
+    INCREMENTAL_OFFLINE_TRAINING_DAYS,
+    INITIAL_OFFLINE_TRAINING_DAYS,
+    ONLINE_MFAC_UPDATE_TRIGGER,
+    training_days_for_mode,
+)
 
 from .historical_prior_artifact import (
     CANDIDATE_FILENAME,
@@ -72,6 +78,8 @@ def build_mfac_version_artifact(
     if not condition_path.is_file():
         raise FileNotFoundError("condition snapshot not found: %s" % condition_path)
     version = read_condition_version(condition_path)
+    mode_text = str(mode or "").strip().upper()
+    required_training_days = training_days_for_mode(mode_text)
 
     frame = pd.read_csv(input_csv, low_memory=False)
     if "date" not in frame.columns:
@@ -91,7 +99,7 @@ def build_mfac_version_artifact(
         input_csv=str(Path(input_csv).resolve()),
         output_root=str(root),
         condition_snapshot=str(condition_path),
-        mode=str(mode).upper(),
+        mode=mode_text,
         previous_snapshot=previous_snapshot,
     )
 
@@ -131,7 +139,7 @@ def build_mfac_version_artifact(
     summary = {
         "artifact_type": "MFAC_SECOND_MODULE_VERSION",
         "version": version,
-        "mode": str(mode).upper(),
+        "mode": mode_text,
         "record_count": int(len(frame)),
         "first_data_timestamp": _time_text(timestamps.min()),
         "last_data_timestamp": _time_text(timestamps.max()),
@@ -155,8 +163,11 @@ def build_mfac_version_artifact(
         "runtime_prior_reviewed": False,
         "runtime_prior_allowed": False,
         "online_runtime_state_overwrite": False,
-        "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
-        "periodic_offline_retrain_days": 7,
+        # Explicit lifecycle fields replace the ambiguous old weekly number.
+        "required_training_days": int(required_training_days),
+        "initial_training_days": int(INITIAL_OFFLINE_TRAINING_DAYS),
+        "incremental_training_days": int(INCREMENTAL_OFFLINE_TRAINING_DAYS),
+        "online_update_trigger": ONLINE_MFAC_UPDATE_TRIGGER,
         "cross_snapshot_online_state_reuse_policy": (
             "SAME_MFAC_CONTEXT_AND_GRID_ONLY"
         ),
