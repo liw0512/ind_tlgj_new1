@@ -18,6 +18,10 @@ import pandas as pd
 
 from system.model.config.mfac_plant_contract import plant_contract_snapshot
 
+from .historical_prior_artifact import (
+    CANDIDATE_FILENAME,
+    build_candidate_prior_map,
+)
 from .mfac_primary_config import (
     MFAC_PRIMARY_ARTIFACT_CONFIG,
     MFAC_PRIMARY_MODE,
@@ -93,10 +97,35 @@ def build_mfac_version_artifact(
 
     plant_snapshot = plant_contract_snapshot()
     target_contract = plant_snapshot["target_supply_flow"]
+    primary_tower_id = str(plant_snapshot["primary_tower"]["tower_id"])
     runtime_semantics = (
         "Q_TARGET=CLIP(QBASE+RESIDUAL_HOLD,%s,%s)"
         % (target_contract["minimum"], target_contract["maximum"])
     )
+
+    # Do not invent a prior when blocked validation selected nothing.  When a
+    # primary-tower candidate exists, materialize one canonical candidate map
+    # from the reports already produced by the offline trainer.  It remains
+    # unreviewed and invisible to Runtime until explicitly approved.
+    candidate_path = ""
+    candidate_sha = ""
+    primary_report = dict(
+        (offline_training.get("tower_reports") or {}).get(primary_tower_id) or {}
+    )
+    selected_count = int(
+        primary_report.get("blocked_validated_grid_candidate_count") or 0
+    ) + int(
+        primary_report.get("blocked_validated_pooled_candidate_count") or 0
+    )
+    if selected_count > 0:
+        candidate_artifact = build_candidate_prior_map(
+            training_report_path=primary_report["training_report_path"],
+            validation_report_path=primary_report["validation_report_path"],
+            output_path=snapshot_dir / CANDIDATE_FILENAME,
+            tower_id=primary_tower_id,
+        )
+        candidate_path = str(candidate_artifact["artifact_path"])
+        candidate_sha = str(candidate_artifact["artifact_sha256"])
 
     offline_report_path = offline_training["offline_training_report_path"]
     summary = {
@@ -120,6 +149,9 @@ def build_mfac_version_artifact(
             offline_training["cumulative_valid_episode_count"]
         ),
         "bootstrap_status": "HISTORICAL_PRIOR_REVIEW_REQUIRED",
+        "historical_prior_candidate_map_path": candidate_path,
+        "historical_prior_candidate_map_sha256": candidate_sha,
+        "historical_prior_candidate_available": bool(candidate_path),
         "runtime_prior_reviewed": False,
         "runtime_prior_allowed": False,
         "online_runtime_state_overwrite": False,
@@ -165,6 +197,12 @@ def build_mfac_version_artifact(
         "legacy_second_module_present": False,
         "primary_mode": MFAC_PRIMARY_MODE,
         "historical_prior_role": "REVIEW_CANDIDATE_ONLY",
+        "historical_prior_candidate_map_path": candidate_path,
+        "historical_prior_candidate_map_sha256": candidate_sha,
+        "historical_prior_reviewed_map_path": "",
+        "historical_prior_reviewed_map_sha256": "",
+        "historical_prior_map_reviewed": False,
+        "historical_prior_map_allowed": False,
         "runtime_prior_reviewed": False,
         "runtime_prior_allowed": False,
         "persisted_online_state_precedence": True,
