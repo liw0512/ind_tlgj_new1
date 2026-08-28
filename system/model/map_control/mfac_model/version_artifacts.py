@@ -124,6 +124,11 @@ def build_mfac_version_artifact(
         "runtime_prior_allowed": False,
         "online_runtime_state_overwrite": False,
         "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+        "periodic_offline_retrain_days": 7,
+        "cross_snapshot_online_state_reuse_policy": (
+            "SAME_MFAC_CONTEXT_AND_GRID_ONLY"
+        ),
+        "cross_snapshot_residual_reuse": False,
         "learn_enabled": False,
         "residual_enabled": False,
         "dcs_write_enabled": False,
@@ -167,7 +172,14 @@ def build_mfac_version_artifact(
             "condition_snapshot_version",
             "mfac_context_id",
         ],
-        "cross_snapshot_online_state_reuse": False,
+        "cross_snapshot_online_state_reuse": True,
+        "cross_snapshot_online_state_reuse_policy": (
+            "SAME_MFAC_CONTEXT_AND_GRID_ONLY"
+        ),
+        "cross_snapshot_online_state_requires_runtime_grid_id": True,
+        "cross_snapshot_residual_reuse": False,
+        "cross_snapshot_pending_or_hold_reuse": False,
+        "historical_prior_may_overwrite_online_evidence": False,
         "learn_enabled": False,
         "residual_enabled": False,
         "dcs_write_enabled": False,
