@@ -9,6 +9,10 @@
 目前只开放：
 1. 净烟气 SO2 控制目标；
 2. 各启用吸收塔的 pH 安全范围。
+
+方案2已经完全替代旧 ``slurry_policy_model``。SO2 目标允许范围直接读取
+``PLANT_CONFIG['scheme2']['so2_control']``，默认目标为 8.0 mg/Nm³；本模块不得再
+依赖已经删除的旧第二模块配置。
 """
 from __future__ import annotations
 
@@ -26,6 +30,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 OPERATOR_SETTINGS_FILE = (
     PROJECT_ROOT / "files" / "runtime" / "operator_settings.json"
 )
+
+# 当前方案2默认净烟气 SO2 控制目标。操作员未设置覆盖值时使用该值。
+DEFAULT_OUTLET_SO2_TARGET = 8.0
 
 _LOCK = threading.RLock()
 _CACHE: Dict[str, Any] = {}
@@ -90,22 +97,32 @@ def _write_file_unlocked(data: Mapping[str, Any]) -> None:
         _CACHE_MTIME_NS = None
 
 
-def _default_so2_target() -> float:
-    # 延迟导入，避免配置模块之间形成循环依赖。
-    from system.model.map_control.slurry_policy_model.slurry_policy_config import (
-        ONLINE_POLICY_CONFIG,
-    )
+def _scheme2_so2_control_config() -> Dict[str, Any]:
+    scheme2 = PLANT_CONFIG.get("scheme2", {})
+    if not isinstance(scheme2, Mapping):
+        return {}
+    values = scheme2.get("so2_control", {})
+    return dict(values) if isinstance(values, Mapping) else {}
 
-    return float(ONLINE_POLICY_CONFIG["so2_control"]["default_target"])
+
+def _default_so2_target() -> float:
+    values = _scheme2_so2_control_config()
+    return float(values.get("default_target", DEFAULT_OUTLET_SO2_TARGET))
 
 
 def so2_target_allowed_range() -> Tuple[float, float]:
-    from system.model.map_control.slurry_policy_model.slurry_policy_config import (
-        ONLINE_POLICY_CONFIG,
-    )
-
-    values = ONLINE_POLICY_CONFIG["so2_control"]["allowed_target_range"]
-    return float(values[0]), float(values[1])
+    values = _scheme2_so2_control_config().get("allowed_target_range")
+    if not isinstance(values, (list, tuple)) or len(values) != 2:
+        raise ValueError(
+            "PLANT_CONFIG.scheme2.so2_control.allowed_target_range 必须配置为 [min, max]"
+        )
+    low = float(values[0])
+    high = float(values[1])
+    if not low < high:
+        raise ValueError(
+            "PLANT_CONFIG.scheme2.so2_control.allowed_target_range 必须满足 min < max"
+        )
+    return low, high
 
 
 def operator_so2_target_override() -> Optional[float]:
