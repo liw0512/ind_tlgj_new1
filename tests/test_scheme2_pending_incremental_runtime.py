@@ -196,9 +196,17 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
             self.assertEqual(second.ph_arbitration.status, "SCALE")
             self.assertAlmostEqual(second.ph_arbitration.residual_scale, 0.0)
             self.assertAlmostEqual(second.ph_arbitration.final_residual, 3.0)
+            # Pending pH risk has already removed the desired +1 residual
+            # increment upstream.  Planner therefore sees no upward demand gap
+            # and correctly remains AT_DEMAND instead of applying a redundant
+            # second HOLD_PENDING_PH gate.
             self.assertEqual(
                 second.metadata["trajectory_plan"]["status"],
-                "HOLD_PENDING_PH",
+                "AT_DEMAND",
+            )
+            self.assertAlmostEqual(
+                second.metadata["trajectory_plan"]["planned_target"],
+                second.algorithm_target.algorithm_target_supply_flow,
             )
 
 
