@@ -32,9 +32,9 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
     """Run the existing coordinator, then append non-authoritative trajectory advice.
 
     An optional historical sensitivity map supplies SO2/pH priors only when no
-    persisted/learned channel state exists.  Before a channel has any online
+    persisted/learned channel state exists. Before a channel has any online
     accepted event, its historical prior may be re-evaluated every cycle at the
-    current work point.  Once that channel has learned online, historical mapping
+    current work point. Once that channel has learned online, historical mapping
     never overwrites it.
     """
 
@@ -185,10 +185,12 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if mapped is previous:
             return status
         if mapped is not None:
+            # The base selector already reset held residual to zero when no
+            # persisted context was found. Historical mapping changes only phi
+            # state and never grants residual authority.
             self.runtime_state = mapped
             self._active_context_key = (snapshot, context_id)
             if previous is None:
-                self.residual_hold_manager.reset()
                 source = (
                     self._last_historical_mapping.mapping_source
                     if self._last_historical_mapping is not None
