@@ -13,6 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Tuple
 
+from system.model.config.mfac_training_lifecycle import (
+    INCREMENTAL_OFFLINE_TRAINING_DAYS,
+    INITIAL_OFFLINE_TRAINING_DAYS,
+)
+
 
 @dataclass(frozen=True)
 class DataValidationConfig:
@@ -110,34 +115,75 @@ class TrainingConfig:
       -> MFAC HistoricalEpisodeEngine / historical prior 训练
       -> 两个模块同版本原子激活。
 
-    周期离线重训统一按7天触发。该周期只负责刷新 ConditionSnapshot 和 MFAC
-    historical prior；在线 MFAC 的 phi/confidence 仍由有效因果响应事件独立递推，
-    不等待7天，也不会被同版本离线 prior 反复覆盖。
+    首次训练必须积累7天数据窗口；后续增量版本在 active watermark 之后至少积累
+    3天新数据才触发。二者的天数只在 ``mfac_training_lifecycle.py`` 定义一次。
+
+    在线 MFAC 不受3天周期限制：phi/confidence 仍由有效因果响应事件独立递推，
+    persisted online state 优先于离线 historical prior，离线重训不会覆盖已在线学习
+    到的同工况证据。
+
+    ``*_minimum_records``、``*_database_record_limit`` 和
+    ``incremental_trigger_interval_days`` 保留为只读计算属性，仅用于兼容现有
+    Process4MapControl 调用；它们不再是可独立配置、可能互相覆盖的参数。
     """
 
-    # 初次训练：连续7天形成第一版 condition + MFAC historical prior。
+    # 初次训练数据源。训练天数由统一生命周期固定为7天。
     initial_data_source: str = 'csv'
     initial_source_csv: str = 'F:/tlgj_new/files/new_data_train_10s.csv'
-    initial_training_days: int = 7
-    initial_minimum_records: int = 54_432
-    initial_database_record_limit: int = 60_480
     initial_database_use_model_result_table: bool = False
     initial_work_csv: str = 'system/model/map_control/model_csv/Initial_train.csv'
 
-    # 周期版本刷新：每7天先训练新 ConditionSnapshot，再训练同版本 MFAC。
+    # 增量训练数据源。触发周期和训练窗口统一由3天生命周期派生。
     # 有 active watermark 时实际读取 watermark 之后全部未学习新数据，不人为截断。
-    incremental_trigger_interval_days: int = 7
     incremental_data_source: str = 'database'
     incremental_source_csv: str = ''
-    incremental_training_days: int = 7
-    incremental_minimum_records: int = 54_432
-    incremental_database_record_limit: int = 0
     incremental_database_use_model_result_table: bool = False
     incremental_work_csv: str = 'system/model/map_control/model_csv/Update_train.csv'
 
-    # 10秒一条：8640条/天；完整率门槛仍为90%。
+    # 10秒一条：8640条/天。90%表示允许窗口内少量缺测，不改变7天/3天时间语义。
     database_records_per_day: int = 8_640
     database_minimum_data_ratio: float = 0.90
+
+    @property
+    def initial_training_days(self) -> int:
+        return int(INITIAL_OFFLINE_TRAINING_DAYS)
+
+    @property
+    def incremental_training_days(self) -> int:
+        return int(INCREMENTAL_OFFLINE_TRAINING_DAYS)
+
+    @property
+    def incremental_trigger_interval_days(self) -> int:
+        """Compatibility view: trigger cadence is exactly the 3-day window."""
+        return self.incremental_training_days
+
+    def target_records_for_days(self, days: int) -> int:
+        records_per_day = max(1, int(self.database_records_per_day))
+        return max(1, int(days) * records_per_day)
+
+    def minimum_records_for_days(self, days: int) -> int:
+        ratio = float(self.database_minimum_data_ratio)
+        if not 0.0 < ratio <= 1.0:
+            raise ValueError('database_minimum_data_ratio 必须位于 (0, 1]')
+        return max(1, int(self.target_records_for_days(days) * ratio))
+
+    @property
+    def initial_minimum_records(self) -> int:
+        return self.minimum_records_for_days(self.initial_training_days)
+
+    @property
+    def incremental_minimum_records(self) -> int:
+        return self.minimum_records_for_days(self.incremental_training_days)
+
+    @property
+    def initial_database_record_limit(self) -> int:
+        """0 forces Process4 to derive the target count from days × records/day."""
+        return 0
+
+    @property
+    def incremental_database_record_limit(self) -> int:
+        """0 also guarantees incremental watermark reads are never truncated."""
+        return 0
 
 
 @dataclass(frozen=True)
