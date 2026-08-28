@@ -28,7 +28,7 @@ from .model_based_local_gain_trainer import ModelBasedLocalGainTrainerConfig
 
 
 MFAC_OFFLINE_TRAINING_CONFIG_VERSION = (
-    "SCHEME2_MFAC_OFFLINE_TRAINING_V1_7DAY_CUMULATIVE_SCALAR_PRIOR"
+    "SCHEME2_MFAC_OFFLINE_TRAINING_V2_7DAY_CUMULATIVE_SCALAR_PRIOR_HANDOFF"
 )
 
 
@@ -156,7 +156,13 @@ OFFLINE_ONLINE_LIFECYCLE_CONTRACT: Dict[str, Any] = {
     "online_update_is_periodic": False,
     "persisted_online_state_precedes_offline_prior_within_same_context": True,
     "runtime_state_namespace": ["condition_snapshot_version", "mfac_context_id"],
-    "cross_snapshot_online_state_reuse": False,
+    # Weekly version handoff is explicit rather than generic state reuse.
+    "cross_snapshot_online_state_reuse": True,
+    "cross_snapshot_online_state_reuse_policy": "SAME_MFAC_CONTEXT_AND_GRID_ONLY",
+    "cross_snapshot_online_state_requires_runtime_grid_id": True,
+    "cross_snapshot_residual_reuse": False,
+    "cross_snapshot_pending_or_hold_reuse": False,
+    "historical_prior_may_overwrite_online_evidence": False,
     "historical_episode_evidence_is_cumulative_across_snapshots": True,
     "snapshot_remap_key": "grid_id",
     "offline_training_publishes_runtime_authority": False,
