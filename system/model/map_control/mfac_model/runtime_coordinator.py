@@ -3,8 +3,13 @@
 
 SO2 remains the only control-producing MFAC channel.  pH is observed and
 learned independently after the same real flow-reach event, then only
-arbitrates the SO2 residual by PASS/SCALE/BLOCK.  The coordinator has no DCS
-write API and can therefore remain a fail-closed Shadow sidecar.
+arbitrates the SO2 residual by PASS/SCALE/BLOCK.  Arbitration acts on the
+increment from the already-held residual to the newly desired residual.  A
+protected hook allows the trajectory sidecar to supply pending pH extrema
+without creating a second residual-control path.
+
+The coordinator has no DCS write API and therefore remains a fail-closed Shadow
+sidecar.
 """
 
 from __future__ import annotations
@@ -63,7 +68,9 @@ from .supply_flow_tracking import (
 )
 
 
-SCHEME2_RUNTIME_COORDINATOR_VERSION = "SCHEME2_RUNTIME_COORDINATOR_V2_DUAL_RESPONSE"
+SCHEME2_RUNTIME_COORDINATOR_VERSION = (
+    "SCHEME2_RUNTIME_COORDINATOR_V3_INCREMENTAL_PH_ARBITRATION"
+)
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -267,6 +274,29 @@ class Scheme2RuntimeCoordinator:
             self._dual_response_status.clear()
             self._dual_response_consumed.clear()
 
+    def _ph_arbitration_context(
+        self,
+        *,
+        timestamp: Any,
+        actual_supply_flow_feedback: Any,
+        ph_value: Any,
+        state: Optional[MFACRuntimeState],
+        data_quality_ok: bool,
+    ) -> Dict[str, Any]:
+        """Return extra pH-arbitration context without creating another controller.
+
+        Base coordinator owns no pending-response model, so it supplies only the
+        currently held residual.  The trajectory subclass overrides this hook
+        to add PendingDoseGuard future pH extrema for the same cycle.
+        """
+        del timestamp, actual_supply_flow_feedback, ph_value, state, data_quality_ok
+        return {
+            "held_residual": float(self.residual_hold_manager.held_residual),
+            "pending_predicted_ph_upper": None,
+            "pending_predicted_ph_lower": None,
+            "pending_source": "NONE",
+        }
+
     def process_cycle(
         self,
         *,
@@ -412,6 +442,13 @@ class Scheme2RuntimeCoordinator:
                 control_enabled=bool(self.config.residual_control_enabled),
             )
 
+            ph_arbitration_context = self._ph_arbitration_context(
+                timestamp=timestamp,
+                actual_supply_flow_feedback=actual_supply_flow_feedback,
+                ph_value=ph,
+                state=self.runtime_state,
+                data_quality_ok=bool(data_quality_ok),
+            )
             ph_arbitration: Optional[PHResidualArbitrationDecision] = None
             hold_source = residual_decision
             if self.ph_arbiter is not None:
@@ -421,6 +458,16 @@ class Scheme2RuntimeCoordinator:
                     so2_residual=residual_decision,
                     arbitration_enabled=bool(
                         self.config.residual_control_enabled
+                    ),
+                    held_residual=ph_arbitration_context.get(
+                        "held_residual",
+                        self.residual_hold_manager.held_residual,
+                    ),
+                    pending_predicted_ph_upper=ph_arbitration_context.get(
+                        "pending_predicted_ph_upper"
+                    ),
+                    pending_predicted_ph_lower=ph_arbitration_context.get(
+                        "pending_predicted_ph_lower"
                     ),
                 )
                 if residual_decision.status == "CALCULATED":
@@ -461,7 +508,8 @@ class Scheme2RuntimeCoordinator:
                 "qbase_inputs_valid": bool(qbase_inputs_valid),
                 "actual_flow_used_as_algorithm_target": False,
                 "target_formula": "clip(qbase_effective + residual_mfac_hold)",
-                "residual_semantics": "SO2_LED_PH_ARBITRATED",
+                "residual_semantics": "SO2_LED_INCREMENTAL_PH_ARBITRATED",
+                "ph_arbitration_context": dict(ph_arbitration_context),
                 "additive_ph_residual": False,
                 "restore_warning": self._restore_warning,
             }
