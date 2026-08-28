@@ -1,0 +1,73 @@
+{
+  "semantics_version": "SCHEME2_EVIDENCE_ARTIFACT_STORE_V1_ATOMIC_CONTENT_ADDRESSED_REVIEW_ONLY",
+  "design_id": "MFAC-EVIDENCE-ARTIFACT-STORE-DESIGN-20260828",
+  "status": "IMPLEMENTED_REVIEW_ONLY_NOT_POPULATED_WITH_REAL_LOCAL_STEP_EVIDENCE",
+  "activation_status": "NOT_ACTIVATABLE",
+  "learning_enabled": false,
+  "residual_control_enabled": false,
+  "dcs_write_enabled": false,
+  "path_authority": {
+    "module": "system.model.config.mfac_paths",
+    "root": "MFAC_EVIDENCE_ROOT",
+    "objects": "MFAC_EVIDENCE_OBJECTS_DIR",
+    "bundles": "MFAC_EVIDENCE_BUNDLES_DIR",
+    "production_path_reconstruction_outside_path_contract_allowed": false,
+    "temporary_test_root_injection_allowed": true
+  },
+  "layout": {
+    "objects": "objects/<sha256[:2]>/<sha256>.json",
+    "bundle_manifest": "bundles/<bundle_id>.json",
+    "content_address": "SHA256(CANONICAL_JSON)",
+    "object_payloads": [
+      "LOCAL_GAIN_COHORT_APPROVED_EVENTS",
+      "LOCAL_STEP_RAW_TRACE",
+      "OBSERVED_RESPONSE_TIMING",
+      "CHANNEL_CONFIDENCE_EVIDENCE",
+      "DUAL_RESPONSE_CALIBRATION_PROFILE"
+    ]
+  },
+  "write_contract": {
+    "precondition": "verify_evidence_provenance_bundle must be VERIFIED",
+    "object_write": "tmp + flush + fsync + os.replace",
+    "manifest_write": "tmp + flush + fsync + os.replace",
+    "object_immutability": true,
+    "bundle_id_append_only": true,
+    "identical_bundle_resave": "IDEMPOTENT",
+    "same_bundle_id_different_chain": "REJECT",
+    "corrupt_existing_manifest_can_be_silently_overwritten": false,
+    "orphan_content_addressed_objects_after_failed_manifest_commit_are_harmless": true
+  },
+  "load_contract": {
+    "safe_bundle_id_required": true,
+    "manifest_schema_required": true,
+    "manifest_permissions_must_remain_false": true,
+    "provenance_bundle_digest_recomputed": true,
+    "object_digest_list_must_match_provenance_refs": true,
+    "every_object_digest_recomputed": true,
+    "typed_evidence_reconstruction_required": true,
+    "calibrated_profile_review_seal_revalidated": true,
+    "verify_evidence_provenance_bundle_rerun_after_reconstruction": true,
+    "success_status": "VERIFIED_REVIEW_EVIDENCE",
+    "missing_status": "EVIDENCE_BUNDLE_NOT_FOUND",
+    "failure_status": "EVIDENCE_INTEGRITY_FAILURE"
+  },
+  "permission_boundary": {
+    "verified_review_evidence_is_activation_permission": false,
+    "complete_review_chain_is_activation_permission": false,
+    "to_runtime_config_allowed": false,
+    "separate_dual_response_activation_review_required": true
+  },
+  "current_real_evidence_state": {
+    "controlled_plus_2_m3_h_trials_available": false,
+    "real_raw_trace_objects_persisted": false,
+    "real_timing_objects_persisted": false,
+    "real_confidence_objects_persisted": false,
+    "real_complete_provenance_manifest_persisted": false
+  },
+  "notes": [
+    "This design defines persistence behavior only; it does not create a second parameter authority.",
+    "Content-addressed objects may be shared by multiple manifests when their semantic payload is identical.",
+    "A verified loaded bundle remains review-only and cannot enable LEARN, Residual or DCS write.",
+    "Production remains LEARN=0, Residual=0, DCS write=off."
+  ]
+}
