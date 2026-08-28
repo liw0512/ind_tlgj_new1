@@ -7,12 +7,19 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from system.model.config.mfac_training_lifecycle import (
+    INCREMENTAL_OFFLINE_TRAINING_DAYS,
+    INITIAL_OFFLINE_TRAINING_DAYS,
+    OFFLINE_TRAINING_ORDER,
+    ONLINE_MFAC_UPDATE_TRIGGER,
+    training_days_for_mode,
+)
 from system.model.map_control.mfac_model.mfac_primary_config import (
     MFAC_PRIMARY_ARTIFACT_CONFIG,
     MFAC_PRIMARY_MODE,
@@ -21,7 +28,10 @@ from system.model.map_control.mfac_model.version_artifacts import sha256_file
 
 
 OFFLINE_ACTIVATION_LIFECYCLE_VERSION = (
-    "SCHEME2_OFFLINE_ACTIVATION_V2_7DAY_CONDITION_THEN_MFAC"
+    "SCHEME2_OFFLINE_ACTIVATION_V3_7DAY_INITIAL_3DAY_INCREMENTAL_CONDITION_THEN_MFAC"
+)
+_INCREMENTAL_TRIGGER_RULE = (
+    "AFTER_AT_LEAST_INCREMENTAL_TRAINING_DAYS_OF_NEW_DATA"
 )
 
 
@@ -54,6 +64,35 @@ def _require_file_hash(path: Path, expected_sha: Any, field_name: str) -> None:
         )
 
 
+def _validate_shared_cadence(
+    value: Mapping[str, Any],
+    *,
+    field_name: str,
+    mode: str | None = None,
+    require_mode_days: bool = False,
+) -> None:
+    """Reject duplicate weekly semantics and validate the canonical 7d/3d pair."""
+    if "periodic_offline_retrain_days" in value:
+        raise ValueError(
+            "%s contains deprecated periodic_offline_retrain_days" % field_name
+        )
+    if int(value.get("initial_training_days") or 0) != int(
+        INITIAL_OFFLINE_TRAINING_DAYS
+    ):
+        raise ValueError("%s initial training must be 7 days" % field_name)
+    if int(value.get("incremental_training_days") or 0) != int(
+        INCREMENTAL_OFFLINE_TRAINING_DAYS
+    ):
+        raise ValueError("%s incremental training must be 3 days" % field_name)
+    if require_mode_days:
+        expected = training_days_for_mode(str(mode or ""))
+        if int(value.get("required_training_days") or 0) != expected:
+            raise ValueError(
+                "%s required_training_days must be %s for %s"
+                % (field_name, expected, mode)
+            )
+
+
 def validate_offline_lifecycle_artifacts(
     *,
     version: str,
@@ -62,11 +101,15 @@ def validate_offline_lifecycle_artifacts(
 ) -> Dict[str, Any]:
     """Fail closed unless Process4 completed condition -> MFAC offline training.
 
-    The seven-day offline refresh and event-driven online MFAC adaptation are
-    intentionally different lifecycles.  Activation may replace the immutable
-    condition/MFAC prior version pair, but the version artifact is forbidden
-    from claiming that it overwrites online phi/confidence or carries residual,
-    PendingDose or HOLD state across the weekly boundary.
+    Initial offline training and incremental offline training intentionally use
+    different accumulation windows: 7 days for the first integrated version and
+    3 days of new data after the active watermark for subsequent versions.
+    Online MFAC phi/confidence adaptation is a separate event-driven lifecycle.
+
+    Activation may replace the immutable condition/MFAC prior version pair, but
+    the version artifact is forbidden from claiming that it overwrites online
+    phi/confidence or carries residual, PendingDose or HOLD state across a
+    ConditionSnapshot boundary.
     """
     version_text = str(version or "").strip()
     if not version_text.startswith("v") or not version_text[1:].isdigit():
@@ -128,11 +171,13 @@ def validate_offline_lifecycle_artifacts(
     mode = str(summary.get("mode") or "").upper()
     if mode not in {"INITIAL", "INCREMENTAL"}:
         raise ValueError("training_summary.mode must be INITIAL or INCREMENTAL")
-    if int(summary.get("periodic_offline_retrain_days") or 0) != 7:
-        raise ValueError("MFAC offline retraining period must be 7 days")
-    if str(summary.get("online_update_trigger") or "") != (
-        "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT"
-    ):
+    _validate_shared_cadence(
+        summary,
+        field_name="training_summary",
+        mode=mode,
+        require_mode_days=True,
+    )
+    if str(summary.get("online_update_trigger") or "") != ONLINE_MFAC_UPDATE_TRIGGER:
         raise ValueError("MFAC online adaptation must remain event driven")
     if summary.get("online_runtime_state_overwrite") is not False:
         raise ValueError("offline MFAC version must not overwrite online runtime state")
@@ -140,7 +185,7 @@ def validate_offline_lifecycle_artifacts(
     if manifest.get("persisted_online_state_precedence") is not True:
         raise ValueError("persisted online MFAC state must precede offline prior")
     if manifest.get("cross_snapshot_online_state_reuse") is not True:
-        raise ValueError("weekly snapshot handoff contract is missing")
+        raise ValueError("snapshot handoff contract is missing")
     if str(manifest.get("cross_snapshot_online_state_reuse_policy") or "") != (
         "SAME_MFAC_CONTEXT_AND_GRID_ONLY"
     ):
@@ -148,9 +193,9 @@ def validate_offline_lifecycle_artifacts(
     if manifest.get("cross_snapshot_online_state_requires_runtime_grid_id") is not True:
         raise ValueError("cross-snapshot MFAC handoff must require runtime grid identity")
     if manifest.get("cross_snapshot_residual_reuse") is not False:
-        raise ValueError("residual must not cross a weekly version boundary")
+        raise ValueError("residual must not cross a snapshot version boundary")
     if manifest.get("cross_snapshot_pending_or_hold_reuse") is not False:
-        raise ValueError("PendingDose/HOLD state must not cross a weekly version boundary")
+        raise ValueError("PendingDose/HOLD state must not cross a snapshot version boundary")
     if manifest.get("historical_prior_may_overwrite_online_evidence") is not False:
         raise ValueError("offline historical prior must not overwrite online evidence")
 
@@ -172,15 +217,14 @@ def validate_offline_lifecycle_artifacts(
     lifecycle = offline.get("lifecycle_contract")
     if not isinstance(lifecycle, dict):
         raise ValueError("offline training lifecycle_contract is required")
-    if lifecycle.get("offline_order") != ["CONDITION", "MFAC"]:
+    _validate_shared_cadence(lifecycle, field_name="offline lifecycle")
+    if lifecycle.get("offline_order") != list(OFFLINE_TRAINING_ORDER):
         raise ValueError("offline training order must be CONDITION -> MFAC")
-    if int(lifecycle.get("periodic_offline_retrain_days") or 0) != 7:
-        raise ValueError("offline lifecycle period must be 7 days")
+    if str(lifecycle.get("incremental_trigger_rule") or "") != _INCREMENTAL_TRIGGER_RULE:
+        raise ValueError("offline lifecycle incremental trigger rule is invalid")
     if lifecycle.get("online_update_is_periodic") is not False:
         raise ValueError("online MFAC adaptation must not be periodic")
-    if str(lifecycle.get("online_update_trigger") or "") != (
-        "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT"
-    ):
+    if str(lifecycle.get("online_update_trigger") or "") != ONLINE_MFAC_UPDATE_TRIGGER:
         raise ValueError("offline lifecycle online trigger is invalid")
     if lifecycle.get("historical_prior_may_overwrite_online_evidence") is not False:
         raise ValueError("historical prior overwrite contract is invalid")
@@ -206,9 +250,11 @@ def validate_offline_lifecycle_artifacts(
         "semantics_version": OFFLINE_ACTIVATION_LIFECYCLE_VERSION,
         "version": version_text,
         "mode": mode,
-        "offline_order": ["CONDITION", "MFAC"],
-        "periodic_offline_retrain_days": 7,
-        "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+        "offline_order": list(OFFLINE_TRAINING_ORDER),
+        "required_training_days": training_days_for_mode(mode),
+        "initial_training_days": int(INITIAL_OFFLINE_TRAINING_DAYS),
+        "incremental_training_days": int(INCREMENTAL_OFFLINE_TRAINING_DAYS),
+        "online_update_trigger": ONLINE_MFAC_UPDATE_TRIGGER,
         "online_update_is_periodic": False,
         "persisted_online_state_precedence": True,
         "cross_snapshot_online_state_reuse_policy": (
@@ -238,7 +284,7 @@ def activate(version: str) -> Path:
 
     manifest = _read_json(manifest_path)
     condition_path = Path(str(manifest.get("condition_snapshot_path") or "")).resolve()
-    validate_offline_lifecycle_artifacts(
+    lifecycle_validation = validate_offline_lifecycle_artifacts(
         version=version,
         snapshot_dir=snapshot_dir,
         condition_path=condition_path,
@@ -275,9 +321,15 @@ def activate(version: str) -> Path:
         },
         "offline_online_lifecycle": {
             "semantics_version": OFFLINE_ACTIVATION_LIFECYCLE_VERSION,
-            "offline_order": ["CONDITION", "MFAC"],
-            "periodic_offline_retrain_days": 7,
-            "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+            "offline_order": list(OFFLINE_TRAINING_ORDER),
+            "mode": lifecycle_validation["mode"],
+            "required_training_days": lifecycle_validation[
+                "required_training_days"
+            ],
+            "initial_training_days": int(INITIAL_OFFLINE_TRAINING_DAYS),
+            "incremental_training_days": int(INCREMENTAL_OFFLINE_TRAINING_DAYS),
+            "incremental_trigger_rule": _INCREMENTAL_TRIGGER_RULE,
+            "online_update_trigger": ONLINE_MFAC_UPDATE_TRIGGER,
             "online_update_is_periodic": False,
             "cross_snapshot_online_state_reuse_policy": (
                 "SAME_MFAC_CONTEXT_AND_GRID_ONLY"
