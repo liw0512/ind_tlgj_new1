@@ -31,7 +31,7 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V6_STEP_AND_OBSERVE"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V7_WEEKLY_SNAPSHOT_HANDOFF"
 )
 
 
@@ -43,6 +43,14 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
     the protected ``_ph_arbitration_context`` hook.  A separate permission gate
     governs *when* the already pH-arbitrated desired residual may replace the
     current held residual.
+
+    Seven-day offline retraining and online adaptation are deliberately separate
+    lifecycles.  Exact persisted online state wins first.  Across a new
+    ConditionSnapshot, learned phi/confidence may be handed forward only when
+    both ``mfac_context_id`` and ``grid_id`` remain unchanged; residual,
+    PendingDose and HOLD cadence are reset at the version boundary.  Only after
+    that handoff may a reviewed scalar historical prior fill a channel that has
+    no online evidence.
 
     There remains exactly one residual controller, one pH arbiter and one held
     residual.  Planner ``min_hold_seconds`` is also the single source for the
@@ -78,6 +86,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         self._historical_sensitivity_map = historical_sensitivity_map
         self._historical_query: Optional[HistoricalSensitivityQuery] = None
         self._last_historical_mapping = None
+        self._last_cross_snapshot_handoff: Optional[Dict[str, Any]] = None
         self._pending_for_current_cycle: Optional[PendingDoseGuardDecision] = None
         super().__init__(
             config,
@@ -133,6 +142,20 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         except (TypeError, ValueError, OverflowError):
             return False
 
+    def _stamp_runtime_grid(self, state: Optional[MFACRuntimeState]) -> None:
+        query = self._historical_query
+        if state is None or query is None:
+            return
+        grid_id = str(query.grid_id or "").strip()
+        if not grid_id:
+            return
+        metadata = dict(state.metadata or {})
+        metadata["runtime_grid_id"] = grid_id
+        metadata["runtime_context_identity_policy"] = (
+            "CONDITION_SNAPSHOT_VERSION+MFAC_CONTEXT_ID;GRID_FOR_WEEKLY_HANDOFF"
+        )
+        state.metadata = metadata
+
     def _mapped_state(
         self,
         snapshot: str,
@@ -152,6 +175,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if not decision.available:
             return existing
 
+        runtime_grid_id = str(query.grid_id or "").strip()
         if existing is None:
             return MFACRuntimeState(
                 condition_snapshot_version=snapshot,
@@ -168,6 +192,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                     "historical_prior_online_override_policy": (
                         "PER_CHANNEL_AFTER_FIRST_CLEAN_ONLINE_EVIDENCE"
                     ),
+                    "runtime_grid_id": runtime_grid_id,
                 },
             )
 
@@ -184,6 +209,8 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         metadata["historical_prior_online_override_policy"] = (
             "PER_CHANNEL_AFTER_FIRST_CLEAN_ONLINE_EVIDENCE"
         )
+        if runtime_grid_id:
+            metadata["runtime_grid_id"] = runtime_grid_id
         return MFACRuntimeState(
             condition_snapshot_version=existing.condition_snapshot_version,
             mfac_context_id=existing.mfac_context_id,
@@ -215,15 +242,39 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
 
     def _select_context(self, snapshot: str, context_id: str) -> str:
+        self._last_cross_snapshot_handoff = None
         status = super()._select_context(snapshot, context_id)
         if not snapshot or not context_id:
             return status
 
+        query = self._historical_query
+        if (
+            self.runtime_state is None
+            and query is not None
+            and status == "CONTEXT_SAFE_EMPTY:SNAPSHOT_VERSION_MISMATCH"
+        ):
+            handoff = self.runtime_store.restore_same_context_across_snapshot(
+                condition_snapshot_version=snapshot,
+                mfac_context_id=context_id,
+                grid_id=str(query.grid_id or ""),
+            )
+            self._last_cross_snapshot_handoff = {
+                "restored": bool(handoff.restored),
+                "reason": handoff.reason,
+                "residual_reused": False,
+            }
+            if handoff.restored and handoff.runtime_state is not None:
+                # Only phi/confidence/evidence state crosses the weekly version
+                # boundary.  Residual and all delayed-control memory restart at 0.
+                super().set_runtime_state(
+                    handoff.runtime_state,
+                    residual_mfac_hold=0.0,
+                )
+                status = "CONTEXT_CROSS_SNAPSHOT_HANDOFF"
+
         previous = self.runtime_state
         mapped = self._mapped_state(snapshot, context_id, existing=previous)
-        if mapped is previous:
-            return status
-        if mapped is not None:
+        if mapped is not previous and mapped is not None:
             self.runtime_state = mapped
             self._active_context_key = (snapshot, context_id)
             if previous is None:
@@ -232,8 +283,15 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                     if self._last_historical_mapping is not None
                     else "UNKNOWN"
                 )
-                return "CONTEXT_HISTORICAL_PRIOR:%s" % source
-            return "CONTEXT_HISTORICAL_PRIOR_REFRESHED"
+                status = "CONTEXT_HISTORICAL_PRIOR:%s" % source
+            else:
+                status = (
+                    "CONTEXT_CROSS_SNAPSHOT_HANDOFF_PRIOR_REFRESHED"
+                    if status == "CONTEXT_CROSS_SNAPSHOT_HANDOFF"
+                    else "CONTEXT_HISTORICAL_PRIOR_REFRESHED"
+                )
+
+        self._stamp_runtime_grid(self.runtime_state)
         return status
 
     def _ph_arbitration_context(
@@ -398,6 +456,18 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                 "historical_prior_enables_learning": False,
                 "historical_prior_enables_residual": False,
                 "historical_prior_enables_dcs_write": False,
+                "offline_online_lifecycle": (
+                    "7DAY_OFFLINE_VERSION_REFRESH_PLUS_EVENT_DRIVEN_ONLINE_ADAPTATION"
+                ),
+                "runtime_state_handoff_policy": (
+                    "EXACT_STATE_THEN_SAME_CONTEXT_GRID_THEN_REVIEWED_PRIOR"
+                ),
+                "cross_snapshot_runtime_state_handoff": (
+                    dict(self._last_cross_snapshot_handoff)
+                    if self._last_cross_snapshot_handoff is not None
+                    else None
+                ),
+                "cross_snapshot_residual_reused": False,
             }
         )
         result.metadata = metadata
