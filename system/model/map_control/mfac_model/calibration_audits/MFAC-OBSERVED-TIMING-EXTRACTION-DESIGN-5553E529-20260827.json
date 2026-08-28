@@ -1,11 +1,16 @@
 {
-  "semantics_version": "SCHEME2_OBSERVED_TIMING_EXTRACTION_DESIGN_V1_REVIEW_REQUIRED",
+  "semantics_version": "SCHEME2_OBSERVED_TIMING_EXTRACTION_DESIGN_V2_REVIEW_SEALED",
   "extractor_semantics": "SCHEME2_OBSERVED_TIMING_EXTRACTOR_V1_RAW_PROCESS_TRACE",
   "design_id": "MFAC-OBSERVED-TIMING-EXTRACTION-DESIGN-5553E529-20260827",
   "source_local_step_observation_profile_id": "MFAC-LOCAL-STEP-OBSERVATION-DESIGN-5553E529-20260827",
   "source_noise_audit_id": "MFAC-LOCAL-STEP-NOISE-AUDIT-5553E529-20260827",
   "status": "INCOMPLETE_REVIEW_REQUIRED",
   "activation_status": "NOT_ACTIVATABLE",
+  "review": {
+    "reviewer_id": null,
+    "review_time": null,
+    "status": "NOT_REVIEWED"
+  },
   "automatic_execution_allowed": false,
   "learning_permission": false,
   "dcs_write_enabled": false,
@@ -14,6 +19,7 @@
     "anchor": "actual_flow_reached_time",
     "configured_window_boundary_used_as_observed_timing": false,
     "raw_10s_samples_required": true,
+    "invalid_trace_bundle_exposes_usable_trace": false,
     "same_condition_snapshot_required": true,
     "same_mfac_context_required": true
   },
@@ -76,22 +82,32 @@
     }
   },
   "candidate_basis": {
-    "baseline_window_seconds": "300 s manual identification baseline review candidate; not yet approved",
-    "max_sample_gap_seconds": "10 s cadence audit; >30 s gaps are rare and 30 s remains a review candidate",
-    "onset_abs_threshold": "must be reviewed above channel-specific natural-noise floor; no production value is published yet",
-    "min_response_abs_amplitude": "must be reviewed above channel-specific natural-noise floor; no production value is published yet",
+    "baseline_window_seconds": "300 s manual identification baseline review candidate; not approved",
+    "max_sample_gap_seconds": "10 s cadence audit; 30 s remains a review candidate",
+    "onset_abs_threshold": "must be reviewed above channel-specific natural-noise floor",
+    "min_response_abs_amplitude": "must be reviewed above channel-specific natural-noise floor",
     "max_observation_seconds": "must cover low-step response timing and cannot be copied from large-pulse windows without review"
+  },
+  "calibration_evidence_seal": {
+    "reviewed_profile_required": true,
+    "reviewer_id_required": true,
+    "review_time_required": true,
+    "reviewed_extraction_parameters_embedded": true,
+    "candidate_parameters_used_for_extraction": false,
+    "calibration_review_eligible_only_after_profile_review": true
   },
   "forbidden_shortcuts": [
     "using ProcessResponseEvent.response_start_time as observed onset",
     "using configured observation window end as observed response timing",
     "using historical large-pulse 310 s/190 s values as reviewed low-step timing",
     "copying synthetic unit-test extractor thresholds into reviewed parameters",
+    "calling low-level extractor output calibration evidence without a reviewed extraction profile",
     "extracting timing from fewer than two accepted events and calling it calibrated"
   ],
   "notes": [
     "The extractor implementation exists, but no controlled +2 m3/h raw process trace has been collected yet.",
     "All unresolved extraction thresholds remain null by design.",
+    "No timing extraction reviewer or review time exists at this checkpoint.",
     "Observed timing evidence is review-only and cannot enable LEARN, Residual or DCS write."
   ]
 }
