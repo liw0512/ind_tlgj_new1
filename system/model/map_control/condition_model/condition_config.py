@@ -7,7 +7,9 @@ columns and the outlet-SO2 safety limit are derived from the single authoritativ
 ``system/model/config/standard_fields.py`` and are not configurable aliases.
 
 This file now contains only condition-model algorithm/lifecycle parameters plus a
-small read-time migration adapter for historical snapshots.
+small read-time migration adapter for historical snapshots. Filesystem paths
+shared with the MFAC second module come from ``mfac_paths.py`` rather than being
+redeclared here and then overwritten by Process4MapControl.
 """
 
 import copy
@@ -22,6 +24,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from system.model.config.mfac_paths import (
+    CONDITION_ROOT,
+    MFAC_ACTIVE_VERSION_FILE,
+    MODEL_CSV_ROOT,
+)
 from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG
 from system.model.config.standard_fields import TARGET_SO2_COLUMN
 
@@ -83,12 +90,8 @@ MAX_SNAPSHOT_VERSIONS_TO_KEEP = 5
 
 
 # ---------------------------------------------------------------------------
-# 单独运行第一模块时使用的项目内默认路径。P4PC 会显式传参覆盖这些路径。
-# 不再维护 F:\\tlgj / F:\\tlgj_new 等机器绝对路径。
-CONDITION_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "condition_model"
-MODEL_CSV_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "model_csv"
-POLICY_OUTPUT_ROOT = PROJECT_ROOT / "files" / "slurry_policy_model_output"
-
+# 单独运行第一模块时使用的项目内默认路径。路径拓扑只由 mfac_paths.py 定义；
+# Process4 只负责把同一份 canonical 路径注入统一在线版本管理器。
 INITIAL_CONDITION_TRAIN_CONFIG = {
     "input_csv_path": str(MODEL_CSV_ROOT / "Initial_train.csv"),
     "output_csv_path": str(MODEL_CSV_ROOT / "Initial_train_after_condition.csv"),
@@ -128,9 +131,12 @@ ONLINE_CONDITION_CLASSIFY_CONFIG = {
         "external_version_management": True,
         "integrated_version": {
             "enabled": True,
-            "active_version_file": str(POLICY_OUTPUT_ROOT / "active_version.json"),
+            # Single path source: this is the same MFAC active pointer used by
+            # Process4. No retired slurry_policy_model_output path remains.
+            "active_version_file": str(MFAC_ACTIVE_VERSION_FILE),
             "hot_reload_enabled": True,
-            "reload_check_interval_seconds": 30.0,
+            # No duplicate reload interval is configured here. The integrated
+            # manager owns its default; Process4 may inject its host cadence.
             "verify_condition_snapshot_hash": True,
             "require_atomic_pair_switch": True,
             "reset_condition_stability_window": True,
@@ -184,9 +190,6 @@ class ConditionAxisConfig:
             "max": self.maximum,
             "step": self.step,
         }
-
-
-
 
 
 @dataclass(frozen=True)
