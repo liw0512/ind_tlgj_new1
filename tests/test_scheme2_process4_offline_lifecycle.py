@@ -22,7 +22,19 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
         return path
 
     @classmethod
-    def _valid_artifact_tree(cls, root: Path, *, days=7):
+    def _valid_artifact_tree(
+        cls,
+        root: Path,
+        *,
+        mode="INITIAL",
+        required_days=None,
+        initial_days=7,
+        incremental_days=3,
+        include_deprecated_periodic=False,
+    ):
+        mode = str(mode).upper()
+        if required_days is None:
+            required_days = 7 if mode == "INITIAL" else 3
         version = "v001"
         snapshot_dir = root / "mfac" / "snapshots" / version
         snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -30,18 +42,25 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
             root / "condition" / version / "condition_snapshot.json",
             {"snapshot_version": version},
         )
+        lifecycle = {
+            "initial_training_days": initial_days,
+            "incremental_training_days": incremental_days,
+            "incremental_trigger_rule": (
+                "AFTER_AT_LEAST_INCREMENTAL_TRAINING_DAYS_OF_NEW_DATA"
+            ),
+            "offline_order": ["CONDITION", "MFAC"],
+            "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+            "online_update_is_periodic": False,
+            "historical_prior_may_overwrite_online_evidence": False,
+        }
+        if include_deprecated_periodic:
+            lifecycle["periodic_offline_retrain_days"] = 7
         offline_path = cls._write_json(
             snapshot_dir / "offline_training_report.json",
             {
                 "version": version,
-                "mode": "INITIAL",
-                "lifecycle_contract": {
-                    "periodic_offline_retrain_days": days,
-                    "offline_order": ["CONDITION", "MFAC"],
-                    "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
-                    "online_update_is_periodic": False,
-                    "historical_prior_may_overwrite_online_evidence": False,
-                },
+                "mode": mode,
+                "lifecycle_contract": lifecycle,
             },
         )
         episodes_path = snapshot_dir / "historical_valid_episodes.csv"
@@ -50,16 +69,21 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
             snapshot_dir / "offline_effective_config.json",
             {"config": "test"},
         )
+        summary = {
+            "version": version,
+            "mode": mode,
+            "condition_snapshot_version": version,
+            "required_training_days": required_days,
+            "initial_training_days": initial_days,
+            "incremental_training_days": incremental_days,
+            "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+            "online_runtime_state_overwrite": False,
+        }
+        if include_deprecated_periodic:
+            summary["periodic_offline_retrain_days"] = 7
         summary_path = cls._write_json(
             snapshot_dir / "training_summary.json",
-            {
-                "version": version,
-                "mode": "INITIAL",
-                "condition_snapshot_version": version,
-                "periodic_offline_retrain_days": days,
-                "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
-                "online_runtime_state_overwrite": False,
-            },
+            summary,
         )
         manifest = {
             "version": version,
@@ -87,10 +111,10 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
         cls._write_json(snapshot_dir / "manifest.json", manifest)
         return version, snapshot_dir, condition_path
 
-    def test_activation_accepts_seven_day_offline_plus_event_driven_online_contract(self):
+    def test_activation_accepts_initial_seven_day_contract(self):
         with tempfile.TemporaryDirectory() as temp:
             version, snapshot_dir, condition_path = self._valid_artifact_tree(
-                Path(temp)
+                Path(temp), mode="INITIAL"
             )
             result = validate_offline_lifecycle_artifacts(
                 version=version,
@@ -98,7 +122,10 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
                 condition_path=condition_path,
             )
             self.assertEqual(result["offline_order"], ["CONDITION", "MFAC"])
-            self.assertEqual(result["periodic_offline_retrain_days"], 7)
+            self.assertEqual(result["mode"], "INITIAL")
+            self.assertEqual(result["required_training_days"], 7)
+            self.assertEqual(result["initial_training_days"], 7)
+            self.assertEqual(result["incremental_training_days"], 3)
             self.assertFalse(result["online_update_is_periodic"])
             self.assertEqual(
                 result["online_update_trigger"],
@@ -111,13 +138,51 @@ class Scheme2Process4OfflineLifecycleTest(unittest.TestCase):
             )
             self.assertFalse(result["cross_snapshot_residual_reuse"])
 
-    def test_activation_rejects_old_three_day_offline_contract(self):
+    def test_activation_accepts_incremental_three_day_contract(self):
         with tempfile.TemporaryDirectory() as temp:
             version, snapshot_dir, condition_path = self._valid_artifact_tree(
-                Path(temp),
-                days=3,
+                Path(temp), mode="INCREMENTAL"
             )
-            with self.assertRaisesRegex(ValueError, "7 days"):
+            result = validate_offline_lifecycle_artifacts(
+                version=version,
+                snapshot_dir=snapshot_dir,
+                condition_path=condition_path,
+            )
+            self.assertEqual(result["mode"], "INCREMENTAL")
+            self.assertEqual(result["required_training_days"], 3)
+            self.assertEqual(result["initial_training_days"], 7)
+            self.assertEqual(result["incremental_training_days"], 3)
+
+    def test_activation_rejects_initial_three_day_claim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version, snapshot_dir, condition_path = self._valid_artifact_tree(
+                Path(temp), mode="INITIAL", required_days=3
+            )
+            with self.assertRaisesRegex(ValueError, "must be 7"):
+                validate_offline_lifecycle_artifacts(
+                    version=version,
+                    snapshot_dir=snapshot_dir,
+                    condition_path=condition_path,
+                )
+
+    def test_activation_rejects_incremental_seven_day_claim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version, snapshot_dir, condition_path = self._valid_artifact_tree(
+                Path(temp), mode="INCREMENTAL", required_days=7
+            )
+            with self.assertRaisesRegex(ValueError, "must be 3"):
+                validate_offline_lifecycle_artifacts(
+                    version=version,
+                    snapshot_dir=snapshot_dir,
+                    condition_path=condition_path,
+                )
+
+    def test_activation_rejects_deprecated_ambiguous_periodic_field(self):
+        with tempfile.TemporaryDirectory() as temp:
+            version, snapshot_dir, condition_path = self._valid_artifact_tree(
+                Path(temp), include_deprecated_periodic=True
+            )
+            with self.assertRaisesRegex(ValueError, "deprecated"):
                 validate_offline_lifecycle_artifacts(
                     version=version,
                     snapshot_dir=snapshot_dir,
