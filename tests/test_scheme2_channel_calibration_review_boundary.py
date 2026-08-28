@@ -4,9 +4,7 @@ from system.model.map_control.mfac_model.channel_calibration_review import (
     ObservedResponseTimingEvidence,
     approve_channel_calibration,
 )
-from system.model.map_control.mfac_model.channel_confidence_evidence import (
-    ChannelConfidenceEvidence,
-)
+from system.model.map_control.mfac_model.channel_confidence_evidence import ChannelConfidenceEvidence
 from system.model.map_control.mfac_model.dual_response_calibration_profile import (
     CHANNEL_CALIBRATED,
     CHANNEL_LOCAL_GAIN_READY,
@@ -33,21 +31,29 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
         )
 
     @staticmethod
-    def timing(channel):
+    def timing(channel, *, sealed=True):
+        metadata = {}
+        if sealed:
+            metadata = {
+                "timing_extraction_profile_id": "TIMING-DESIGN-1",
+                "timing_extraction_profile_semantics": "SCHEME2_OBSERVED_TIMING_EXTRACTION_DESIGN_V2_REVIEW_SEALED",
+                "timing_extraction_profile_reviewed": True,
+                "timing_extraction_reviewer_id": "timing-reviewer",
+                "timing_extraction_review_time": "2026-08-28T08:00:00+08:00",
+                "calibration_review_eligible": True,
+                "reviewed_extraction_parameters": {"onset_abs_threshold": 0.05},
+                "candidate_parameters_used_for_extraction": False,
+            }
         return ObservedResponseTimingEvidence(
             evidence_id="OBS-%s" % channel,
             channel=channel,
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
-            delay_profile=DelayProfile(
-                onset_p50_seconds=100.0,
-                onset_p90_seconds=150.0,
-                response_p50_seconds=500.0,
-                response_p90_seconds=700.0,
-            ),
+            delay_profile=DelayProfile(100.0, 150.0, 500.0, 700.0),
             event_ids=("E1", "E2"),
             observed_event_count=2,
             independent_days=2,
+            metadata=metadata,
         )
 
     @staticmethod
@@ -58,6 +64,9 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
             cohort_review_id="COHORT-1",
+            cohort_bootstrap_review_approved=True,
+            cohort_review_reviewer_id="cohort-reviewer",
+            cohort_review_time="2026-08-28T08:30:00+08:00",
             timing_evidence_id=timing.evidence_id,
             cohort_event_ids=("E1", "E2", "E3"),
             timing_event_ids=tuple(timing.event_ids),
@@ -101,9 +110,9 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
         )
 
     @classmethod
-    def approve_so2(cls, profile=None, *, human_approved=True):
+    def approve_so2(cls, profile=None, *, human_approved=True, sealed_timing=True):
         profile = profile or cls.base_profile()
-        timing = cls.timing("SO2")
+        timing = cls.timing("SO2", sealed=sealed_timing)
         return approve_channel_calibration(
             profile,
             channel="SO2",
@@ -113,7 +122,7 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
             confidence=0.8,
             human_approved=human_approved,
             reviewer_id="reviewer",
-            review_time="2026-08-27T17:40:00+08:00",
+            review_time="2026-08-28T09:00:00+08:00",
         )
 
     def test_review_record_and_profile_remain_non_activating(self):
@@ -125,7 +134,8 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
         self.assertFalse(result.review.residual_control_enabled)
         self.assertFalse(result.review.dcs_write_enabled)
         self.assertTrue(result.review.confidence_evidence_id)
-        self.assertFalse(result.review.metadata["confidence_candidate_is_not_probability"] is False)
+        self.assertTrue(result.review.metadata["confidence_candidate_is_not_probability"])
+        self.assertTrue(result.review.metadata["timing_extraction_profile_reviewed"])
         self.assertFalse(result.profile.can_enable_learning)
         self.assertFalse(result.profile.can_enable_residual)
         self.assertFalse(result.profile.can_enable_dcs)
@@ -134,7 +144,11 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.approve_so2(human_approved=False)
 
-    def test_legacy_local_gain_profiles_migrate_to_v3(self):
+    def test_unsealed_timing_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.approve_so2(sealed_timing=False)
+
+    def test_legacy_local_gain_profiles_migrate_to_current_version(self):
         for legacy in (
             LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION,
             LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_VERSION,
@@ -142,10 +156,7 @@ class Scheme2ChannelCalibrationReviewBoundaryTest(unittest.TestCase):
             payload = self.base_profile().to_dict()
             payload["semantics_version"] = legacy
             restored = DualResponseCalibrationProfile.from_dict(payload)
-            self.assertEqual(
-                restored.semantics_version,
-                DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION,
-            )
+            self.assertEqual(restored.semantics_version, DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION)
             self.assertEqual(restored.so2.status, CHANNEL_LOCAL_GAIN_READY)
             self.assertEqual(restored.ph.status, CHANNEL_LOCAL_GAIN_READY)
 
