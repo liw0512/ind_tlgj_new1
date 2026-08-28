@@ -98,6 +98,8 @@ class Scheme2DualResponseTest(unittest.TestCase):
         )
         result = adapter.update(self.runtime_state(), event)
         self.assertTrue(result.updated)
+        self.assertTrue(result.phi_updated)
+        self.assertTrue(result.confidence_updated)
         self.assertGreater(result.new_phi, 0.0)
         self.assertEqual(result.runtime_state.phi_live, -4.0)
         self.assertEqual(result.runtime_state.ph_valid_event_count, 1)
@@ -107,9 +109,17 @@ class Scheme2DualResponseTest(unittest.TestCase):
             "response_event_id": "S2-PH-RESP-00000002",
             "delta_ph": -0.2,
         })
-        rejected = adapter.update(result.runtime_state, wrong_direction)
-        self.assertFalse(rejected.updated)
-        self.assertEqual(rejected.reason, "PH_PHYSICAL_DIRECTION_VIOLATION")
+        conflict = adapter.update(result.runtime_state, wrong_direction)
+        self.assertTrue(conflict.updated)
+        self.assertFalse(conflict.phi_updated)
+        self.assertTrue(conflict.confidence_updated)
+        self.assertEqual(
+            conflict.reason,
+            "CONFIDENCE_DOWNGRADED_PHYSICAL_CONFLICT",
+        )
+        self.assertAlmostEqual(conflict.new_phi, result.new_phi)
+        self.assertLess(conflict.new_confidence, result.new_confidence)
+        self.assertEqual(conflict.runtime_state.ph_valid_event_count, 1)
 
     def test_ph_arbitration_scales_so2_residual_without_addition(self):
         arbiter = PHResidualArbiter(
