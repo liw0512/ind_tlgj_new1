@@ -57,6 +57,22 @@ from .dual_response_calibration_profile import (
     DualResponseChannelCalibration,
     build_calibration_profile_from_dual_bootstrap,
 )
+from .evidence_artifact_store import (
+    EVIDENCE_ARTIFACT_STORE_VERSION,
+    EvidenceArtifactLoadResult,
+    EvidenceArtifactLoader,
+    EvidenceArtifactStore,
+    EvidenceArtifactStoreWriteResult,
+)
+from .evidence_provenance_bundle import (
+    EVIDENCE_PROVENANCE_BUNDLE_VERSION,
+    DualResponseEvidenceProvenanceBundle,
+    EvidenceArtifactRef,
+    EvidenceProvenanceVerification,
+    build_evidence_provenance_bundle,
+    canonical_sha256,
+    verify_evidence_provenance_bundle,
+)
 from .episode_adapter import Scheme1EpisodeToMFACAdapter, adapt_episode_frame
 from .flow_trajectory_planner import (
     FLOW_TRAJECTORY_PLANNER_SEMANTICS_VERSION,
@@ -275,6 +291,8 @@ __all__ = [
     "PH_BOOTSTRAP_SEMANTICS_VERSION",
     "DUAL_RESPONSE_BOOTSTRAP_VERSION",
     "DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
+    "EVIDENCE_PROVENANCE_BUNDLE_VERSION",
+    "EVIDENCE_ARTIFACT_STORE_VERSION",
     "LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_VERSION",
     "LEGACY_DUAL_RESPONSE_CALIBRATION_PROFILE_V2_VERSION",
     "CHANNEL_CALIBRATION_REVIEW_VERSION",
@@ -346,6 +364,16 @@ __all__ = [
     "DualResponseChannelCalibration",
     "DualResponseCalibrationProfile",
     "build_calibration_profile_from_dual_bootstrap",
+    "EvidenceArtifactRef",
+    "DualResponseEvidenceProvenanceBundle",
+    "EvidenceProvenanceVerification",
+    "canonical_sha256",
+    "build_evidence_provenance_bundle",
+    "verify_evidence_provenance_bundle",
+    "EvidenceArtifactStoreWriteResult",
+    "EvidenceArtifactLoadResult",
+    "EvidenceArtifactStore",
+    "EvidenceArtifactLoader",
     "ObservedResponseTimingEvidence",
     "ChannelConfidenceEvidence",
     "ChannelCalibrationReviewRecord",
