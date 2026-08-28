@@ -1,0 +1,214 @@
+{
+  "semantics_version": "SCHEME2_HISTORICAL_BLOCKED_VALIDATION_AUDIT_V1_GRID_UNBOUND",
+  "audit_id": "MFAC-HISTORICAL-BLOCKED-VALIDATION-5553E529-20260828",
+  "source_file": "new_data_train_10s.csv",
+  "source_sha256": "5553e529b1f222544b40b9e31e992584e87b4c4c1cbb51eea2bf460595b3ea23",
+  "source_rows": 298875,
+  "source_time_range": [
+    "2026-06-14 00:00:00",
+    "2026-07-22 00:00:00"
+  ],
+  "status": "AUDIT_ONLY_REVIEW_REQUIRED",
+  "activation_status": "NOT_ACTIVATABLE",
+  "learning_permission": false,
+  "residual_control_permission": false,
+  "dcs_write_permission": false,
+  "purpose": "Test whether historical dual-response sensitivity candidates remain physically stable and useful when entire calendar-date blocks are withheld. Full-sample bootstrap alone is not sufficient for publication.",
+  "condition_snapshot_binding": {
+    "status": "UNBOUND_GRID_LEVEL",
+    "reason": "The source CSV has no historical condition_snapshot_version/condition_label binding. Current yyq_SO2 fixed-grid coordinates are reconstructable, but historical final condition labels are not invented.",
+    "publication_rule": "This audit cannot itself create a runtime HistoricalSensitivityMap. Canonical HistoricalEpisodeEngine output must be used for snapshot/context-bound retraining before publication review."
+  },
+  "audit_event_extraction": {
+    "status": "REPRODUCIBLE_AUDIT_EXTRACTION_NOT_CANONICAL_EPISODE_BINDING",
+    "selected_event_count": 493,
+    "independent_days": 36,
+    "action_boundary": "xstgjb_APL > 1 Hz, with a new segment also forced by timestamp gap > 20 s",
+    "duration_minutes": [5.0, 15.0],
+    "pre_quiet_minutes": 10.0,
+    "post_quiet_minutes": 20.0,
+    "continuity_max_gap_seconds": 20.0,
+    "baseline_ph_range": [6.0, 6.4],
+    "minimum_median_actual_flow_increase_m3_h": 40.0,
+    "delta_q_definition": "median actual supply flow during pump-active segment minus median actual supply flow during 10-minute pre-window",
+    "baseline_definition": "10-minute pre-action medians",
+    "response_definition": "13-17 minute post-action-start median minus pre-action median",
+    "grid_definition": "current plant yyq_SO2 fixed grid, 500-5000 mg/Nm3 in 100 mg/Nm3 steps",
+    "nuisance_adjustment_columns": [
+      "action duration",
+      "5-minute inlet SO2 pretrend",
+      "5-minute outlet SO2 pretrend",
+      "integrated extra slurry volume"
+    ],
+    "warning": "These are observational operator interventions. This extraction is used to audit temporal robustness; it does not prove a randomized causal derivative."
+  },
+  "blocked_validation": {
+    "split_unit": "CALENDAR_DATE",
+    "fold_count": 5,
+    "split_type": "CONTIGUOUS_DATE_BLOCK_HOLDOUT",
+    "holdout_leakage_policy": "No event from a holdout calendar date is used in that fold's fit.",
+    "holdout_prediction": "phi(work_point) * delta_q",
+    "baseline": "zero local slurry effect",
+    "skill_definition": "1 - MAE(linearized local-gain prediction) / MAE(zero-effect prediction)",
+    "review_thresholds_audit_only": {
+      "minimum_so2_holdout_physical_direction_rate": 0.8,
+      "minimum_ph_holdout_physical_direction_rate": 0.8,
+      "minimum_so2_center_fold_rate": 0.8,
+      "minimum_ph_center_fold_rate": 0.8,
+      "minimum_median_so2_zero_effect_skill": 0.0,
+      "minimum_median_ph_zero_effect_skill": 0.0,
+      "note": "These thresholds are explicit audit review criteria, not hidden plant/runtime defaults."
+    }
+  },
+  "model_complexity_policy": {
+    "selection_policy": "SIMPLEST_PASSING",
+    "ladder": [
+      "GRID_SCALAR: no work-point interaction; nuisance adjustment retained",
+      "GRID_INLET_SURFACE: delta-Q x inlet-SO2 interaction",
+      "GRID_INLET_PH_SURFACE: delta-Q x inlet-SO2 and pH interactions",
+      "GRID_FULL_SURFACE: higher-dimensional work-point interactions"
+    ],
+    "reason": "Within-grid continuous response surfaces are allowed only when date-blocked evidence supports them. Exact-state lookup is still forbidden; a validated scalar grid prior plus neighbor interpolation is a valid online mapping model."
+  },
+  "scalar_grid_results": [
+    {
+      "grid_id": "P10-S1",
+      "event_count": 56,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 0.25,
+      "ph_holdout_direction_rate": 0.696429,
+      "so2_center_fold_rate": 0.2,
+      "ph_center_fold_rate": 0.6,
+      "median_so2_zero_effect_skill": -0.096901,
+      "median_ph_zero_effect_skill": 0.317200,
+      "status": "BLOCKED_VALIDATION_REJECTED"
+    },
+    {
+      "grid_id": "P11-S1",
+      "event_count": 57,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 1.0,
+      "ph_holdout_direction_rate": 0.403509,
+      "so2_center_fold_rate": 1.0,
+      "ph_center_fold_rate": 0.4,
+      "median_so2_zero_effect_skill": 0.103513,
+      "median_ph_zero_effect_skill": -0.062255,
+      "status": "BLOCKED_VALIDATION_REJECTED",
+      "reason": "SO2 channel is temporally stable but pH channel is not. Dual-response publication therefore fails."
+    },
+    {
+      "grid_id": "P12-S1",
+      "event_count": 53,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 0.622642,
+      "ph_holdout_direction_rate": 0.471698,
+      "so2_center_fold_rate": 0.6,
+      "ph_center_fold_rate": 0.4,
+      "median_so2_zero_effect_skill": 0.513526,
+      "median_ph_zero_effect_skill": -0.242481,
+      "status": "BLOCKED_VALIDATION_REJECTED"
+    },
+    {
+      "grid_id": "P13-S1",
+      "event_count": 55,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 0.8,
+      "ph_holdout_direction_rate": 0.454545,
+      "so2_center_fold_rate": 0.8,
+      "ph_center_fold_rate": 0.6,
+      "median_so2_zero_effect_skill": 0.447522,
+      "median_ph_zero_effect_skill": 0.319253,
+      "status": "BLOCKED_VALIDATION_REJECTED",
+      "reason": "SO2 reaches the audit direction threshold, but pH changes sign across held-out date blocks. The previous full-sample P13 review candidacy must not be promoted."
+    },
+    {
+      "grid_id": "P14-S1",
+      "event_count": 50,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 1.0,
+      "ph_holdout_direction_rate": 0.7,
+      "so2_center_fold_rate": 1.0,
+      "ph_center_fold_rate": 0.8,
+      "median_so2_zero_effect_skill": 0.391709,
+      "median_ph_zero_effect_skill": 0.639794,
+      "status": "BLOCKED_VALIDATION_REJECTED",
+      "reason": "P14 is the strongest individual grid, but event-weighted pH holdout direction is only 70%, below the 80% dual-channel audit threshold."
+    },
+    {
+      "grid_id": "P15-S1",
+      "event_count": 36,
+      "evaluated_folds": 5,
+      "so2_holdout_direction_rate": 0.583333,
+      "ph_holdout_direction_rate": 0.416667,
+      "so2_center_fold_rate": 0.6,
+      "ph_center_fold_rate": 0.4,
+      "median_so2_zero_effect_skill": -0.270281,
+      "median_ph_zero_effect_skill": -0.041511,
+      "status": "BLOCKED_VALIDATION_REJECTED"
+    }
+  ],
+  "pooled_scalar_result": {
+    "event_count": 493,
+    "independent_days": 36,
+    "evaluated_folds": 5,
+    "holdout_events": 493,
+    "so2_holdout_direction_rate": 1.0,
+    "ph_holdout_direction_rate": 1.0,
+    "so2_center_fold_rate": 1.0,
+    "ph_center_fold_rate": 1.0,
+    "median_so2_zero_effect_skill": 0.127644,
+    "median_ph_zero_effect_skill": 0.355734,
+    "fold_phi_so2_centers": [
+      -0.00220117,
+      -0.00655063,
+      -0.01043152,
+      -0.00368491,
+      -0.00332911
+    ],
+    "fold_phi_ph_centers": [
+      0.00261745,
+      0.00115083,
+      0.00145891,
+      0.00064083,
+      0.00120075
+    ],
+    "status": "BLOCKED_VALIDATION_REVIEW_CANDIDATE_NOT_PUBLISHED",
+    "intended_role_if_later_reviewed": "LOW_CONFIDENCE_POOLED_FALLBACK_ONLY"
+  },
+  "complexity_findings": {
+    "P13-S1": {
+      "scalar": {"so2_direction": 0.8, "ph_direction": 0.454545, "so2_skill": 0.447522, "ph_skill": 0.319253},
+      "inlet_surface": {"so2_direction": 0.654545, "ph_direction": 0.581818, "so2_skill": 0.437763, "ph_skill": 0.268154},
+      "full_surface": {"so2_direction": 0.763636, "ph_direction": 0.509091, "so2_skill": -0.146910, "ph_skill": -0.458706}
+    },
+    "P14-S1": {
+      "scalar": {"so2_direction": 1.0, "ph_direction": 0.7, "so2_skill": 0.391709, "ph_skill": 0.639794},
+      "inlet_surface": {"so2_direction": 0.78, "ph_direction": 0.76, "so2_skill": 0.101989, "ph_skill": 0.543795},
+      "full_surface": {"so2_direction": 0.62, "ph_direction": 0.46, "so2_skill": -0.803197, "ph_skill": -2.574262}
+    },
+    "P15-S1": {
+      "scalar": {"so2_direction": 0.583333, "ph_direction": 0.416667, "so2_skill": -0.270281, "ph_skill": -0.041511},
+      "full_surface": {"so2_direction": 0.305556, "ph_direction": 0.416667, "so2_skill": -3.420779, "ph_skill": -4.617661}
+    },
+    "POOLED": {
+      "scalar": {"so2_direction": 1.0, "ph_direction": 1.0, "so2_skill": 0.127644, "ph_skill": 0.355734},
+      "inlet_surface": {"so2_direction": 0.799189, "ph_direction": 0.985801, "so2_skill": 0.156930, "ph_skill": 0.372607},
+      "inlet_ph_surface": {"so2_direction": 0.754564, "ph_direction": 0.851927, "so2_skill": 0.061016, "ph_skill": 0.168422},
+      "full_surface": {"so2_direction": 0.614604, "ph_direction": 0.746450, "so2_skill": 0.038459, "ph_skill": 0.194211}
+    }
+  },
+  "decision": {
+    "individual_grid_profiles_ready_for_publish_review": [],
+    "pooled_profile_ready_for_next_review_stage": ["POOLED_SCALAR"],
+    "historical_full_surface_policy": "DO_NOT_PROMOTE_FROM_FULL_SAMPLE_BOOTSTRAP_ALONE",
+    "online_mapping_implication": "Exact context/grid profiles remain preferred when they later pass blocked validation. Until then, a reviewed pooled fallback may initialize low-confidence MFAC state while Dynamic Qbase remains fully independent. No exact-state history match is required.",
+    "manual_local_step_role": "OPTIONAL_VALIDATION_OR_LOW_CONFIDENCE_SUPPLEMENT_NOT_BOOTSTRAP_PREREQUISITE"
+  },
+  "required_next_steps": [
+    "Run the same blocked validator on canonical HistoricalEpisodeEngine output with real condition_snapshot_version and mfac_context_id binding.",
+    "Do not publish P13/P14/P15 from the earlier full-sample audit; blocked validation has downgraded them.",
+    "Review pooled scalar fallback confidence and snapshot binding separately before creating any runtime HistoricalSensitivitySurface.",
+    "Accumulate additional historical/online evidence for per-context dual-channel stability; pH is currently the limiting channel in several grids.",
+    "Only increase within-grid model complexity when the simpler model has passed and the more complex model improves blocked validation without degrading physical direction."
+  ]
+}
