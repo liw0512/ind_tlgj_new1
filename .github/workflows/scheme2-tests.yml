@@ -37,3 +37,7 @@ jobs:
       - name: Run Scheme2 unittest suite
         run: |
           python -m unittest discover -s tests -p 'test_scheme2_*.py' -v
+
+      - name: Run shared snapshot aggregation regression
+        run: |
+          python -m unittest discover -s tests -p 'test_snapshot_aggregation.py' -v
