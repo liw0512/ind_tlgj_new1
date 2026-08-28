@@ -1,11 +1,7 @@
 import unittest
 
-from system.model.map_control.mfac_model.channel_calibration_review import (
-    ObservedResponseTimingEvidence,
-)
-from system.model.map_control.mfac_model.channel_confidence_evidence import (
-    build_channel_confidence_evidence,
-)
+from system.model.map_control.mfac_model.channel_calibration_review import ObservedResponseTimingEvidence
+from system.model.map_control.mfac_model.channel_confidence_evidence import build_channel_confidence_evidence
 from system.model.map_control.mfac_model.local_gain_cohort_review import (
     LocalGainCohortConsistencyConfig,
     LocalGainCohortReview,
@@ -18,7 +14,6 @@ class Scheme2ChannelConfidenceEvidenceTest(unittest.TestCase):
 
     @staticmethod
     def consistency_config():
-        # Unit-test values only; not plant calibration.
         return LocalGainCohortConsistencyConfig(
             max_relative_mad_delta_q=0.10,
             max_relative_mad_phi_so2=0.10,
@@ -62,6 +57,8 @@ class Scheme2ChannelConfidenceEvidenceTest(unittest.TestCase):
                     condition_snapshot_version="v001",
                     condition_label="17",
                     base_condition_id="17",
+                    grid_id="P1-S17",
+                    policy_region_id="R_0017",
                     mfac_context_id="CTX",
                     action_start_time="2026-08-%02dT10:00:00+08:00" % (26 + min(index, 3)),
                     action_source="MANUAL_LOCAL_STEP_IDENTIFICATION_REVIEWED",
@@ -104,12 +101,7 @@ class Scheme2ChannelConfidenceEvidenceTest(unittest.TestCase):
             channel=channel,
             condition_snapshot_version="v001",
             mfac_context_id="CTX",
-            delay_profile=DelayProfile(
-                onset_p50_seconds=100.0,
-                onset_p90_seconds=130.0,
-                response_p50_seconds=500.0,
-                response_p90_seconds=650.0,
-            ),
+            delay_profile=DelayProfile(100.0, 130.0, 500.0, 650.0),
             event_ids=event_ids,
             observed_event_count=len(event_ids),
             independent_days=2,
@@ -141,37 +133,18 @@ class Scheme2ChannelConfidenceEvidenceTest(unittest.TestCase):
         self.assertTrue(evidence.metadata["timing_extraction_profile_reviewed"])
 
     def test_lower_timing_coverage_lowers_candidate(self):
-        full = self.build(
-            "PH",
-            self.timing("PH", ("E1", "E2", "E3", "E4")),
-            "CONF-PH-FULL",
-        )
-        partial = self.build(
-            "PH",
-            self.timing("PH", ("E1", "E2")),
-            "CONF-PH-PARTIAL",
-        )
+        full = self.build("PH", self.timing("PH", self.EVENT_IDS), "CONF-PH-FULL")
+        partial = self.build("PH", self.timing("PH", ("E1", "E2")), "CONF-PH-PARTIAL")
         self.assertGreater(full.timing_coverage_ratio, partial.timing_coverage_ratio)
-        self.assertGreaterEqual(
-            full.conservative_confidence_candidate,
-            partial.conservative_confidence_candidate,
-        )
+        self.assertGreaterEqual(full.conservative_confidence_candidate, partial.conservative_confidence_candidate)
 
     def test_timing_outside_cohort_is_rejected(self):
         with self.assertRaises(ValueError):
-            self.build(
-                "SO2",
-                self.timing("SO2", ("E1", "OTHER")),
-                "CONF-BAD",
-            )
+            self.build("SO2", self.timing("SO2", ("E1", "OTHER")), "CONF-BAD")
 
     def test_unreviewed_timing_provenance_is_rejected(self):
         with self.assertRaises(ValueError):
-            self.build(
-                "SO2",
-                self.timing("SO2", sealed=False),
-                "CONF-UNSEALED-TIMING",
-            )
+            self.build("SO2", self.timing("SO2", sealed=False), "CONF-UNSEALED-TIMING")
 
     def test_unapproved_cohort_copy_is_rejected(self):
         events = self.approved_events()
