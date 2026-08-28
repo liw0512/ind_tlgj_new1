@@ -292,6 +292,80 @@ class Scheme2EvidenceArtifactStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             loaded.to_runtime_config()
 
+    def test_repeated_identical_save_is_idempotent(self):
+        bundle, events, raw, timings, confidences, profile = self.chain("STORE-IDEMPOTENT")
+        store = EvidenceArtifactStore(self.root)
+        first = store.save(
+            bundle,
+            cohort_approved_events=events,
+            raw_trace_bundles=raw,
+            timing_evidence=timings,
+            confidence_evidence=confidences,
+            calibration_profile=profile,
+        )
+        before = Path(first.manifest_path).read_text(encoding="utf-8")
+        second = store.save(
+            bundle,
+            cohort_approved_events=events,
+            raw_trace_bundles=raw,
+            timing_evidence=timings,
+            confidence_evidence=confidences,
+            calibration_profile=profile,
+        )
+        after = Path(second.manifest_path).read_text(encoding="utf-8")
+        self.assertEqual(before, after)
+        self.assertEqual(first.object_count, second.object_count)
+
+    def test_same_bundle_id_cannot_overwrite_different_review_chain(self):
+        bundle, events, raw, timings, confidences, profile = self.chain("STORE-IMMUTABLE")
+        store = EvidenceArtifactStore(self.root)
+        store.save(
+            bundle,
+            cohort_approved_events=events,
+            raw_trace_bundles=raw,
+            timing_evidence=timings,
+            confidence_evidence=confidences,
+            calibration_profile=profile,
+        )
+        events[0].delta_so2 = -9.0
+        changed = build_evidence_provenance_bundle(
+            bundle_id="STORE-IMMUTABLE",
+            cohort_approved_events=events,
+            raw_trace_bundles=raw,
+            timing_evidence=timings,
+            confidence_evidence=confidences,
+            calibration_profile=profile,
+        )
+        with self.assertRaises(ValueError):
+            store.save(
+                changed,
+                cohort_approved_events=events,
+                raw_trace_bundles=raw,
+                timing_evidence=timings,
+                confidence_evidence=confidences,
+                calibration_profile=profile,
+            )
+        loaded = EvidenceArtifactLoader(self.root).load("STORE-IMMUTABLE")
+        self.assertTrue(loaded.loaded)
+        self.assertEqual(loaded.cohort_approved_events[0].delta_so2, -8.0)
+
+    def test_corrupt_existing_manifest_is_not_silently_overwritten(self):
+        bundle, written = self.save_chain("STORE-CORRUPT-MANIFEST")
+        manifest_path = Path(written.manifest_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["activation_status"] = "ENABLED"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        bundle2, events, raw, timings, confidences, profile = self.chain(bundle.bundle_id)
+        with self.assertRaises(ValueError):
+            EvidenceArtifactStore(self.root).save(
+                bundle2,
+                cohort_approved_events=events,
+                raw_trace_bundles=raw,
+                timing_evidence=timings,
+                confidence_evidence=confidences,
+                calibration_profile=profile,
+            )
+
     def test_tampered_content_addressed_object_is_rejected(self):
         bundle, _ = self.save_chain("STORE-TAMPER")
         digest = bundle.cohort_approved_events_ref.sha256
@@ -299,7 +373,6 @@ class Scheme2EvidenceArtifactStoreTest(unittest.TestCase):
         payload = json.loads(object_path.read_text(encoding="utf-8"))
         payload[0]["delta_so2"] = -9.0
         object_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-
         loaded = EvidenceArtifactLoader(self.root).load(bundle.bundle_id)
         self.assertFalse(loaded.loaded)
         self.assertEqual(loaded.status, "EVIDENCE_INTEGRITY_FAILURE")
@@ -311,7 +384,6 @@ class Scheme2EvidenceArtifactStoreTest(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["provenance_bundle_sha256"] = "0" * 64
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-
         loaded = EvidenceArtifactLoader(self.root).load(bundle.bundle_id)
         self.assertFalse(loaded.loaded)
         self.assertEqual(loaded.status, "EVIDENCE_INTEGRITY_FAILURE")
@@ -322,7 +394,6 @@ class Scheme2EvidenceArtifactStoreTest(unittest.TestCase):
         digest = bundle.calibration_profile_ref.sha256
         object_path = self.root / "objects" / digest[:2] / (digest + ".json")
         object_path.unlink()
-
         loaded = EvidenceArtifactLoader(self.root).load(bundle.bundle_id)
         self.assertFalse(loaded.loaded)
         self.assertTrue(any("object is missing" in reason for reason in loaded.reasons))
