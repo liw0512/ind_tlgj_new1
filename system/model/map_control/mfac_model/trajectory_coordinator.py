@@ -10,6 +10,7 @@ from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
 )
+from .historical_prior_artifact import load_reviewed_prior_map_for_snapshot
 from .historical_runtime_prior import resolve_reviewed_scalar_runtime_prior
 from .historical_sensitivity_map import (
     HistoricalSensitivityMap,
@@ -31,18 +32,17 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V7_WEEKLY_SNAPSHOT_HANDOFF"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V8_VERSION_BOUND_PRIOR"
 )
 
 
 class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
     """Run one SO2-led coordinator and append non-authoritative trajectory advice.
 
-    The historical map is filtered to reviewed scalar runtime priors.  The
-    PendingDoseGuard is evaluated before the base pH arbitration stage through
-    the protected ``_ph_arbitration_context`` hook.  A separate permission gate
-    governs *when* the already pH-arbitrated desired residual may replace the
-    current held residual.
+    The historical map is filtered to reviewed scalar runtime priors.  If a map
+    is not explicitly injected for a static test, the coordinator lazily loads
+    the reviewed map bound by the MFAC manifest of the active condition snapshot.
+    Thus Process4MapControl does not own a second historical-prior cache.
 
     Seven-day offline retraining and online adaptation are deliberately separate
     lifecycles.  Exact persisted online state wins first.  Across a new
@@ -84,6 +84,15 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
         self._trajectory_context_key: Optional[Tuple[str, str]] = None
         self._historical_sensitivity_map = historical_sensitivity_map
+        self._historical_map_explicit = historical_sensitivity_map is not None
+        self._historical_map_snapshot_loaded = (
+            historical_sensitivity_map.condition_snapshot_version
+            if historical_sensitivity_map is not None
+            else ""
+        )
+        self._historical_map_source = (
+            "EXPLICIT_INJECTION" if historical_sensitivity_map is not None else "NONE"
+        )
         self._historical_query: Optional[HistoricalSensitivityQuery] = None
         self._last_historical_mapping = None
         self._last_cross_snapshot_handoff: Optional[Dict[str, Any]] = None
@@ -104,7 +113,34 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         self,
         value: Optional[HistoricalSensitivityMap],
     ) -> None:
+        """Explicit injection for static/test integrations; disables lazy loading."""
         self._historical_sensitivity_map = value
+        self._historical_map_explicit = value is not None
+        self._historical_map_snapshot_loaded = (
+            value.condition_snapshot_version if value is not None else ""
+        )
+        self._historical_map_source = (
+            "EXPLICIT_INJECTION" if value is not None else "NONE"
+        )
+        self._last_historical_mapping = None
+
+    def _ensure_version_bound_historical_map(self, snapshot: str) -> None:
+        if self._historical_map_explicit:
+            return
+        snapshot_text = str(snapshot or "").strip()
+        if not snapshot_text:
+            self._historical_sensitivity_map = None
+            self._historical_map_snapshot_loaded = ""
+            self._historical_map_source = "NONE"
+            return
+        if self._historical_map_snapshot_loaded == snapshot_text:
+            return
+        mapping = load_reviewed_prior_map_for_snapshot(snapshot_text)
+        self._historical_sensitivity_map = mapping
+        self._historical_map_snapshot_loaded = snapshot_text
+        self._historical_map_source = (
+            "VERSION_MANIFEST_REVIEWED_MAP" if mapping is not None else "NONE"
+        )
         self._last_historical_mapping = None
 
     def set_runtime_state(self, runtime_state, *, residual_mfac_hold: float = 0.0) -> None:
@@ -243,6 +279,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
 
     def _select_context(self, snapshot: str, context_id: str) -> str:
         self._last_cross_snapshot_handoff = None
+        self._ensure_version_bound_historical_map(snapshot)
         status = super()._select_context(snapshot, context_id)
         if not snapshot or not context_id:
             return status
@@ -450,6 +487,10 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                     self._last_historical_mapping.to_dict()
                     if self._last_historical_mapping is not None
                     else None
+                ),
+                "historical_prior_map_source": self._historical_map_source,
+                "historical_prior_map_snapshot_loaded": (
+                    self._historical_map_snapshot_loaded
                 ),
                 "historical_runtime_prior_policy": "REVIEWED_SCALAR_ONLY",
                 "historical_prior_replaces_qbase": False,
