@@ -1,12 +1,16 @@
 import unittest
 
 from system.model.Process4MapControl import ProcessForMapConsole
+from system.model.config.mfac_paths import MFAC_ACTIVE_VERSION_FILE
 from system.model.config.mfac_training_lifecycle import (
     INCREMENTAL_OFFLINE_TRAINING_DAYS,
     INITIAL_OFFLINE_TRAINING_DAYS,
     training_days_for_mode,
 )
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG, TrainingConfig
+from system.model.map_control.condition_model.condition_config import (
+    ONLINE_CONDITION_CLASSIFY_CONFIG,
+)
 from system.model.map_control.mfac_model.offline_training_config import (
     OFFLINE_ONLINE_LIFECYCLE_CONTRACT,
 )
@@ -75,6 +79,16 @@ class Scheme2TrainingConfigSingleSourceTest(unittest.TestCase):
             OFFLINE_ONLINE_LIFECYCLE_CONTRACT["online_update_trigger"],
             "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
         )
+
+    def test_condition_module_uses_canonical_mfac_active_path_without_reload_override(self):
+        integrated = ONLINE_CONDITION_CLASSIFY_CONFIG[
+            "slurry_policy_online"
+        ]["integrated_version"]
+        self.assertEqual(
+            integrated["active_version_file"],
+            str(MFAC_ACTIVE_VERSION_FILE),
+        )
+        self.assertNotIn("reload_check_interval_seconds", integrated)
 
 
 if __name__ == "__main__":
