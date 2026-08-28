@@ -140,6 +140,28 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             OFFLINE_ONLINE_LIFECYCLE_CONTRACT["online_update_trigger"],
             "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
         )
+        self.assertTrue(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT["cross_snapshot_online_state_reuse"]
+        )
+        self.assertEqual(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT[
+                "cross_snapshot_online_state_reuse_policy"
+            ],
+            "SAME_MFAC_CONTEXT_AND_GRID_ONLY",
+        )
+        self.assertFalse(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT["cross_snapshot_residual_reuse"]
+        )
+        self.assertFalse(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT[
+                "cross_snapshot_pending_or_hold_reuse"
+            ]
+        )
+        self.assertFalse(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT[
+                "historical_prior_may_overwrite_online_evidence"
+            ]
+        )
 
     def test_snapshot_label_mismatch_fails_before_mfac_training(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -182,7 +204,24 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             self.assertFalse(manifest["runtime_prior_reviewed"])
             self.assertFalse(manifest["runtime_prior_allowed"])
             self.assertTrue(manifest["persisted_online_state_precedence"])
-            self.assertFalse(manifest["cross_snapshot_online_state_reuse"])
+            self.assertTrue(manifest["cross_snapshot_online_state_reuse"])
+            self.assertEqual(
+                manifest["cross_snapshot_online_state_reuse_policy"],
+                "SAME_MFAC_CONTEXT_AND_GRID_ONLY",
+            )
+            self.assertTrue(
+                manifest["cross_snapshot_online_state_requires_runtime_grid_id"]
+            )
+            self.assertFalse(manifest["cross_snapshot_residual_reuse"])
+            self.assertFalse(manifest["cross_snapshot_pending_or_hold_reuse"])
+            self.assertFalse(
+                manifest["historical_prior_may_overwrite_online_evidence"]
+            )
+            self.assertEqual(summary["periodic_offline_retrain_days"], 7)
+            self.assertEqual(
+                summary["online_update_trigger"],
+                "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
+            )
 
     def test_incremental_training_remaps_and_keeps_previous_episode_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
