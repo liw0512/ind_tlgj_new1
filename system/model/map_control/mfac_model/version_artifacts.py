@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Version artifacts for MFAC replacing the historical second module."""
+"""Version artifacts for the canonical Scheme-2 MFAC second module.
+
+The version builder is part of the Process4MapControl training lifecycle.  The
+first module has already produced a condition-labelled CSV and immutable
+ConditionSnapshot; this builder now executes the real MFAC offline evidence and
+historical-prior training before writing the integrated-version manifest.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from .mfac_primary_config import (
     MFAC_PRIMARY_ARTIFACT_CONFIG,
     MFAC_PRIMARY_MODE,
 )
+from .offline_version_training import train_mfac_offline_version
 
 
 def sha256_file(path: Path) -> str:
@@ -44,6 +51,11 @@ def _time_text(value: Any) -> str:
     return pd.Timestamp(timestamp).isoformat()
 
 
+def _existing_sha(path_text: Any) -> str:
+    path = Path(str(path_text or ""))
+    return sha256_file(path) if path.is_file() else ""
+
+
 def build_mfac_version_artifact(
     *,
     input_csv: str,
@@ -57,7 +69,7 @@ def build_mfac_version_artifact(
         raise FileNotFoundError("condition snapshot not found: %s" % condition_path)
     version = read_condition_version(condition_path)
 
-    frame = pd.read_csv(input_csv)
+    frame = pd.read_csv(input_csv, low_memory=False)
     if "date" not in frame.columns:
         raise ValueError("MFAC version input must contain date")
     timestamps = pd.to_datetime(frame["date"], errors="coerce").dropna()
@@ -68,6 +80,17 @@ def build_mfac_version_artifact(
     snapshot_dir = root / "snapshots" / version
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
+    # This is the actual second-module offline train.  Any first-module version
+    # mismatch or historical evidence failure aborts the builder before the
+    # integrated version can be activated.
+    offline_training = train_mfac_offline_version(
+        input_csv=str(Path(input_csv).resolve()),
+        output_root=str(root),
+        condition_snapshot=str(condition_path),
+        mode=str(mode).upper(),
+        previous_snapshot=previous_snapshot,
+    )
+
     plant_snapshot = plant_contract_snapshot()
     target_contract = plant_snapshot["target_supply_flow"]
     runtime_semantics = (
@@ -75,6 +98,7 @@ def build_mfac_version_artifact(
         % (target_contract["minimum"], target_contract["maximum"])
     )
 
+    offline_report_path = offline_training["offline_training_report_path"]
     summary = {
         "artifact_type": "MFAC_SECOND_MODULE_VERSION",
         "version": version,
@@ -86,7 +110,20 @@ def build_mfac_version_artifact(
         "condition_snapshot_path": str(condition_path),
         "condition_snapshot_sha256": sha256_file(condition_path),
         "previous_snapshot": str(previous_snapshot or ""),
-        "bootstrap_status": "NOT_ACTIVATED_IN_PRIMARY_REPLACEMENT",
+        "offline_training_status": offline_training["status"],
+        "offline_training_report_path": str(offline_report_path),
+        "offline_training_report_sha256": _existing_sha(offline_report_path),
+        "current_valid_episode_count": int(
+            offline_training["current_valid_episode_count"]
+        ),
+        "cumulative_valid_episode_count": int(
+            offline_training["cumulative_valid_episode_count"]
+        ),
+        "bootstrap_status": "HISTORICAL_PRIOR_REVIEW_REQUIRED",
+        "runtime_prior_reviewed": False,
+        "runtime_prior_allowed": False,
+        "online_runtime_state_overwrite": False,
+        "online_update_trigger": "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
         "learn_enabled": False,
         "residual_enabled": False,
         "dcs_write_enabled": False,
@@ -102,10 +139,35 @@ def build_mfac_version_artifact(
         "condition_snapshot_path": str(condition_path),
         "condition_snapshot_sha256": summary["condition_snapshot_sha256"],
         "training_summary_path": str(summary_path),
+        "training_summary_sha256": sha256_file(summary_path),
+        "offline_training_report_path": str(offline_report_path),
+        "offline_training_report_sha256": summary["offline_training_report_sha256"],
+        "historical_valid_episodes_path": offline_training[
+            "historical_valid_episodes_path"
+        ],
+        "historical_valid_episodes_sha256": _existing_sha(
+            offline_training["historical_valid_episodes_path"]
+        ),
+        "offline_effective_config_path": offline_training[
+            "offline_effective_config_path"
+        ],
+        "offline_effective_config_sha256": _existing_sha(
+            offline_training["offline_effective_config_path"]
+        ),
+        "offline_training_status": offline_training["status"],
         "runtime_semantics": runtime_semantics,
         "plant_contract_snapshot": plant_snapshot,
         "legacy_second_module_present": False,
         "primary_mode": MFAC_PRIMARY_MODE,
+        "historical_prior_role": "REVIEW_CANDIDATE_ONLY",
+        "runtime_prior_reviewed": False,
+        "runtime_prior_allowed": False,
+        "persisted_online_state_precedence": True,
+        "runtime_state_namespace": [
+            "condition_snapshot_version",
+            "mfac_context_id",
+        ],
+        "cross_snapshot_online_state_reuse": False,
         "learn_enabled": False,
         "residual_enabled": False,
         "dcs_write_enabled": False,
@@ -116,6 +178,7 @@ def build_mfac_version_artifact(
     manifest["manifest_path"] = str(manifest_path)
     manifest["manifest_sha256"] = sha256_file(manifest_path)
     manifest["training_summary"] = summary
+    manifest["offline_training"] = offline_training
     return manifest
 
 
