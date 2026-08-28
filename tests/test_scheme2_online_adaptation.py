@@ -19,6 +19,7 @@ class MFACOnlineAdapterTest(unittest.TestCase):
             phi_lower_bound=-10.0,
             phi_upper_bound=-0.1,
             max_single_update_abs=max_update,
+            confidence_reference_event_count=5.0,
         )
 
     @staticmethod
@@ -50,23 +51,50 @@ class MFACOnlineAdapterTest(unittest.TestCase):
         values.update(overrides)
         return ActionResponseEvent(**values)
 
-    def test_eligible_event_updates_live_phi(self):
+    def test_eligible_event_updates_live_phi_and_confidence(self):
         adapter = MFACOnlineAdapter(self.config())
         result = adapter.update(self.state(), self.event())
 
         self.assertTrue(result.updated)
+        self.assertTrue(result.phi_updated)
+        self.assertTrue(result.confidence_updated)
         self.assertEqual(result.reason, "UPDATED")
         self.assertAlmostEqual(result.old_phi, -5.0)
         self.assertAlmostEqual(result.new_phi, -4.92)
         self.assertAlmostEqual(result.applied_update, 0.08)
+        self.assertGreater(result.new_confidence, 0.8)
         self.assertEqual(result.runtime_state.valid_event_count, 11)
         self.assertEqual(result.runtime_state.last_event_id, "E-11")
         self.assertEqual(
             result.runtime_state.last_update_time,
             "2026-08-26T10:01:00+08:00",
         )
+        evidence = result.runtime_state.metadata["online_confidence_so2"]
+        self.assertEqual(evidence["effective_event_count"], 1.0)
+        self.assertEqual(evidence["direction_consistency"], 1.0)
 
-    def test_ineligible_event_cannot_update_phi(self):
+    def test_clean_wrong_direction_downgrades_confidence_without_flipping_phi(self):
+        adapter = MFACOnlineAdapter(self.config())
+        state = self.state()
+        result = adapter.update(
+            state,
+            self.event(delta_so2=8.0, phi_event=4.0),
+        )
+
+        self.assertTrue(result.updated)
+        self.assertFalse(result.phi_updated)
+        self.assertTrue(result.confidence_updated)
+        self.assertEqual(result.reason, "CONFIDENCE_DOWNGRADED_PHYSICAL_CONFLICT")
+        self.assertEqual(result.new_phi, -5.0)
+        self.assertLess(result.new_confidence, 0.8)
+        self.assertEqual(result.runtime_state.valid_event_count, 10)
+        self.assertEqual(result.runtime_state.last_event_id, "E-11")
+        self.assertEqual(
+            result.runtime_state.metadata["online_confidence_so2"]["direction_consistency"],
+            0.0,
+        )
+
+    def test_ineligible_event_cannot_update_phi_or_confidence(self):
         adapter = MFACOnlineAdapter(self.config())
         result = adapter.update(
             self.state(),
@@ -74,8 +102,10 @@ class MFACOnlineAdapterTest(unittest.TestCase):
         )
 
         self.assertFalse(result.updated)
+        self.assertFalse(result.confidence_updated)
         self.assertEqual(result.reason, "EVENT_NOT_LEARNING_ELIGIBLE")
         self.assertEqual(result.new_phi, -5.0)
+        self.assertEqual(result.new_confidence, 0.8)
         self.assertEqual(result.runtime_state.valid_event_count, 10)
 
     def test_context_mismatch_is_rejected(self):
@@ -107,6 +137,7 @@ class MFACOnlineAdapterTest(unittest.TestCase):
         self.assertFalse(result.updated)
         self.assertEqual(result.reason, "DUPLICATE_EVENT")
         self.assertEqual(result.new_phi, -5.0)
+        self.assertEqual(result.new_confidence, 0.8)
 
     def test_single_update_limit_is_enforced(self):
         adapter = MFACOnlineAdapter(
