@@ -167,7 +167,7 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
             )
             self.assertAlmostEqual(result.residual_hold.held_residual, 3.0)
 
-    def test_trajectory_gate_allows_one_clean_initial_residual_decision(self):
+    def test_trajectory_gate_allows_one_safe_initial_residual_decision(self):
         with tempfile.TemporaryDirectory() as root:
             coordinator = self.trajectory(self.config(), root, initial_hold=0.0)
             result = self.cycle(
@@ -177,12 +177,16 @@ class Scheme2PendingIncrementalRuntimeTest(unittest.TestCase):
                 actual_flow=30.0,
                 outlet_so2=28.0,
             )
+            # SO2 alone wants +4, but pH arbitration sees 6.2 + 0.1*4 = 6.6
+            # and scales the first safe residual to +2 before the cadence gate.
             self.assertAlmostEqual(result.residual_decision.candidate_residual, 4.0)
+            self.assertEqual(result.ph_arbitration.status, "SCALE")
+            self.assertAlmostEqual(result.ph_arbitration.final_residual, 2.0)
             self.assertEqual(
                 result.metadata["residual_decision_permission"]["status"],
                 "ALLOW_INITIAL_DECISION",
             )
-            self.assertAlmostEqual(result.residual_hold.held_residual, 4.0)
+            self.assertAlmostEqual(result.residual_hold.held_residual, 2.0)
             self.assertTrue(coordinator.residual_decision_gate.awaiting_response)
             # Target for this cycle was calculated from the previous held value;
             # the new residual becomes the target input on the next cycle.
