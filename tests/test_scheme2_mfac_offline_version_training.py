@@ -6,7 +6,7 @@ import unittest
 import pandas as pd
 
 from system.model.config.plant_config import PLANT_CONFIG
-from system.model.config.process4map_config import PROCESS4MAP_CONFIG
+from system.model.config.process4map_config import PROCESS4MAP_CONFIG, TrainingConfig
 from system.model.map_control.mfac_model.historical_episode_engine.exceptions import (
     ConfigurationError,
 )
@@ -123,12 +123,38 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             ]
         )
 
-    def test_process4_periodic_offline_refresh_is_seven_days(self):
+    def test_process4_offline_cadence_is_single_source_7d_then_3d(self):
         training = PROCESS4MAP_CONFIG.training
         self.assertEqual(training.initial_training_days, 7)
-        self.assertEqual(training.incremental_trigger_interval_days, 7)
-        self.assertEqual(training.incremental_training_days, 7)
-        self.assertEqual(training.incremental_minimum_records, 54_432)
+        self.assertEqual(training.incremental_training_days, 3)
+        self.assertEqual(training.incremental_trigger_interval_days, 3)
+        self.assertEqual(training.initial_minimum_records, 54_432)
+        self.assertEqual(training.incremental_minimum_records, 23_328)
+        self.assertEqual(training.initial_database_record_limit, 0)
+        self.assertEqual(training.incremental_database_record_limit, 0)
+
+        # These are compatibility calculations, no longer independently
+        # configurable dataclass fields that may drift from 7d/3d.
+        for name in (
+            "initial_training_days",
+            "incremental_training_days",
+            "incremental_trigger_interval_days",
+            "initial_minimum_records",
+            "incremental_minimum_records",
+            "initial_database_record_limit",
+            "incremental_database_record_limit",
+        ):
+            self.assertNotIn(name, TrainingConfig.__dataclass_fields__)
+
+        self.assertEqual(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT["initial_training_days"], 7
+        )
+        self.assertEqual(
+            OFFLINE_ONLINE_LIFECYCLE_CONTRACT["incremental_training_days"], 3
+        )
+        self.assertNotIn(
+            "periodic_offline_retrain_days", OFFLINE_ONLINE_LIFECYCLE_CONTRACT
+        )
         self.assertEqual(
             OFFLINE_ONLINE_LIFECYCLE_CONTRACT["offline_order"],
             ["CONDITION", "MFAC"],
@@ -217,7 +243,10 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             self.assertFalse(
                 manifest["historical_prior_may_overwrite_online_evidence"]
             )
-            self.assertEqual(summary["periodic_offline_retrain_days"], 7)
+            self.assertEqual(summary["required_training_days"], 7)
+            self.assertEqual(summary["initial_training_days"], 7)
+            self.assertEqual(summary["incremental_training_days"], 3)
+            self.assertNotIn("periodic_offline_retrain_days", summary)
             self.assertEqual(
                 summary["online_update_trigger"],
                 "VALID_COMPLETED_CAUSAL_RESPONSE_EVENT",
@@ -252,6 +281,10 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             self.assertEqual(
                 report["carry_forward"]["status"],
                 "PREVIOUS_EPISODES_REMAPPED",
+            )
+            self.assertEqual(report["lifecycle_contract"]["initial_training_days"], 7)
+            self.assertEqual(
+                report["lifecycle_contract"]["incremental_training_days"], 3
             )
             stored = pd.read_csv(report["historical_valid_episodes_path"])
             self.assertEqual(stored.loc[0, "condition_snapshot_version"], "v002")
