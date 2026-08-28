@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
+from .decision_permission_gate import ResidualDecisionPermissionGate
 from .flow_trajectory_planner import (
     FlowTrajectoryPlanner,
     FlowTrajectoryPlannerConfig,
@@ -20,6 +21,7 @@ from .pending_dose_guard import (
     PendingDoseGuardConfig,
     PendingDoseGuardDecision,
 )
+from .residual_control import MFACResidualDecision
 from .runtime_coordinator import (
     Scheme2RuntimeCoordinator,
     Scheme2RuntimeCoordinatorConfig,
@@ -29,7 +31,7 @@ from .runtime_store import Scheme2RuntimeStore
 
 
 TRAJECTORY_SHADOW_COORDINATOR_VERSION = (
-    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V5_ONLINE_EVIDENCE_OWNERSHIP"
+    "SCHEME2_TRAJECTORY_SHADOW_COORDINATOR_V6_STEP_AND_OBSERVE"
 )
 
 
@@ -38,13 +40,13 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
 
     The historical map is filtered to reviewed scalar runtime priors.  The
     PendingDoseGuard is evaluated before the base pH arbitration stage through
-    the protected ``_ph_arbitration_context`` hook.  Thus there remains exactly
-    one residual controller and one pH arbiter.
+    the protected ``_ph_arbitration_context`` hook.  A separate permission gate
+    governs *when* the already pH-arbitrated desired residual may replace the
+    current held residual.
 
-    Historical priors own a channel only until the first clean online evidence
-    for that channel.  This includes a clean wrong-direction event that updates
-    confidence but deliberately leaves phi unchanged; such negative evidence
-    must not be erased by re-seeding the historical confidence next cycle.
+    There remains exactly one residual controller, one pH arbiter and one held
+    residual.  Planner ``min_hold_seconds`` is also the single source for the
+    residual decision HOLD duration.
     """
 
     def __init__(
@@ -69,6 +71,9 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             trajectory_planner_config,
             config.continuous_target,
         )
+        self.residual_decision_gate = ResidualDecisionPermissionGate(
+            min_hold_seconds=float(trajectory_planner_config.min_hold_seconds)
+        )
         self._trajectory_context_key: Optional[Tuple[str, str]] = None
         self._historical_sensitivity_map = historical_sensitivity_map
         self._historical_query: Optional[HistoricalSensitivityQuery] = None
@@ -90,7 +95,6 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         self,
         value: Optional[HistoricalSensitivityMap],
     ) -> None:
-        """Attach/detach a historical map; runtime still applies scalar review gate."""
         self._historical_sensitivity_map = value
         self._last_historical_mapping = None
 
@@ -101,6 +105,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
         self.pending_dose_guard.reset("RUNTIME_STATE_SET")
         self.trajectory_planner.reset()
+        self.residual_decision_gate.reset("RUNTIME_STATE_SET")
         self._pending_for_current_cycle = None
         self._trajectory_context_key = (
             runtime_state.condition_snapshot_version,
@@ -195,9 +200,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
             last_event_id=str(existing.last_event_id),
             last_update_time=str(existing.last_update_time),
             phi_ph_live=(
-                float(decision.phi_ph)
-                if update_ph
-                else existing.phi_ph_live
+                float(decision.phi_ph) if update_ph else existing.phi_ph_live
             ),
             confidence_ph_live=(
                 float(decision.confidence_ph)
@@ -221,9 +224,6 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if mapped is previous:
             return status
         if mapped is not None:
-            # The base selector already reset held residual to zero when no
-            # persisted context was found. Historical mapping changes only phi
-            # state and never grants residual authority.
             self.runtime_state = mapped
             self._active_context_key = (snapshot, context_id)
             if previous is None:
@@ -271,6 +271,71 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         )
         return base
 
+    def _residual_update_permission(
+        self,
+        *,
+        timestamp: Any,
+        hold_source: MFACResidualDecision,
+        response_ready: bool,
+        response_ready_tracking_id: str,
+        qbase_inputs_valid: bool,
+        data_quality_ok: bool,
+        fast_active: bool,
+        equipment_changed: bool,
+        ph_arbitration_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        proposed = (
+            hold_source.candidate_residual
+            if hold_source.status == "CALCULATED"
+            else self.residual_hold_manager.held_residual
+        )
+        pending_status = str(
+            ph_arbitration_context.get("pending_status") or ""
+        )
+        decision = self.residual_decision_gate.evaluate(
+            timestamp=timestamp,
+            residual_control_enabled=bool(self.config.residual_control_enabled),
+            qbase_inputs_valid=bool(qbase_inputs_valid),
+            data_quality_ok=bool(data_quality_ok),
+            fast_active=bool(fast_active),
+            equipment_changed=bool(equipment_changed),
+            held_residual=self.residual_hold_manager.held_residual,
+            proposed_residual=proposed,
+            response_ready=bool(response_ready),
+            pending_status=pending_status,
+        )
+        payload = decision.to_dict()
+        payload.update(
+            {
+                "gate_owner": "TRAJECTORY_STEP_AND_OBSERVE",
+                "response_ready_tracking_event_id": str(
+                    response_ready_tracking_id or ""
+                ),
+                "source_candidate_status": str(hold_source.status),
+                "min_hold_seconds_source": "TRAJECTORY_PLANNER_CONFIG",
+                "min_hold_seconds": float(
+                    self.trajectory_planner.config.min_hold_seconds
+                ),
+            }
+        )
+        return payload
+
+    def _record_residual_update_permission_result(
+        self,
+        *,
+        timestamp: Any,
+        permission: Dict[str, Any],
+        previous_residual: float,
+        new_residual: float,
+    ) -> None:
+        if not bool(permission.get("allowed", False)):
+            return
+        self.residual_decision_gate.record_residual_change(
+            timestamp=timestamp,
+            previous_residual=previous_residual,
+            new_residual=new_residual,
+        )
+
     def process_cycle(self, **kwargs: Any) -> Scheme2RuntimeCycleResult:
         key = (
             str(kwargs.get("condition_snapshot_version") or ""),
@@ -279,6 +344,7 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
         if key != self._trajectory_context_key:
             self.pending_dose_guard.reset("MFAC_CONTEXT_CHANGE")
             self.trajectory_planner.reset()
+            self.residual_decision_gate.reset("MFAC_CONTEXT_CHANGE")
             self._pending_for_current_cycle = None
             self._trajectory_context_key = key
 
@@ -316,6 +382,9 @@ class Scheme2TrajectoryShadowCoordinator(Scheme2RuntimeCoordinator):
                 "pending_dose_guard": pending.to_dict(),
                 "pending_used_by_ph_arbitration": True,
                 "trajectory_plan": plan.to_dict(),
+                "residual_decision_gate": dict(
+                    result.metadata.get("residual_decision_permission") or {}
+                ),
                 "algorithm_target_replaced_by_trajectory_planner": False,
                 "trajectory_planner_dcs_write_enabled": False,
                 "dose_debt_semantics": False,
