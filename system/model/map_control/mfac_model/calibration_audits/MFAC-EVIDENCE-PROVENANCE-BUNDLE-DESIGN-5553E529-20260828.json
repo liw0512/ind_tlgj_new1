@@ -1,0 +1,65 @@
+{
+  "semantics_version": "SCHEME2_EVIDENCE_PROVENANCE_BUNDLE_V1_CONTENT_ADDRESSED_REVIEW_ONLY",
+  "design_id": "MFAC-EVIDENCE-PROVENANCE-BUNDLE-DESIGN-5553E529-20260828",
+  "status": "INCOMPLETE_REVIEW_CHAIN",
+  "activation_status": "NOT_ACTIVATABLE",
+  "learning_enabled": false,
+  "residual_control_enabled": false,
+  "dcs_write_enabled": false,
+  "hash_contract": {
+    "algorithm": "SHA256",
+    "payload_encoding": "UTF-8",
+    "canonicalization": "JSON_SORT_KEYS_COMPACT_SEPARATORS_ALLOW_NAN_FALSE",
+    "content_addressed": true
+  },
+  "required_artifact_classes": [
+    "LOCAL_GAIN_COHORT_APPROVED_EVENTS",
+    "LOCAL_STEP_RAW_TRACE",
+    "OBSERVED_RESPONSE_TIMING",
+    "CHANNEL_CONFIDENCE_EVIDENCE",
+    "DUAL_RESPONSE_CALIBRATION_PROFILE"
+  ],
+  "cross_artifact_contract": {
+    "same_condition_snapshot_version": true,
+    "same_mfac_context_id": true,
+    "same_local_gain_cohort_event_set": true,
+    "timing_event_ids_must_have_raw_trace_artifacts": true,
+    "timing_event_ids_must_be_local_gain_subset": true,
+    "confidence_event_set_must_equal_local_gain_cohort": true,
+    "confidence_must_bind_channel_timing_evidence_id": true,
+    "confidence_must_bind_human_cohort_review_id": true,
+    "calibrated_channel_must_bind_same_timing_evidence_id": true,
+    "calibrated_channel_must_bind_same_confidence_evidence_id": true,
+    "calibrated_channel_must_bind_same_cohort_review_id": true
+  },
+  "verification_contract": {
+    "stored_manifest_is_not_sufficient_without_source_artifacts": true,
+    "source_artifacts_are_rehashed_on_verification": true,
+    "any_digest_or_binding_mismatch": "MISMATCH",
+    "mismatch_is_fail_closed": true,
+    "verified_complete_review_chain_grants_activation": false
+  },
+  "current_artifact_state": {
+    "real_controlled_local_step_cohort_approved_events": false,
+    "real_local_step_raw_trace_artifacts": false,
+    "real_so2_observed_timing_artifact": false,
+    "real_ph_observed_timing_artifact": false,
+    "real_so2_confidence_artifact": false,
+    "real_ph_confidence_artifact": false,
+    "real_dual_calibration_profile_with_both_channels_calibrated": false,
+    "complete_provenance_bundle_available": false
+  },
+  "forbidden_shortcuts": [
+    "mixing timing evidence from one LOCAL_GAIN cohort with confidence from another",
+    "reusing a stored digest after source artifact content changes",
+    "accepting a timing event without a bound raw trace artifact",
+    "accepting a confidence record without human cohort-bootstrap approval",
+    "accepting a CALIBRATED profile whose timing/confidence/cohort IDs differ from the manifest",
+    "treating COMPLETE_REVIEW_CHAIN as runtime activation permission"
+  ],
+  "notes": [
+    "This manifest is an integrity/provenance layer, not a second configuration source.",
+    "No real content-addressed bundle is generated at this checkpoint because controlled +2 m3/h evidence does not yet exist.",
+    "Production remains LEARN=0, Residual=0, DCS write=off."
+  ]
+}
