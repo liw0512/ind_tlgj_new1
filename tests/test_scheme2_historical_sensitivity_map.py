@@ -62,6 +62,34 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
             phi_ph_coefficients={"qbase": 0.005},
         )
 
+    @staticmethod
+    def reviewed_scalar_surface(
+        profile_id,
+        context_id,
+        grid_id,
+        *,
+        so2=-0.4,
+        ph=0.02,
+    ):
+        return HistoricalSensitivitySurface(
+            profile_id=profile_id,
+            condition_snapshot_version="v1",
+            mfac_context_id=context_id,
+            grid_id=grid_id,
+            phi_so2_prior=so2,
+            phi_ph_prior=ph,
+            confidence_so2=0.8,
+            confidence_ph=0.7,
+            event_count=30,
+            independent_days=5,
+            metadata={
+                "runtime_prior_reviewed": True,
+                "runtime_prior_allowed": True,
+                "model_complexity": "SCALAR",
+                "blocked_validation_reviewed": True,
+            },
+        )
+
     def test_exact_context_is_continuous_not_exact_state_lookup(self):
         mapping = HistoricalSensitivityMap(
             "v1",
@@ -242,7 +270,7 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
             },
         }
 
-    def test_runtime_maps_prior_until_each_channel_has_online_evidence(self):
+    def test_runtime_ignores_unreviewed_complex_surface_but_qbase_remains(self):
         with tempfile.TemporaryDirectory() as root:
             result = build_mfac_runtime(self.runtime_config(root))
             self.assertTrue(result.configured)
@@ -251,6 +279,44 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
                 HistoricalSensitivityMap(
                     "v1",
                     [self.surface("S10", "MFAC-COND-C1", "P10-S1")],
+                    self.map_config(),
+                )
+            )
+            cycle = coordinator.process_cycle(
+                timestamp="2026-08-28T09:59:50+08:00",
+                qbase_effective=30.0,
+                qbase_inputs_valid=True,
+                outlet_so2=10.0,
+                so2_target=20.0,
+                condition_snapshot_version="v1",
+                mfac_context_id="MFAC-COND-C1",
+                condition_label="C1",
+                base_condition_id="B1",
+                grid_id="P10-S1",
+                inlet_so2=1500.0,
+                ph=6.2,
+                actual_supply_flow_feedback=30.0,
+            )
+            self.assertIsNone(cycle.runtime_state)
+            self.assertEqual(cycle.algorithm_target.algorithm_target_supply_flow, 30.0)
+            self.assertIn("CONTEXT_SAFE_EMPTY", cycle.metadata["context_status"])
+            mapping = cycle.metadata["historical_sensitivity_mapping"]
+            self.assertFalse(mapping["available"])
+            self.assertIn("S10", mapping["metadata"]["runtime_prior_filter"]["rejected_profile_ids"])
+
+    def test_runtime_maps_reviewed_scalar_prior_until_each_channel_has_online_evidence(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = build_mfac_runtime(self.runtime_config(root))
+            self.assertTrue(result.configured)
+            coordinator = result.coordinator
+            coordinator.set_historical_sensitivity_map(
+                HistoricalSensitivityMap(
+                    "v1",
+                    [
+                        self.reviewed_scalar_surface(
+                            "S10", "MFAC-COND-C1", "P10-S1"
+                        )
+                    ],
                     self.map_config(),
                 )
             )
@@ -273,6 +339,7 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
             self.assertAlmostEqual(first.runtime_state.phi_live, -0.4)
             self.assertAlmostEqual(first.runtime_state.phi_ph_live, 0.02)
             self.assertEqual(first.metadata["context_status"], "CONTEXT_HISTORICAL_PRIOR:EXACT_CONTEXT")
+            self.assertEqual(first.runtime_state.metadata["historical_prior_model_complexity"], "SCALAR")
             self.assertEqual(first.algorithm_target.algorithm_target_supply_flow, 30.0)
             self.assertFalse(first.learning_enabled)
             self.assertFalse(first.residual_control_enabled)
@@ -293,8 +360,10 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
                 ph=6.18,
                 actual_supply_flow_feedback=30.0,
             )
-            self.assertAlmostEqual(second.runtime_state.phi_live, -0.45)
-            self.assertAlmostEqual(second.runtime_state.phi_ph_live, 0.0225)
+            # Runtime V1 deliberately consumes scalar priors only: work-point
+            # movement does not turn history into a second process controller.
+            self.assertAlmostEqual(second.runtime_state.phi_live, -0.4)
+            self.assertAlmostEqual(second.runtime_state.phi_ph_live, 0.02)
 
             learned_so2 = MFACRuntimeState(
                 condition_snapshot_version="v1",
@@ -325,7 +394,7 @@ class Scheme2HistoricalSensitivityMapTest(unittest.TestCase):
             )
             self.assertAlmostEqual(third.runtime_state.phi_live, -0.8)
             self.assertEqual(third.runtime_state.valid_event_count, 1)
-            self.assertAlmostEqual(third.runtime_state.phi_ph_live, 0.025)
+            self.assertAlmostEqual(third.runtime_state.phi_ph_live, 0.02)
 
 
 if __name__ == "__main__":
