@@ -32,6 +32,11 @@ from .historical_sensitivity_validation import (
     select_blocked_validated_model,
     validate_model_based_local_gain_blocked,
 )
+from .historical_sensitivity_validation_pipeline import (
+    HISTORICAL_SENSITIVITY_VALIDATION_PIPELINE_VERSION,
+    HistoricalSensitivityValidationReport,
+    build_historical_sensitivity_validation_report,
+)
 from .model_based_local_gain_trainer import (
     MODEL_BASED_LOCAL_GAIN_TRAINER_VERSION,
     ModelBasedLocalGainCandidate,
@@ -46,6 +51,7 @@ __all__ = [
     "HISTORICAL_SENSITIVITY_TRAINING_PIPELINE_VERSION",
     "HISTORICAL_SENSITIVITY_BLOCKED_VALIDATION_VERSION",
     "HISTORICAL_SENSITIVITY_MODEL_SELECTION_VERSION",
+    "HISTORICAL_SENSITIVITY_VALIDATION_PIPELINE_VERSION",
     "MODEL_BASED_LOCAL_GAIN_TRAINER_VERSION",
     "HistoricalModelBasedGainAdaptationSummary",
     "HistoricalModelBasedGainAdapterConfig",
@@ -64,6 +70,8 @@ __all__ = [
     "HistoricalSensitivityModelSelectionResult",
     "validate_model_based_local_gain_blocked",
     "select_blocked_validated_model",
+    "HistoricalSensitivityValidationReport",
+    "build_historical_sensitivity_validation_report",
     "ModelBasedLocalGainCandidate",
     "ModelBasedLocalGainTrainerConfig",
     "fit_model_based_local_gain",
