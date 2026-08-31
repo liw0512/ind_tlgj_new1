@@ -55,8 +55,11 @@ def assess_episode_identifiability(
     """Assess whether a historical flow event can identify process dynamics.
 
     This deliberately does *not* ask whether the historical operator action was
-    good.  Under-action and over-action can both be informative.  The hard
-    blockers are missing/invalid execution or process evidence.  Measured
+    good. Under-action, over-action and even historically unsafe outcomes can
+    still reveal physical response. Action quality/safety must be scored by a
+    separate effect evaluator, never by this identifiability gate.
+
+    Hard blockers are missing/invalid execution or response evidence. Measured
     external disturbances and FAST/condition changes are not automatically
     discarded because the V2 dynamic model explicitly includes those causal
     disturbance channels.
@@ -92,30 +95,18 @@ def assess_episode_identifiability(
     if _bool(row, "out_of_range_clipped", False):
         soft.append("CONDITION_OUT_OF_RANGE_CLIPPED")
 
-    # A second supply-flow action inside the observation window makes isolated
-    # step-response attribution weaker, but it remains usable by the later ARX
-    # path where the full Q_actual history is an explicit input.
+    # A second supply-flow action inside the response window weakens isolated
+    # step-response attribution, but remains usable later by ARX/FIR where the
+    # complete Q_actual history is explicitly modeled.
     if _bool(row, "followup_action_in_response", False):
         soft.append("FOLLOWUP_FLOW_ACTION_IN_RESPONSE")
 
-    # Major load/yyq disturbances are intentionally *not* hard blockers.  They
-    # are modeled through plant_config.condition_axes.  Mark them for weighting
-    # and audit so clean isolated events can still receive higher confidence.
+    # Load/yyq disturbances are modeled through plant_config.condition_axes.
+    # Keep an audit flag and reduced weight, but do not throw these events away.
     if _bool(row, "flow_major_process_transition", False):
         soft.append("MEASURED_PROCESS_DISTURBANCE_PRESENT")
     if _bool(row, "is_transient", False):
         soft.append("TRANSIENT_CONTEXT")
-
-    # Safety/effect quality describes the historical action outcome, not
-    # identifiability.  Keep it out of hard blockers by design.
-    if _bool(row, "ph_out_of_range", False) or any(
-        _bool(row, key, False)
-        for key in row.keys()
-        if str(key).startswith("ph_out_of_range__")
-    ):
-        soft.append("HISTORICAL_PH_UNSAFE_OUTCOME")
-    if _bool(row, "outlet_so2_over_hard_max", False):
-        soft.append("HISTORICAL_SO2_UNSAFE_OUTCOME")
 
     if hard:
         return IdentifiabilityAssessment(
@@ -124,8 +115,6 @@ def assess_episode_identifiability(
             tuple(dict.fromkeys(hard + soft)),
         )
     if soft:
-        # Deliberately non-zero: these events can still inform a multivariable
-        # causal time-series model, but should not dominate clean excitation.
         return IdentifiabilityAssessment(
             IdentifiabilityLevel.WEAKLY_IDENTIFIABLE,
             0.35,
