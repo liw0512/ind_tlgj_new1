@@ -1,4 +1,5 @@
 from system.model.map_control.condition_model.robust_statistics import (
+    OPERATING_CONTEXT_EVIDENCE_TYPE,
     RobustHistogramConfig,
     build_histogram,
     classify_distribution_shift,
@@ -18,7 +19,7 @@ def test_histogram_quantiles_and_trimmed_mean_ignore_extreme_overflow():
     assert 31.0 <= summary["trimmed_mean_05_95"] <= 33.0
 
 
-def test_drift_thresholds_follow_steel_history_calibration():
+def test_context_shift_thresholds_follow_steel_history_calibration():
     config = RobustHistogramConfig(
         min_independent_days=1,
         min_batch_samples=100,
@@ -46,11 +47,13 @@ def test_drift_thresholds_follow_steel_history_calibration():
     )
 
     assert stable["status"] == "STABLE"
-    assert suspected["status"] == "SUSPECTED_DRIFT"
-    assert strong["status"] == "STRONG_SHIFT"
+    assert suspected["status"] == "SUSPECTED_CONTEXT_SHIFT"
+    assert strong["status"] == "STRONG_CONTEXT_SHIFT"
+    assert suspected["evidence_type"] == OPERATING_CONTEXT_EVIDENCE_TYPE
+    assert suspected["structural_evidence"] is False
 
 
-def test_insufficient_batch_is_not_called_stable_or_drift():
+def test_insufficient_batch_is_not_called_stable_or_context_shift():
     config = RobustHistogramConfig(
         min_independent_days=2,
         min_batch_samples=300,
@@ -65,3 +68,5 @@ def test_insufficient_batch_is_not_called_stable_or_drift():
         independent_days=1,
     )
     assert result["status"] == "INSUFFICIENT_EVIDENCE"
+    assert result["evidence_type"] == OPERATING_CONTEXT_EVIDENCE_TYPE
+    assert result["structural_evidence"] is False
