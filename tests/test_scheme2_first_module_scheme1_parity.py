@@ -44,11 +44,11 @@ class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
         )
         self.assertTrue(DEFAULT_ONLINE_CONFIG["allow_provisional_region_fallback"])
 
-    def test_integrated_reload_interval_matches_scheme1_without_restoring_old_backend(self):
+    def test_scheme2_integration_boundary_remains_owned_by_mfac(self):
         integrated = ONLINE_CONDITION_CLASSIFY_CONFIG["slurry_policy_online"][
             "integrated_version"
         ]
-        self.assertEqual(integrated["reload_check_interval_seconds"], 30.0)
+        self.assertNotIn("reload_check_interval_seconds", integrated)
         self.assertEqual(
             integrated["active_version_file"], str(MFAC_ACTIVE_VERSION_FILE)
         )
