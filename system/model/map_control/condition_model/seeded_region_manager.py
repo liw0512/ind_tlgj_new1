@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Seeded condition-region publication and conservative drift lifecycle.
+"""Seeded condition-region publication and conservative context-shift lifecycle.
 
 The 100 mg/Nm3 base grid remains the stable coordinate system. This module
 publishes versioned operating regions on top of that grid and maintains robust
@@ -8,9 +8,9 @@ liquid/gas evidence by ``base_grid + circulation-pump state``.
 Important separation of concerns:
 - the existing InitialConditionBuilder / IncrementalConditionUpdater continue
   to own base-grid statistics;
-- this module owns region publication and robust distribution evidence;
-- it does not use historical supply actions to infer Q->SO2 / Q->pH gains;
-  those dynamics belong to the second module.
+- this module owns region publication and robust operating-context evidence;
+- liquid/gas distribution change is NOT proof of process-dynamic drift;
+- historical supply actions and Q->SO2 / Q->pH dynamics belong to module 2.
 """
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ from system.model.map_control.condition_model.condition_schema import (
 )
 from system.model.map_control.condition_model.grid_definition import locate_grid
 from system.model.map_control.condition_model.robust_statistics import (
+    ACTIVE_CONTEXT_SHIFT_STATUSES,
+    INSUFFICIENT_EVIDENCE_STATUS,
+    OPERATING_CONTEXT_EVIDENCE_TYPE,
+    STABLE_STATUS,
     RobustHistogramConfig,
     add_value,
     classify_distribution_shift,
@@ -35,9 +39,13 @@ from system.model.map_control.condition_model.robust_statistics import (
 )
 
 
-REGION_STRUCTURE_SCHEMA_VERSION = "1.0"
+REGION_STRUCTURE_SCHEMA_VERSION = "1.1"
 ROBUST_QUANTILE_SCOPE = "IN_RANGE_ONLY"
 DEFAULT_SEED_PATH = Path(__file__).with_name("region_seed_steel_v001.json")
+LEGACY_CONTEXT_STATUS_MAP = {
+    "SUSPECTED_DRIFT": "SUSPECTED_CONTEXT_SHIFT",
+    "STRONG_SHIFT": "STRONG_CONTEXT_SHIFT",
+}
 
 
 def load_seed_definition(path: Optional[str] = None) -> Dict[str, Any]:
@@ -74,6 +82,18 @@ def _row_date(row: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def _normalize_pending_status(value: Any) -> Any:
+    text = str(value) if value is not None else value
+    return LEGACY_CONTEXT_STATUS_MAP.get(text, text)
+
+
+def _date_sets(value: Optional[Mapping[str, Any]]) -> Dict[str, set]:
+    result: Dict[str, set] = {}
+    for key, dates in (value or {}).items():
+        result[str(key)] = {str(item) for item in (dates or []) if item}
+    return result
+
+
 class SeededRegionManager:
     def __init__(self, seed_definition: Mapping[str, Any]):
         self.seed = deepcopy(dict(seed_definition))
@@ -86,6 +106,13 @@ class SeededRegionManager:
     def from_path(cls, path: Optional[str] = None) -> "SeededRegionManager":
         return cls(load_seed_definition(path))
 
+    def _baseline_ready(self, histogram: Mapping[str, Any], days: set) -> bool:
+        summary = summarize_histogram(histogram, self.robust_config)
+        return (
+            int(summary.get("in_range_count") or 0) >= self.robust_config.min_baseline_samples
+            and len(days) >= self.robust_config.min_independent_days
+        )
+
     def initialize(
         self,
         snapshot: ConditionSnapshot,
@@ -95,13 +122,21 @@ class SeededRegionManager:
         self._validate_seed_against_config(config)
         self._publish_seed_regions(snapshot, config)
         histograms, dates = self._batch_histograms(rows, config)
-        robust_baseline = {
-            key: histogram
-            for key, histogram in histograms.items()
-        }
+
+        robust_baseline: Dict[str, Dict[str, Any]] = {}
+        baseline_warmup: Dict[str, Dict[str, Any]] = {}
+        baseline_warmup_dates: Dict[str, set] = {}
+        for key, histogram in histograms.items():
+            observed_days = set(dates.get(key, set()))
+            if self._baseline_ready(histogram, observed_days):
+                robust_baseline[key] = histogram
+            else:
+                baseline_warmup[key] = histogram
+                baseline_warmup_dates[key] = observed_days
+
         report = self._structure_report(
             snapshot=snapshot,
-            drift_by_group={},
+            context_shift_by_group={},
             mode="INITIAL_SEED",
         )
         snapshot.metadata = dict(snapshot.metadata or {})
@@ -111,12 +146,20 @@ class SeededRegionManager:
             "seed_version": self.seed.get("seed_version", "unknown"),
             "region_mode": "SEEDED_KEEP",
             "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
+            "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+            "structural_decision_authority": False,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": robust_baseline,
+            "baseline_warmup_by_grid_pump": baseline_warmup,
+            "baseline_warmup_dates_by_grid_pump": {
+                key: sorted(value) for key, value in baseline_warmup_dates.items()
+            },
             "last_batch_dates_by_grid_pump": {
                 key: sorted(value) for key, value in dates.items()
             },
+            "last_batch_context_shift_by_grid_pump": {},
             "last_batch_drift_by_grid_pump": {},
+            "pending_context_shift_by_grid_pump": {},
             "pending_shift_by_grid_pump": {},
             "structure_report": report,
         }
@@ -140,79 +183,186 @@ class SeededRegionManager:
         )
         if previous_state and previous_config.to_dict() != self.robust_config.to_dict():
             raise ValueError(
-                "robust liquid/gas histogram geometry or drift thresholds changed; "
+                "robust liquid/gas histogram geometry or context-shift thresholds changed; "
                 "start a new condition baseline generation instead of incremental update"
             )
 
         baseline = deepcopy(
             previous_state.get("robust_baseline_by_grid_pump") or {}
         )
-        previous_pending = deepcopy(
-            previous_state.get("pending_shift_by_grid_pump") or {}
+        warmup = deepcopy(
+            previous_state.get("baseline_warmup_by_grid_pump") or {}
         )
-        batch_histograms, dates = self._batch_histograms(rows, config)
+        warmup_dates = _date_sets(
+            previous_state.get("baseline_warmup_dates_by_grid_pump")
+        )
+        previous_batch_dates = _date_sets(
+            previous_state.get("last_batch_dates_by_grid_pump")
+        )
 
-        drift_by_group: Dict[str, Any] = {}
-        pending: Dict[str, Any] = {}
+        previous_pending = deepcopy(
+            previous_state.get("pending_context_shift_by_grid_pump")
+            or previous_state.get("pending_shift_by_grid_pump")
+            or {}
+        )
+        for item in previous_pending.values():
+            if isinstance(item, dict):
+                item["status"] = _normalize_pending_status(item.get("status"))
+                latest = item.get("latest_shift") or item.get("latest_drift")
+                if isinstance(latest, dict):
+                    latest["status"] = _normalize_pending_status(latest.get("status"))
+                    item["latest_shift"] = latest
+                    item.pop("latest_drift", None)
+
+        # Backward migration for v001/v002 snapshots created before baseline
+        # warmup existed: immature reference strata are moved out of baseline so
+        # later batches can accumulate toward a valid reference instead of being
+        # permanently stuck at INSUFFICIENT_EVIDENCE.
+        for key in list(baseline):
+            history_days = set(previous_batch_dates.get(key, set()))
+            if self._baseline_ready(baseline[key], history_days):
+                continue
+            warmup[key] = merge_histograms(
+                warmup.get(key),
+                baseline.pop(key),
+                self.robust_config,
+            )
+            warmup_dates.setdefault(key, set()).update(history_days)
+
+        batch_histograms, dates = self._batch_histograms(rows, config)
+        context_shift_by_group: Dict[str, Any] = {}
+
+        # Pending evidence survives a batch with no observations. Absence of
+        # evidence is not evidence of stability.
+        pending: Dict[str, Any] = deepcopy(previous_pending)
+        for key, item in pending.items():
+            item["continuity_state"] = "PAUSED_NO_OBSERVATION"
+            item["last_checked_version"] = snapshot.snapshot_version
+            item["baseline_absorption"] = "HELD"
 
         for key, batch_histogram in batch_histograms.items():
             base_histogram = baseline.get(key)
+            observed_days = set(dates.get(key, set()))
+
             if base_histogram is None:
-                baseline[key] = batch_histogram
-                drift_by_group[key] = {
-                    "status": "NEW_BASELINE_STRATUM",
-                    "direction": "UNKNOWN",
-                    "independent_days": len(dates.get(key, set())),
-                    "quantile_scope": ROBUST_QUANTILE_SCOPE,
-                    "batch": summarize_histogram(batch_histogram, self.robust_config),
-                }
+                combined = merge_histograms(
+                    warmup.get(key),
+                    batch_histogram,
+                    self.robust_config,
+                )
+                combined_days = set(warmup_dates.get(key, set()))
+                combined_days.update(observed_days)
+                summary = summarize_histogram(combined, self.robust_config)
+
+                if self._baseline_ready(combined, combined_days):
+                    baseline[key] = combined
+                    warmup.pop(key, None)
+                    warmup_dates.pop(key, None)
+                    pending.pop(key, None)
+                    context_shift_by_group[key] = {
+                        "status": "BASELINE_INITIALIZED",
+                        "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+                        "structural_evidence": False,
+                        "direction": "UNKNOWN",
+                        "independent_days": len(combined_days),
+                        "quantile_scope": ROBUST_QUANTILE_SCOPE,
+                        "baseline_absorption": "INITIALIZED_FROM_WARMUP",
+                        "baseline": summary,
+                        "batch": summarize_histogram(batch_histogram, self.robust_config),
+                    }
+                else:
+                    warmup[key] = combined
+                    warmup_dates[key] = combined_days
+                    context_shift_by_group[key] = {
+                        "status": "BASELINE_WARMUP",
+                        "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+                        "structural_evidence": False,
+                        "direction": "UNKNOWN",
+                        "independent_days": len(combined_days),
+                        "quantile_scope": ROBUST_QUANTILE_SCOPE,
+                        "baseline_absorption": "WARMUP_ONLY",
+                        "warmup": summary,
+                        "required_in_range_samples": self.robust_config.min_baseline_samples,
+                        "required_independent_days": self.robust_config.min_independent_days,
+                    }
                 continue
 
-            drift = classify_distribution_shift(
+            shift = classify_distribution_shift(
                 base_histogram,
                 batch_histogram,
                 self.robust_config,
-                independent_days=len(dates.get(key, set())),
+                independent_days=len(observed_days),
             )
-            drift["quantile_scope"] = ROBUST_QUANTILE_SCOPE
-            drift_by_group[key] = drift
-            status = drift["status"]
+            shift["quantile_scope"] = ROBUST_QUANTILE_SCOPE
+            context_shift_by_group[key] = shift
+            status = shift["status"]
 
-            if status == "STABLE":
+            if status == STABLE_STATUS:
                 baseline[key] = merge_histograms(
                     base_histogram,
                     batch_histogram,
                     self.robust_config,
                 )
+                shift["baseline_absorption"] = "ABSORBED"
+                shift["pending_action"] = "CLEARED_IF_PRESENT"
+                pending.pop(key, None)
                 continue
 
-            if status in {"WATCH", "SUSPECTED_DRIFT", "STRONG_SHIFT"}:
-                old = previous_pending.get(key) or {}
+            if status == INSUFFICIENT_EVIDENCE_STATUS:
+                shift["baseline_absorption"] = "HELD_INSUFFICIENT_EVIDENCE"
+                old = pending.get(key)
+                if old:
+                    old["continuity_state"] = "PAUSED_INSUFFICIENT_EVIDENCE"
+                    old["last_checked_version"] = snapshot.snapshot_version
+                    old["latest_observation"] = shift
+                    old["baseline_absorption"] = "HELD"
+                continue
+
+            if status in ACTIVE_CONTEXT_SHIFT_STATUSES:
+                old = pending.get(key) or {}
+                old_direction = old.get("direction")
                 same_direction = (
-                    old.get("direction") == drift.get("direction")
-                    and drift.get("direction") in {"UP", "DOWN"}
+                    old_direction == shift.get("direction")
+                    and shift.get("direction") in {"UP", "DOWN"}
                 )
-                consecutive = int(old.get("consecutive_versions", 0)) + 1 if same_direction else 1
+                previous_count = int(
+                    old.get(
+                        "consecutive_supported_versions",
+                        old.get("consecutive_versions", 0),
+                    )
+                    or 0
+                )
+                supported_count = previous_count + 1 if same_direction else 1
+                first_seen = (
+                    old.get("first_seen_version", snapshot.snapshot_version)
+                    if same_direction
+                    else snapshot.snapshot_version
+                )
+                confirmed = supported_count >= self.robust_config.confirmation_versions
                 pending[key] = {
                     "status": status,
-                    "direction": drift.get("direction"),
-                    "consecutive_versions": consecutive,
-                    "first_seen_version": old.get(
-                        "first_seen_version",
-                        snapshot.snapshot_version,
-                    ),
+                    "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+                    "structural_evidence": False,
+                    "direction": shift.get("direction"),
+                    "consecutive_supported_versions": supported_count,
+                    # Kept as a compatibility alias. It counts supported shift
+                    # observations, not every wall-clock snapshot version.
+                    "consecutive_versions": supported_count,
+                    "first_seen_version": first_seen,
                     "last_seen_version": snapshot.snapshot_version,
-                    "requires_physical_review": (
-                        consecutive >= self.robust_config.confirmation_versions
-                    ),
-                    "latest_drift": drift,
+                    "last_checked_version": snapshot.snapshot_version,
+                    "continuity_state": "ACTIVE_SUPPORTED_SHIFT",
+                    "confirmed_context_shift": confirmed,
+                    "requires_context_review": confirmed,
+                    "requires_physical_review": confirmed,
+                    "latest_shift": shift,
                     "baseline_absorption": "HELD",
                 }
 
         report = self._structure_report(
             snapshot=snapshot,
-            drift_by_group=drift_by_group,
-            mode="KEEP_WITH_DRIFT_WATCH",
+            context_shift_by_group=context_shift_by_group,
+            mode="KEEP_WITH_CONTEXT_SHIFT_WATCH",
         )
         snapshot.metadata = dict(snapshot.metadata or {})
         snapshot.metadata.pop("auto_merge_state", None)
@@ -224,12 +374,22 @@ class SeededRegionManager:
             ),
             "region_mode": "SEEDED_KEEP",
             "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
+            "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+            "structural_decision_authority": False,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": baseline,
+            "baseline_warmup_by_grid_pump": warmup,
+            "baseline_warmup_dates_by_grid_pump": {
+                key: sorted(value) for key, value in warmup_dates.items()
+            },
             "last_batch_dates_by_grid_pump": {
                 key: sorted(value) for key, value in dates.items()
             },
-            "last_batch_drift_by_grid_pump": drift_by_group,
+            "last_batch_context_shift_by_grid_pump": context_shift_by_group,
+            # Compatibility alias for tooling written against the first V2
+            # replay. Its semantic type is explicitly OPERATING_CONTEXT only.
+            "last_batch_drift_by_grid_pump": context_shift_by_group,
+            "pending_context_shift_by_grid_pump": pending,
             "pending_shift_by_grid_pump": pending,
             "structure_report": report,
         }
@@ -360,7 +520,7 @@ class SeededRegionManager:
         self,
         *,
         snapshot: ConditionSnapshot,
-        drift_by_group: Mapping[str, Any],
+        context_shift_by_group: Mapping[str, Any],
         mode: str,
     ) -> Dict[str, Any]:
         regions = []
@@ -376,9 +536,10 @@ class SeededRegionManager:
                 prefix = f"{grid_id}::"
                 statuses.extend(
                     item.get("status")
-                    for key, item in drift_by_group.items()
+                    for key, item in context_shift_by_group.items()
                     if key.startswith(prefix)
                 )
+            unique_statuses = sorted({item for item in statuses if item})
             regions.append({
                 "region_id": region.region_id,
                 "condition_label": region.condition_label,
@@ -387,7 +548,7 @@ class SeededRegionManager:
                 "region_type": region.evidence.get("region_type"),
                 "support_level": region.evidence.get("support_level"),
                 "decision": "KEEP",
-                "drift_statuses": sorted({item for item in statuses if item}),
+                "context_shift_statuses": unique_statuses,
                 "merge_split_policy": "REPORT_ONLY",
             })
         return {
@@ -396,12 +557,18 @@ class SeededRegionManager:
             "mode": mode,
             "automatic_boundary_change_enabled": False,
             "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
+            "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+            "structural_decision_authority": False,
             "regions": regions,
             "notes": [
                 "Base-grid resolution remains fixed.",
                 "Incremental versions keep the previous published regions by default.",
-                "Robust liquid/gas drift is evidence only; it cannot directly merge or split regions.",
+                "Robust liquid/gas shift is operating-context evidence only; it cannot directly merge or split regions.",
+                "A liquid/gas context shift is not a confirmed process-dynamic drift because liquid/gas ratio is derived from pump topology and gas flow.",
                 "Histogram P05/P50/P95 and trimmed mean use in-range values only; underflow/overflow remain separate data-quality evidence.",
-                "Quasi-free process evidence and second-module dynamic evidence will be added before enabling boundary changes.",
+                "INSUFFICIENT_EVIDENCE or no observation pauses existing pending context evidence without increasing or clearing its supported-version count.",
+                "Only a supported STABLE observation clears pending context-shift evidence; same-direction supported shifts increase persistence.",
+                "New grid+pump strata remain BASELINE_WARMUP until minimum sample and independent-day support is reached.",
+                "Quasi-free process evidence and second-module dynamic evidence are required before any process-drift or boundary-change decision.",
             ],
         }
