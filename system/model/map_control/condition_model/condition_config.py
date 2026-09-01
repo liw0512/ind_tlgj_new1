@@ -135,7 +135,6 @@ ONLINE_CONDITION_CLASSIFY_CONFIG = {
             # 但不能把第二模块版本路径重新指回已删除的 slurry_policy_model。
             "active_version_file": str(MFAC_ACTIVE_VERSION_FILE),
             "hot_reload_enabled": True,
-            "reload_check_interval_seconds": 30.0,
             "verify_condition_snapshot_hash": True,
             "require_atomic_pair_switch": True,
             "reset_condition_stability_window": True,
