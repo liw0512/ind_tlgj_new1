@@ -36,6 +36,7 @@ from system.model.map_control.condition_model.robust_statistics import (
 
 
 REGION_STRUCTURE_SCHEMA_VERSION = "1.0"
+ROBUST_QUANTILE_SCOPE = "IN_RANGE_ONLY"
 DEFAULT_SEED_PATH = Path(__file__).with_name("region_seed_steel_v001.json")
 
 
@@ -109,6 +110,7 @@ class SeededRegionManager:
             "schema_version": REGION_STRUCTURE_SCHEMA_VERSION,
             "seed_version": self.seed.get("seed_version", "unknown"),
             "region_mode": "SEEDED_KEEP",
+            "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": robust_baseline,
             "last_batch_dates_by_grid_pump": {
@@ -161,6 +163,7 @@ class SeededRegionManager:
                     "status": "NEW_BASELINE_STRATUM",
                     "direction": "UNKNOWN",
                     "independent_days": len(dates.get(key, set())),
+                    "quantile_scope": ROBUST_QUANTILE_SCOPE,
                     "batch": summarize_histogram(batch_histogram, self.robust_config),
                 }
                 continue
@@ -171,6 +174,7 @@ class SeededRegionManager:
                 self.robust_config,
                 independent_days=len(dates.get(key, set())),
             )
+            drift["quantile_scope"] = ROBUST_QUANTILE_SCOPE
             drift_by_group[key] = drift
             status = drift["status"]
 
@@ -219,6 +223,7 @@ class SeededRegionManager:
                 self.seed.get("seed_version", "unknown"),
             ),
             "region_mode": "SEEDED_KEEP",
+            "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": baseline,
             "last_batch_dates_by_grid_pump": {
@@ -258,6 +263,7 @@ class SeededRegionManager:
         assigned = set()
         for item in self.seed["regions"]:
             label = str(item["condition_label"])
+            region_name = str(item.get("region_name", label))
             lower = float(item["minimum"])
             upper = float(item["maximum"])
             region_id = f"R_SEED_{label}"
@@ -283,6 +289,7 @@ class SeededRegionManager:
                 evidence={
                     "source": "DATA_DRIVEN_SEED",
                     "seed_version": self.seed.get("seed_version", "unknown"),
+                    "region_name": region_name,
                     "axis_column": config.axis_1.column,
                     "axis_range": [lower, upper],
                     "region_type": region_type,
@@ -375,6 +382,7 @@ class SeededRegionManager:
             regions.append({
                 "region_id": region.region_id,
                 "condition_label": region.condition_label,
+                "region_name": region.evidence.get("region_name", region.condition_label),
                 "member_grid_ids": list(region.member_grid_ids),
                 "region_type": region.evidence.get("region_type"),
                 "support_level": region.evidence.get("support_level"),
@@ -387,11 +395,13 @@ class SeededRegionManager:
             "snapshot_version": snapshot.snapshot_version,
             "mode": mode,
             "automatic_boundary_change_enabled": False,
+            "robust_quantile_scope": ROBUST_QUANTILE_SCOPE,
             "regions": regions,
             "notes": [
                 "Base-grid resolution remains fixed.",
                 "Incremental versions keep the previous published regions by default.",
                 "Robust liquid/gas drift is evidence only; it cannot directly merge or split regions.",
+                "Histogram P05/P50/P95 and trimmed mean use in-range values only; underflow/overflow remain separate data-quality evidence.",
                 "Quasi-free process evidence and second-module dynamic evidence will be added before enabling boundary changes.",
             ],
         }
