@@ -48,7 +48,7 @@ def causal_tower_total_flow(
     """Build a causal tower-total actual-flow signal.
 
     The legacy event pipeline uses a centered median for offline event cleanup.
-    Predictive identification must not use that acausal signal.  This function
+    Predictive identification must not use that acausal signal. This function
     only uses each meter's current and past samples (trailing median), and it
     refuses to silently sum a partial meter set.
     """
@@ -99,6 +99,10 @@ def build_causal_one_step_frame(
     Row ``t`` predicts ``output(t+1)-output(t)``. Every feature is available at
     or before ``t``. Lag construction is restarted at each continuous segment,
     so no feature can cross a long data gap.
+
+    Feature columns are accumulated in a mapping and materialized once per
+    segment. This preserves the previous feature schema while avoiding pandas
+    block fragmentation from hundreds of repeated ``DataFrame.insert`` calls.
     """
 
     cfg = config or CausalFeatureConfig()
@@ -122,7 +126,7 @@ def build_causal_one_step_frame(
     for _, segment in _segment_iterator(frame, cfg.segment_column):
         if segment.empty:
             continue
-        work = pd.DataFrame(index=segment.index)
+
         output = pd.to_numeric(segment[output_column], errors="coerce")
         flow = causal_tower_total_flow(
             segment,
@@ -132,30 +136,33 @@ def build_causal_one_step_frame(
         output_delta = output.diff()
         flow_delta = flow.diff()
 
-        work["output_level_t"] = output
+        columns: dict[str, Any] = {}
+        columns["output_level_t"] = output
         for lag in range(cfg.output_delta_lags):
-            work[f"output_delta_lag_{lag}"] = output_delta.shift(lag)
+            columns[f"output_delta_lag_{lag}"] = output_delta.shift(lag)
 
-        work["flow_level_t"] = flow
+        columns["flow_level_t"] = flow
         for lag in range(cfg.flow_delta_lags):
-            work[f"flow_delta_lag_{lag}"] = flow_delta.shift(lag)
+            columns[f"flow_delta_lag_{lag}"] = flow_delta.shift(lag)
 
         for column in disturbances:
             values = pd.to_numeric(segment[column], errors="coerce")
             delta = values.diff()
-            work[f"disturbance__{column}__level_t"] = values
+            columns[f"disturbance__{column}__level_t"] = values
             for lag in range(cfg.disturbance_delta_lags):
-                work[f"disturbance__{column}__delta_lag_{lag}"] = delta.shift(lag)
+                columns[f"disturbance__{column}__delta_lag_{lag}"] = delta.shift(lag)
 
         for column in contexts:
             values = pd.to_numeric(segment[column], errors="coerce")
             delta = values.diff()
-            work[f"context__{column}__level_t"] = values
+            columns[f"context__{column}__level_t"] = values
             for lag in range(cfg.context_delta_lags):
-                work[f"context__{column}__delta_lag_{lag}"] = delta.shift(lag)
+                columns[f"context__{column}__delta_lag_{lag}"] = delta.shift(lag)
 
-        work[target_column] = output.shift(-1) - output
-        work["source_index"] = segment.index
+        columns[target_column] = output.shift(-1) - output
+        columns["source_index"] = pd.Series(segment.index, index=segment.index)
+        work = pd.DataFrame(columns, index=segment.index)
+
         current_features = [
             column
             for column in work.columns
@@ -165,12 +172,17 @@ def build_causal_one_step_frame(
             feature_names = current_features
         elif current_features != feature_names:
             raise RuntimeError("causal feature schema changed between segments")
+
         work = work.dropna(subset=current_features + [target_column])
         if not work.empty:
             pieces.append(work)
 
     features = tuple(feature_names or ())
     if not pieces:
-        return pd.DataFrame(columns=list(features) + [target_column, "source_index"]), features, target_column
+        return (
+            pd.DataFrame(columns=list(features) + [target_column, "source_index"]),
+            features,
+            target_column,
+        )
     result = pd.concat(pieces, axis=0, ignore_index=True)
     return result, features, target_column
