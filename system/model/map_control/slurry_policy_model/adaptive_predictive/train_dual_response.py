@@ -28,6 +28,9 @@ from system.model.map_control.slurry_policy_model.adaptive_predictive.config imp
 from system.model.map_control.slurry_policy_model.adaptive_predictive.feature_builder import (
     CausalFeatureConfig,
 )
+from system.model.map_control.slurry_policy_model.adaptive_predictive.identification_diagnostics import (
+    evaluate_q_path_ablation,
+)
 from system.model.map_control.slurry_policy_model.adaptive_predictive.response_decomposition import (
     GlobalConditionResponseConfig,
     fit_tower_dual_response,
@@ -77,6 +80,26 @@ def _prepare_time_segments(
     result["continuous_segment_id"] = new_segment.cumsum().astype(int) - 1
     result = result.drop(columns=["__predictive_timestamp"])
     return result
+
+
+def _condition_delta(validation: dict[str, Any]) -> dict[str, float]:
+    global_metrics = validation["validation"]["global"]
+    combined_metrics = validation["validation"]["global_plus_condition"]
+    global_rmse = float(global_metrics["rmse"])
+    global_mae = float(global_metrics["mae"])
+    return {
+        "rmse_improvement_ratio": (
+            0.0 if global_rmse <= 1e-12 else 1.0 - float(combined_metrics["rmse"]) / global_rmse
+        ),
+        "mae_improvement_ratio": (
+            0.0 if global_mae <= 1e-12 else 1.0 - float(combined_metrics["mae"]) / global_mae
+        ),
+        "r2_delta": float(combined_metrics["r2"]) - float(global_metrics["r2"]),
+        "direction_accuracy_delta": (
+            float(combined_metrics["direction_accuracy"])
+            - float(global_metrics["direction_accuracy"])
+        ),
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -154,8 +177,28 @@ def main() -> None:
         response_config=response_config,
     )
 
+    so2_q_ablation = evaluate_q_path_ablation(
+        prepared,
+        output_column=foundation.outlet_so2_column,
+        tower=tower,
+        disturbance_columns=foundation.disturbance_columns,
+        context_columns=foundation.context_columns,
+        feature_config=feature_config,
+        response_config=response_config,
+    )
+    ph_column = str(tower.get("ph_column", ""))
+    ph_q_ablation = evaluate_q_path_ablation(
+        prepared,
+        output_column=ph_column,
+        tower=tower,
+        disturbance_columns=foundation.disturbance_columns,
+        context_columns=foundation.context_columns,
+        feature_config=feature_config,
+        response_config=response_config,
+    )
+
     artifact = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "artifact_type": "DUAL_RESPONSE_GLOBAL_CONDITION_IDENTIFICATION",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_input": str(input_path),
@@ -169,6 +212,17 @@ def main() -> None:
             "target_supply_flow_activation": False,
         },
         "dual_response": result.to_dict(),
+        "identification_diagnostics": {
+            "so2_q_path_ablation": so2_q_ablation.to_dict(),
+            "ph_q_path_ablation": ph_q_ablation.to_dict(),
+            "so2_condition_correction_delta": _condition_delta(result.so2.validation),
+            "ph_condition_correction_delta": _condition_delta(result.ph.validation),
+            "acceptance_note": (
+                "Good one-step prediction alone does not establish causal slurry response. "
+                "Q-path ablation must show repeatable validation value before delay/gain "
+                "interpretation, and later closed-loop deconfounding is still required."
+            ),
+        },
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as stream:
@@ -183,6 +237,10 @@ def main() -> None:
         "ph_condition_models": result.ph.condition_model_count,
         "so2_validation": result.so2.validation["validation"],
         "ph_validation": result.ph.validation["validation"],
+        "so2_condition_correction_delta": _condition_delta(result.so2.validation),
+        "ph_condition_correction_delta": _condition_delta(result.ph.validation),
+        "so2_q_path_ablation": so2_q_ablation.validation["validation"],
+        "ph_q_path_ablation": ph_q_ablation.validation["validation"],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
