@@ -44,12 +44,13 @@ def test_steel_seed_regions_cover_all_100mg_base_cells():
     assert len(_region(snapshot, REGION_LABELS["C4"]).member_grid_ids) == 8
     assert len(_region(snapshot, REGION_LABELS["EDGE_HIGH"]).member_grid_ids) == 20
     assert report["automatic_boundary_change_enabled"] is False
+    assert report["robust_quantile_scope"] == "IN_RANGE_ONLY"
 
 
 def test_seeded_region_labels_do_not_overlap_base_condition_ids():
     config = default_config()
     snapshot = InitialConditionBuilder(config).build([], "v001")
-    snapshot, _ = SeededRegionManager.from_path().initialize(snapshot, [], config)
+    snapshot, report = SeededRegionManager.from_path().initialize(snapshot, [], config)
 
     base_labels = {str(index) for index in range(1, len(snapshot.grid_catalog) + 1)}
     region_labels = {
@@ -60,6 +61,19 @@ def test_seeded_region_labels_do_not_overlap_base_condition_ids():
     assert region_labels == set(REGION_LABELS.values())
     assert region_labels.isdisjoint(base_labels)
     assert all(label.isdigit() for label in region_labels)
+
+    names_by_label = {
+        region.condition_label: region.evidence.get("region_name")
+        for region in snapshot.policy_regions.values()
+    }
+    assert names_by_label == {
+        label: name for name, label in REGION_LABELS.items()
+    }
+    report_names = {
+        item["condition_label"]: item["region_name"]
+        for item in report["regions"]
+    }
+    assert report_names == names_by_label
 
 
 def test_incremental_update_keeps_previous_published_regions():
@@ -81,3 +95,4 @@ def test_incremental_update_keeps_previous_published_regions():
         for grid_id, cell in base.grid_catalog.items()
     }
     assert all(item["decision"] == "KEEP" for item in report["regions"])
+    assert report["robust_quantile_scope"] == "IN_RANGE_ONLY"
