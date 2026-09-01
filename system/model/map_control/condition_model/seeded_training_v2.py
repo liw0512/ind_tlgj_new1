@@ -61,6 +61,31 @@ def _write_json(value, path: Optional[str]) -> None:
         json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
 
 
+def _mark_v2_compatibility_statistics(statistics):
+    """Make legacy merge-statistics semantics explicit for seeded-region V2.
+
+    ``liquid_gas_mean`` in this compatibility artifact is the raw arithmetic
+    mean retained for old readers.  It must not be used as V2 region-structure
+    evidence; the authoritative structure lives in the condition snapshot and
+    robust histogram evidence lives in ``metadata.condition_region_v2``.
+    """
+    statistics["description"] = (
+        "Legacy compatibility statistics for condition-label readers. "
+        "Raw liquid_gas_mean is retained for backward compatibility only and "
+        "is NOT seeded-region V2 merge/split evidence."
+    )
+    statistics["v2_semantics"] = {
+        "region_membership_authority": "condition_snapshot.policy_regions",
+        "robust_structure_evidence": "condition_snapshot.metadata.condition_region_v2",
+        "raw_liquid_gas_mean_is_structural_evidence": False,
+        "condition_regions_members": (
+            "observed base-condition statistics only; use snapshot policy_regions "
+            "for full region membership including zero-sample grids"
+        ),
+    }
+    return statistics
+
+
 def build_initial_seeded_condition_csv(
     *,
     input_csv_path: str,
@@ -98,6 +123,7 @@ def build_initial_seeded_condition_csv(
         snapshot,
         config,
     )
+    statistics = _mark_v2_compatibility_statistics(statistics)
 
     write_snapshot(snapshot, snapshot_output_path)
     cleanup_old_snapshot_versions(
@@ -167,6 +193,7 @@ def build_incremental_seeded_condition_csv(
         updated,
         config,
     )
+    statistics = _mark_v2_compatibility_statistics(statistics)
 
     write_snapshot(updated, resolved_output)
     cleanup_old_snapshot_versions(
