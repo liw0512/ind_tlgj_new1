@@ -1,376 +1,286 @@
-# 第一模块：condition_model 工况划分
+# 第一模块：condition_model（方案1 Canonical）
 
-`condition_model` 是供浆控制系统的第一模块，负责把连续过程数据映射到稳定、可版本化的工况标签。在线模式下它同时作为第一模块→第二模块的统一入口：先完成工况判定，再把“原始实时数据 + 第一模块全部输出”传入 `slurry_policy_model`，最终返回两模块联合结果。
+方案2的第一模块不再维护独立实现。第一模块唯一设计基准固定为：
 
-## 1. 模块职责
+```text
+repository : liw0512/ind_tlgj_new
+branch     : codex/adaptive-feedback-slurry-v1
+commit     : 0d99e18262dc2b1bf9fb03464de5eb4eb4166d44
+```
 
-完整链路：
+方案2仓库只允许在“第一模块 -> 第二模块”的集成边界上适配 MFAC；第一模块自身的网格、统计、自动合并、ConditionSnapshot、增量更新和在线稳定判定不得单独演化。
+
+## 1. 第一模块边界
+
+第一模块负责：
 
 ```text
 历史/实时过程数据
     ↓
-按配置工况轴划分基础网格
+按 plant_config 的 1/2 个任意工况轴建立固定网格
     ↓
-统计每个基础格历史状态
+基础格统计与成熟度判断
     ↓
-相邻基础格自动合并
+相邻基础格证据式自动合并
     ↓
-生成 condition_snapshot.json
+ConditionSnapshot 版本化
     ↓
-在线瞬时工况识别
+在线瞬时 Condition 分类
     ↓
-滑动窗口众数稳定
+MAJORITY 窗口稳定
     ↓
-condition_label / grid_id / state_key ...
-    ↓
-第二模块 slurry_policy_model 在线策略
-    ↓
-供浆塔 / 流量方向 / STEP、PULSE、BOOST_STEP
-目标峰值流量 / 目标最终流量 / 原因码
+condition_label / base_condition_id / grid_id / policy_region_id / state_key ...
 ```
 
-第一模块本身不直接定义供浆动作；供浆动作由第二模块决定。但正式在线入口统一放在第一模块 `online_condition_classifier.py` 中。
+到这里第一模块结束。
 
-## 2. 厂级配置只改一处
+方案2从第一模块输出之后才开始分叉：
 
-换厂时不要在本目录重复修改现场字段。统一厂级配置位于：
+```text
+Condition enriched row
+    ↓
+MFACUnifiedRuntimePolicy
+    ↓
+Dynamic Qbase
+    +
+Dual-response MFAC
+```
+
+因此 `integrated_version_manager.py`、`online_condition_policy_bridge.py` 虽然仍放在本目录中，但它们属于**集成边界**，不能从方案1机械覆盖回旧 `slurry_policy_model` 后端。
+
+## 2. 已按方案1完整锁定的纯第一模块文件
+
+下面文件必须与方案1基准 commit 的 Git blob 完全一致：
+
+```text
+__init__.py
+auto_merge_manager.py
+condition_merger.py
+condition_schema.py
+grid_definition.py
+grid_range_analyzer.py
+incremental_condition_updater.py
+initial_condition_builder.py
+online_condition_classifier.py
+snapshot_io.py
+```
+
+`tests/test_scheme2_first_module_scheme1_parity.py` 会直接计算这些文件的 Git blob SHA。任何方案2单方面修改都会使回归测试失败。
+
+以下文件是 Scheme2 适配边界，不要求字节一致：
+
+```text
+condition_config.py
+integrated_online_example.py
+integrated_version_manager.py
+online_condition_policy_bridge.py
+README.md
+```
+
+其中 `condition_config.py` 的**第一模块算法参数**必须与方案1一致；仅路径和第二模块 active pointer 允许适配 MFAC。
+
+`condition_merge_statistics.json` 是训练产生的累计统计数据，不属于可迁移源码，不能从另一个工程直接复制覆盖。
+
+## 3. 厂级配置仍只改 plant_config.py
+
+方案1第一模块的一个关键设计是：现场事实不散落在 `condition_model` 中，而是统一从：
 
 ```text
 system/model/config/plant_config.py
 ```
 
-第一模块从这里读取：
+派生。
+
+第一模块读取：
 
 - 1 个或 2 个任意工况轴；
-- 工况轴字段、范围和步长；
-- 净烟气 SO2 字段及安全上限；
-- 液气比字段；
-- 当前启用塔的 pH 字段。
+- 工况轴字段、范围、步长；
+- 当前启用塔的 pH 字段；
+- 净烟气 SO2 安全上限；
+- 其他用于统计/风险判断的标准字段。
 
-第二模块也从同一厂级配置读取：
+方案2继续使用自己的现场 `PLANT_CONFIG`，因为这里还承载 Dynamic Qbase 与 MFAC 的物理合同。迁移第一模块不等于复制方案1现场参数。
 
-- 单塔/双塔；
-- 每塔 pH 字段和安全范围；
-- 每塔阀门数量及字段；
-- 定频供浆泵电流字段及运行阈值；
-- `pump -> served_valve_ids` 拓扑。
-
-例如只使用原烟气 SO2：
+例如单轴：
 
 ```python
 "condition_axes": [
     {
         "column": "yyq_SO2",
         "min": 500.0,
-        "max": 7000.0,
-        "step": 200.0,
-    }
+        "max": 5000.0,
+        "step": 100.0,
+    },
 ]
 ```
 
-例如钢厂使用两个其他变量：
+内部仍使用 `P*-S*` 网格 ID；在单轴模式中第二槽只是兼容结构，不代表必须存在第二个现场变量。
 
-```python
-"condition_axes": [
-    {"column": "gas_flow", "min": 1000.0, "max": 5000.0, "step": 200.0},
-    {"column": "inlet_sulfur", "min": 100.0, "max": 3000.0, "step": 100.0},
-]
-```
+## 4. 第一模块算法参数完全采用方案1
 
-当前固定支持 1 或 2 个工况轴。三维以上会显著增加历史经验稀疏，不建议直接扩展笛卡尔网格。
-
-## 3. condition_config.py 负责什么
-
-`condition_config.py` 不再维护厂级现场事实，只保留第一模块算法参数，例如：
-
-- `DEFAULT_MERGE_CONFIG`：工况成熟度和自动合并阈值；
-- `DEFAULT_ONLINE_CONFIG`：在线稳定窗口；
-- `out_of_range_policy`：越界处理；
-- standalone 运行时的项目内默认路径。
-
-默认在线稳定方式：
+当前 canonical 值：
 
 ```text
-最近 6 次瞬时 condition_label
-        ↓
-取众数
-        ↓
-并列时保持上一稳定标签
+min_observed_samples                   = 10
+min_mature_samples                     = 30
+min_auto_merge_samples                 = 100
+min_auto_confirm_samples               = 300
+min_common_state_samples               = 10
+min_risk_samples                       = 30
+min_metric_coverage_ratio              = 0.80
+min_consecutive_pass_snapshots         = 3
+min_new_samples_per_member_for_confirmation = 10
+max_auto_region_cells                  = 8
+max_liquid_gas_relative_difference     = 0.15
+max_pump_distribution_distance         = 0.25
+max_risk_rate_difference               = 0.10
 ```
 
-## 4. 基础网格
-
-工况轴按 `plant_config.py` 中的 `min / max / step` 建立固定网格。
-
-内部网格 ID 仍使用：
+在线稳定：
 
 ```text
-P1-S1
-P1-S2
-P2-S1
-...
+stability_mode                  = MAJORITY
+stability_window_size           = 6
+majority_tie_policy             = KEEP_LAST_STABLE
+allow_provisional_region_fallback = True
 ```
 
-其中 `P/S` 只是第一轴/第二轴的内部编码，不再代表固定的 Power / SO2。
+以后若第一模块参数需要优化，应先在统一第一模块设计中确认，再同步两套方案；不能只在方案2把样本阈值按 10s 周期自行乘倍数。
 
-单轴模式内部仍保留一个单格第二槽，因此网格类似：
+## 5. 自动合并语义
 
-```text
-P1-S1
-P2-S1
-P3-S1
-```
-
-这个 `S1` 只是兼容内部结构，不要求第二个现场测点。
-
-## 5. 自动合并
-
-基础格满足证据条件后可自动合并成策略区域，不需要人工确认。
-
-生命周期：
+基础格满足证据条件后可形成策略区域：
 
 ```text
 独立基础格
     ↓
 AUTO_PROVISIONAL_MERGE
-    ↓  后续增量持续有新增证据
+    ↓  后续增量持续获得证据
 AUTO_CONFIRMED_MERGE
     ↓  后续结构证据不再成立
 自动收缩 / 拆分 / 移除
 ```
 
-主要判断包括：
+核心判断包括：
 
-- 基础格必须相邻；
-- 样本数达到门槛；
-- 液气比有效覆盖率和均值差满足阈值；
-- 循环泵状态分布相近；
-- 净烟气 SO2 风险率证据充分且差异可接受；
+- 基础格相邻；
+- 样本数量达到阶段门槛；
+- 液气比统计覆盖和相对差满足要求；
+- 循环泵状态分布距离满足要求；
+- SO2 风险统计有足够证据且差异可接受；
 - 合并区域保持矩形；
 - 区域大小不超过配置上限。
 
-默认关键参数仍在 `condition_config.py -> DEFAULT_MERGE_CONFIG` 中维护。
+pH 在第一模块中用于解释性统计，不作为固定网格坐标。单塔/双塔均由中央拓扑配置决定；缺少未启用塔 pH 不应导致第一模块失败。
 
-`condition_merge_statistics.json` 是累计统计辅助文件；正式在线标签以 `condition_snapshot.json` 为准。
+## 6. Initial 训练
 
-## 6. pH 在第一模块中的作用
-
-pH 只用于工况解释统计，不决定基础工况坐标。
-
-单塔厂没有二级塔 pH 时不会报错；第一模块会：
+方案2仍按统一训练生命周期调用第一模块：
 
 ```text
-有该塔 pH → 统计均值
-没有该塔 pH → 对应统计保持空值
-```
-
-第二模块的 pH 安全控制仍按中央 `plant_config.py` 中每个 `enabled=True` 塔的配置执行。
-
-## 7. 初次训练
-
-P4PC 正式流程：
-
-```text
-原始训练数据
-→ system/model/map_control/model_csv/Initial_train.csv
+raw training data
+→ model_csv/Initial_train.csv
 → initial_condition_builder.py
 → Initial_train_after_condition.csv
 → snapshots/v001/condition_snapshot.json
-→ 第二模块初次训练
+→ MFAC Initial
+→ condition + MFAC 同版本验证/激活
 ```
 
-独立运行可使用：
+第一模块独立运行：
 
-```bash
-python system/model/map_control/condition_model/initial_condition_builder.py \
-  --input <input.csv> \
-  --output <output.csv> \
-  --snapshot-output <condition_snapshot.json> \
+```powershell
+D:\anaconda\envs\py3921\python.exe `
+  system\model\map_control\condition_model\initial_condition_builder.py `
+  --input <input.csv> `
+  --output <output.csv> `
+  --snapshot-output <condition_snapshot.json> `
   --snapshot-version v001
 ```
 
-## 8. 增量训练
-
-P4PC 正式流程：
+## 7. Incremental 训练
 
 ```text
-新增历史数据
+new data
 → Update_train.csv
-→ 读取当前 active condition vN
+→ active condition snapshot vN
 → incremental_condition_updater.py
 → Incremental_train_after_condition.csv
 → condition snapshot vN+1
-→ 第二模块增量训练 vN+1
-→ 两模块同版本验证后统一激活
+→ MFAC incremental vN+1
+→ 原子验证后统一激活
 ```
 
-增量训练失败不会覆盖当前激活版本。
+第一模块增量逻辑与方案1一致；方案2的 7 天 Initial / 3 天 Incremental 生命周期属于整个 Scheme2 离线调度，不改写第一模块内部算法。
 
-## 9. 统一在线入口
+## 8. 在线 Condition 判定
 
-正式在线和历史 CSV 回放统一使用：
+正式入口仍是：
 
 ```text
 system/model/map_control/condition_model/online_condition_classifier.py
 ```
 
-长期在线对象：
-
-```python
-from system.model.map_control.condition_model.online_condition_classifier import (
-    build_online_condition_policy_pipeline,
-)
-
-pipeline = build_online_condition_policy_pipeline(snapshot_path="active")
-
-result = pipeline.process(
-    realtime_row,
-    target=20.0,
-    execution_context={},
-)
-```
-
-`pipeline.process()` 的内部顺序固定为：
+在线顺序：
 
 ```text
-原始实时 row
-→ OnlineConditionClassifier.classify()
-→ 追加第一模块全部 condition 字段
-→ 检查第一/第二模块 active 版本一致性
-→ OnlineSlurryPolicy.evaluate()
-→ 追加第二模块全部输出（slurry_policy_ 前缀）
-→ 返回最终联合结果
+raw realtime row
+→ instant grid / region classification
+→ MAJORITY(6) stability
+→ append all condition fields
+→ Scheme2 integrated-version consistency check
+→ MFAC backend
 ```
 
-P4PC 正式运行也复用这个 `build_online_condition_policy_pipeline()` 和长期 `pipeline.process()`，不是另一套在线算法。
+这里的“MFAC backend”是方案2适配层，不属于第一模块算法。兼容类名 `SlurryPolicyOnlineBridge` 和部分 `slurry_policy_*` alias 暂时保留，仅用于避免旧 P4PC/数据库接口一次性破坏；正式控制所有权属于 MFAC。
 
-实际 DCS 执行后，通过：
+## 9. 方案2必须保留的集成差异
 
-```python
-pipeline.record_execution(feedback)
-```
-
-回传真实执行结果，使第二模块状态机进入实际的 `WAITING_EFFECT`、动作间隔和反向锁流程。
-
-## 10. 使用历史 CSV 快速走完整在线判定链
-
-不再保留模块内的合成 `test_core_regression.py`。需要测试第一+第二模块在线逻辑时，直接运行第一模块在线文件：
-
-```bash
-python system/model/map_control/condition_model/online_condition_classifier.py \
-  --snapshot active \
-  --input <历史测试数据.csv> \
-  --output <online_replay_result.csv> \
-  --target 20
-```
-
-也可以让每行从 CSV 自己读取动态目标：
-
-```bash
-python system/model/map_control/condition_model/online_condition_classifier.py \
-  --snapshot active \
-  --input <历史测试数据.csv> \
-  --output <online_replay_result.csv> \
-  --target-column outlet_so2_target
-```
-
-CSV 会按文件中的现有行顺序逐行进入同一个长期 Pipeline。因此第一模块多数窗口、第二模块 FAST/目标/状态机等运行状态会跨行保留，不会每一行重新初始化。
-
-最终输出 CSV 包含三类字段：
+以下内容不能因为第一模块迁移而退回方案1第二模块：
 
 ```text
-1. 原始历史 CSV 的全部字段
-2. 第一模块在线输出
-   condition_snapshot_version
-   raw_grid_id / stable_grid_id / grid_id
-   condition_label
-   condition_stable
-   condition_switch_state
-   state_key
-   ...
-3. 第二模块在线输出（统一 slurry_policy_ 前缀）
-   slurry_policy_control_mode
-   slurry_policy_disturbance_mode
-   slurry_policy_decision_status
-   slurry_policy_experience_source
-   slurry_policy_action_family
-   slurry_policy_action_direction
-   slurry_policy_action_magnitude
-   slurry_policy_target_supply_flow
-   slurry_policy_target_flow_execution_preview
-   slurry_policy_reason_codes
-   ...
+MFAC_ACTIVE_VERSION_FILE
+MFAC_CORE_BRIDGE_CONFIG
+IntegratedVersionManager 的 MFAC artifact 校验
+MFACUnifiedRuntimePolicy
+DynamicQbase
+Scheme2RuntimeCoordinator
+SO2 / pH 双响应
+shadow safety
 ```
 
-这个 CSV 回放用于检查“在历史现场状态下算法会如何判定和推荐”，不会写 DCS，也默认不会把每个推荐假装成已经执行。历史数据后续的 SO2 是历史真实操作造成的，因此不能把它当作算法推荐动作的反事实控制结果。
-
-如果只想检查第一模块而完全不调用第二模块：
-
-```bash
-python system/model/map_control/condition_model/online_condition_classifier.py \
-  --snapshot active \
-  --input <历史测试数据.csv> \
-  --output <condition_only.csv> \
-  --condition-only
-```
-
-## 11. 在线输出
-
-第一模块保留原始输入字段，并追加稳定接口字段，主要包括：
+安全状态继续保持：
 
 ```text
-condition_snapshot_version
-grid_id
-base_condition_id
-condition_label
-policy_region_id
-region_status
-region_member_count
-coverage_status
-state_key
-condition_experience_source
-condition_valid
-condition_stable
-out_of_range_clipped
-clip_axis
-condition_switch_state
-condition_reason
+LEARN = 0
+Residual = 0
+DCS write = off
 ```
 
-第二模块输出统一加 `slurry_policy_` 前缀，因此不会覆盖第一模块字段。
+## 10. 回归验证
 
-## 12. 版本管理
+第一模块来源一致性：
 
-第一模块不能单独把新快照抢先上线。
-
-正式运行采用：
-
-```text
-condition vN + policy vN
-        ↓
-训练 condition vN+1
-        ↓
-训练 policy vN+1
-        ↓
-验证版本与哈希一致
-        ↓
-原子更新 active_version.json
+```powershell
+D:\anaconda\envs\py3921\python.exe -m unittest discover `
+  -s tests `
+  -p "test_scheme2_first_module_scheme1_parity.py" `
+  -v
 ```
 
-线上始终使用同版本的第一、第二模块组合。
+完整 Scheme2：
 
-## 13. 核心文件
-
-```text
-condition_config.py                 第一模块算法配置
-initial_condition_builder.py        初次训练
-incremental_condition_updater.py    增量训练
-online_condition_classifier.py      第一模块+第二模块统一在线入口 / CSV回放入口
-condition_merger.py                 两工况合并证据判断
-auto_merge_manager.py               自动区域生命周期
-condition_schema.py                 快照/统计结构
-grid_definition.py                  网格映射
-snapshot_io.py                      快照读写
-integrated_version_manager.py       两模块统一版本切换
-online_condition_policy_bridge.py   第一模块→第二模块在线桥接
+```powershell
+D:\anaconda\envs\py3921\python.exe -m unittest discover `
+  -s tests `
+  -p "test_scheme2_*.py" `
+  -v
 ```
+
+迁移完成的判定标准不是“目录看起来相似”，而是：
+
+1. 纯第一模块源码 blob 与方案1基准完全一致；
+2. 第一模块算法参数与方案1完全一致；
+3. ConditionSnapshot / Initial / Incremental / Online 接口合同保持一致；
+4. Scheme2 只在第二模块边界使用 MFAC 适配；
+5. 完整 Scheme2 回归仍通过。
