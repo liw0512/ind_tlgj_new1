@@ -134,6 +134,10 @@ def test_pending_context_shift_pauses_on_insufficient_and_only_stable_clears():
     key = "P15-S1::XP3-AP0"
     state = base.metadata["condition_region_v2"]
     assert key in state["robust_baseline_by_grid_pump"]
+    assert set(state["robust_baseline_dates_by_grid_pump"][key]) == {
+        "2026/07/01",
+        "2026/07/02",
+    }
 
     v002 = _next_snapshot(base, "v002")
     v002, _ = manager.update(
@@ -147,10 +151,15 @@ def test_pending_context_shift_pauses_on_insufficient_and_only_stable_clears():
         ),
         config,
     )
-    pending = v002.metadata["condition_region_v2"]["pending_context_shift_by_grid_pump"][key]
+    state = v002.metadata["condition_region_v2"]
+    pending = state["pending_context_shift_by_grid_pump"][key]
     assert pending["status"] == "SUSPECTED_CONTEXT_SHIFT"
     assert pending["consecutive_supported_versions"] == 1
     assert pending["continuity_state"] == "ACTIVE_SUPPORTED_SHIFT"
+    assert set(state["robust_baseline_dates_by_grid_pump"][key]) == {
+        "2026/07/01",
+        "2026/07/02",
+    }
 
     v003 = _next_snapshot(v002, "v003")
     v003, _ = manager.update(
@@ -169,6 +178,10 @@ def test_pending_context_shift_pauses_on_insufficient_and_only_stable_clears():
     pending = state["pending_context_shift_by_grid_pump"][key]
     assert pending["consecutive_supported_versions"] == 1
     assert pending["continuity_state"] == "PAUSED_INSUFFICIENT_EVIDENCE"
+    assert set(state["robust_baseline_dates_by_grid_pump"][key]) == {
+        "2026/07/01",
+        "2026/07/02",
+    }
 
     v004 = _next_snapshot(v003, "v004")
     v004, _ = manager.update(
@@ -182,9 +195,14 @@ def test_pending_context_shift_pauses_on_insufficient_and_only_stable_clears():
         ),
         config,
     )
-    pending = v004.metadata["condition_region_v2"]["pending_context_shift_by_grid_pump"][key]
+    state = v004.metadata["condition_region_v2"]
+    pending = state["pending_context_shift_by_grid_pump"][key]
     assert pending["consecutive_supported_versions"] == 2
     assert pending["continuity_state"] == "ACTIVE_SUPPORTED_SHIFT"
+    assert set(state["robust_baseline_dates_by_grid_pump"][key]) == {
+        "2026/07/01",
+        "2026/07/02",
+    }
 
     v005 = _next_snapshot(v004, "v005")
     v005, _ = manager.update(
@@ -201,6 +219,12 @@ def test_pending_context_shift_pauses_on_insufficient_and_only_stable_clears():
     state = v005.metadata["condition_region_v2"]
     assert state["last_batch_context_shift_by_grid_pump"][key]["status"] == "STABLE"
     assert key not in state["pending_context_shift_by_grid_pump"]
+    assert set(state["robust_baseline_dates_by_grid_pump"][key]) == {
+        "2026/07/01",
+        "2026/07/02",
+        "2026/07/08",
+        "2026/07/09",
+    }
 
 
 def test_new_grid_pump_stratum_warms_up_before_becoming_baseline():
@@ -252,3 +276,8 @@ def test_new_grid_pump_stratum_warms_up_before_becoming_baseline():
     assert state["last_batch_context_shift_by_grid_pump"][new_key]["status"] == "BASELINE_INITIALIZED"
     assert new_key in state["robust_baseline_by_grid_pump"]
     assert new_key not in state["baseline_warmup_by_grid_pump"]
+    assert set(state["robust_baseline_dates_by_grid_pump"][new_key]) == {
+        "2026/07/03",
+        "2026/07/04",
+        "2026/07/05",
+    }
