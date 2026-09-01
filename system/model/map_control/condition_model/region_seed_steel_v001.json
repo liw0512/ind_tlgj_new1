@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "seed_version": "steel-yyq-so2-v001",
+  "source": "new_data_train_10s.csv data analysis",
+  "axis": {
+    "column": "yyq_SO2",
+    "minimum": 500.0,
+    "maximum": 5000.0,
+    "base_step": 100.0
+  },
+  "robust_liquid_gas": {
+    "minimum": 0.0,
+    "maximum": 100.0,
+    "bin_width": 0.25,
+    "trim_low_quantile": 0.05,
+    "trim_high_quantile": 0.95,
+    "min_batch_samples": 300,
+    "min_baseline_samples": 300,
+    "min_independent_days": 2,
+    "watch_relative_shift": 0.04,
+    "suspect_relative_shift": 0.06,
+    "strong_relative_shift": 0.1,
+    "confirmation_versions": 3
+  },
+  "regions": [
+    {
+      "condition_label": "EDGE_LOW",
+      "minimum": 500.0,
+      "maximum": 900.0,
+      "region_type": "EDGE",
+      "support_level": "LOW",
+      "local_correction_eligible": false
+    },
+    {
+      "condition_label": "C1",
+      "minimum": 900.0,
+      "maximum": 1600.0,
+      "region_type": "CORE",
+      "support_level": "HIGH",
+      "local_correction_eligible": true
+    },
+    {
+      "condition_label": "C2",
+      "minimum": 1600.0,
+      "maximum": 1900.0,
+      "region_type": "CORE",
+      "support_level": "HIGH",
+      "local_correction_eligible": true
+    },
+    {
+      "condition_label": "C3",
+      "minimum": 1900.0,
+      "maximum": 2200.0,
+      "region_type": "CORE",
+      "support_level": "HIGH",
+      "local_correction_eligible": true
+    },
+    {
+      "condition_label": "C4",
+      "minimum": 2200.0,
+      "maximum": 3000.0,
+      "region_type": "CORE_LOW_SUPPORT",
+      "support_level": "MEDIUM",
+      "local_correction_eligible": true
+    },
+    {
+      "condition_label": "EDGE_HIGH",
+      "minimum": 3000.0,
+      "maximum": 5000.0,
+      "region_type": "EDGE",
+      "support_level": "OOD",
+      "local_correction_eligible": false
+    }
+  ]
+}
