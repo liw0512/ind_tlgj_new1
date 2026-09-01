@@ -124,12 +124,14 @@ class SeededRegionManager:
         histograms, dates = self._batch_histograms(rows, config)
 
         robust_baseline: Dict[str, Dict[str, Any]] = {}
+        robust_baseline_dates: Dict[str, set] = {}
         baseline_warmup: Dict[str, Dict[str, Any]] = {}
         baseline_warmup_dates: Dict[str, set] = {}
         for key, histogram in histograms.items():
             observed_days = set(dates.get(key, set()))
             if self._baseline_ready(histogram, observed_days):
                 robust_baseline[key] = histogram
+                robust_baseline_dates[key] = observed_days
             else:
                 baseline_warmup[key] = histogram
                 baseline_warmup_dates[key] = observed_days
@@ -150,6 +152,9 @@ class SeededRegionManager:
             "structural_decision_authority": False,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": robust_baseline,
+            "robust_baseline_dates_by_grid_pump": {
+                key: sorted(value) for key, value in robust_baseline_dates.items()
+            },
             "baseline_warmup_by_grid_pump": baseline_warmup,
             "baseline_warmup_dates_by_grid_pump": {
                 key: sorted(value) for key, value in baseline_warmup_dates.items()
@@ -190,6 +195,9 @@ class SeededRegionManager:
         baseline = deepcopy(
             previous_state.get("robust_baseline_by_grid_pump") or {}
         )
+        baseline_dates = _date_sets(
+            previous_state.get("robust_baseline_dates_by_grid_pump")
+        )
         warmup = deepcopy(
             previous_state.get("baseline_warmup_by_grid_pump") or {}
         )
@@ -214,20 +222,35 @@ class SeededRegionManager:
                     item["latest_shift"] = latest
                     item.pop("latest_drift", None)
 
-        # Backward migration for v001/v002 snapshots created before baseline
-        # warmup existed: immature reference strata are moved out of baseline so
-        # later batches can accumulate toward a valid reference instead of being
-        # permanently stuck at INSUFFICIENT_EVIDENCE.
-        for key in list(baseline):
-            history_days = set(previous_batch_dates.get(key, set()))
-            if self._baseline_ready(baseline[key], history_days):
-                continue
-            warmup[key] = merge_histograms(
-                warmup.get(key),
-                baseline.pop(key),
-                self.robust_config,
-            )
-            warmup_dates.setdefault(key, set()).update(history_days)
+        # Backward migration is performed only for snapshots created before the
+        # warmup fields existed. A mature baseline must never be re-qualified
+        # using the *last incremental batch's* date coverage; that batch is not
+        # the provenance of the long-term reference distribution.
+        legacy_needs_warmup_migration = (
+            "baseline_warmup_by_grid_pump" not in previous_state
+        )
+        if legacy_needs_warmup_migration:
+            legacy_initial_snapshot = previous_snapshot.previous_snapshot_version is None
+            for key in list(baseline):
+                history_days = set(previous_batch_dates.get(key, set()))
+                if legacy_initial_snapshot:
+                    if self._baseline_ready(baseline[key], history_days):
+                        baseline_dates[key] = history_days
+                        continue
+                    warmup[key] = merge_histograms(
+                        warmup.get(key),
+                        baseline.pop(key),
+                        self.robust_config,
+                    )
+                    warmup_dates.setdefault(key, set()).update(history_days)
+                    baseline_dates.pop(key, None)
+                else:
+                    # For an old incremental snapshot the last-batch dates do
+                    # not describe the cumulative baseline. Preserve an already
+                    # published reference rather than demoting it on incomplete
+                    # provenance. Future v1.1 snapshots will persist reference
+                    # dates explicitly.
+                    baseline_dates.setdefault(key, set())
 
         batch_histograms, dates = self._batch_histograms(rows, config)
         context_shift_by_group: Dict[str, Any] = {}
@@ -256,6 +279,7 @@ class SeededRegionManager:
 
                 if self._baseline_ready(combined, combined_days):
                     baseline[key] = combined
+                    baseline_dates[key] = combined_days
                     warmup.pop(key, None)
                     warmup_dates.pop(key, None)
                     pending.pop(key, None)
@@ -303,6 +327,7 @@ class SeededRegionManager:
                     batch_histogram,
                     self.robust_config,
                 )
+                baseline_dates.setdefault(key, set()).update(observed_days)
                 shift["baseline_absorption"] = "ABSORBED"
                 shift["pending_action"] = "CLEARED_IF_PRESENT"
                 pending.pop(key, None)
@@ -378,6 +403,9 @@ class SeededRegionManager:
             "structural_decision_authority": False,
             "robust_liquid_gas_config": self.robust_config.to_dict(),
             "robust_baseline_by_grid_pump": baseline,
+            "robust_baseline_dates_by_grid_pump": {
+                key: sorted(value) for key, value in baseline_dates.items()
+            },
             "baseline_warmup_by_grid_pump": warmup,
             "baseline_warmup_dates_by_grid_pump": {
                 key: sorted(value) for key, value in warmup_dates.items()
