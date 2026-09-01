@@ -28,9 +28,7 @@ from system.model.map_control.condition_model.condition_config import (
 SCHEME1_SOURCE_REPOSITORY = "liw0512/ind_tlgj_new"
 SCHEME1_BASELINE_COMMIT = "0d99e18262dc2b1bf9fb03464de5eb4eb4166d44"
 
-# Exact Git blob ids from Scheme1's condition_model tree at the baseline commit.
 SCHEME1_PURE_CONDITION_BLOBS = {
-    "__init__.py": "e69de29bb2d1d643b8b29ae775ad8c2e48c5391",
     "auto_merge_manager.py": "44b4a6e065818650d4440e5e1ef8f6e43776bbd5",
     "condition_merger.py": "79ccff0a66816fe9ff870fd087ec0904b2c0e62e",
     "condition_schema.py": "c9102fd9ab8fafbb8d047b8319c24ad183d74f22",
@@ -89,6 +87,15 @@ class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
         )
         cls.condition_dir = map_control_root / "condition_model"
         cls.fast_dir = map_control_root / "fast_change_mode"
+
+    def test_condition_package_marker_matches_scheme1_empty_file(self):
+        # Scheme1's package marker is an intentionally empty Git blob.  Assert
+        # the semantic contract directly instead of routing this zero-byte file
+        # through the aggregate mismatch diagnostic.
+        path = self.condition_dir / "__init__.py"
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.read_bytes(), b"")
+        self.assertEqual(_git_blob_sha(path), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
 
     def test_pure_condition_files_are_exact_scheme1_blobs(self):
         _assert_blob_map(
