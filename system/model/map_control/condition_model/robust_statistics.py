@@ -1,21 +1,40 @@
 # -*- coding: utf-8 -*-
-"""Robust incremental statistics for condition-region structure evidence.
+"""Robust incremental statistics for condition-region operating-context evidence.
 
 The first condition module needs two different views of liquid/gas ratio:
 
-1. a long-horizon historical baseline with stable statistical semantics; and
-2. a current incremental-batch distribution used for drift detection.
+1. a long-horizon historical reference distribution with stable semantics; and
+2. a current incremental-batch distribution used for operating-context shift detection.
 
 Quantiles are not additive, so this module stores a fixed histogram rather than
-combining batch-level P05/P50/P95 values.  The histogram is intentionally
-simple and auditable. Values outside the configured physical analysis range are
-counted as under/overflow and never silently clipped into the baseline bins.
+combining batch-level P05/P50/P95 values. The histogram is intentionally simple
+and auditable. Values outside the configured physical analysis range are counted
+as under/overflow and never silently clipped into the baseline bins.
+
+Important semantic boundary:
+liquid/gas ratio is derived from circulation-pump topology and gas flow. A shift
+in this distribution is therefore operating-context evidence, not proof that the
+underlying desulfurization process dynamics have drifted. It must not directly
+merge/split condition regions or replace second-module dynamic validation.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional
+
+
+OPERATING_CONTEXT_EVIDENCE_TYPE = "OPERATING_CONTEXT_DISTRIBUTION_SHIFT"
+STABLE_STATUS = "STABLE"
+WATCH_STATUS = "WATCH"
+SUSPECTED_CONTEXT_SHIFT_STATUS = "SUSPECTED_CONTEXT_SHIFT"
+STRONG_CONTEXT_SHIFT_STATUS = "STRONG_CONTEXT_SHIFT"
+INSUFFICIENT_EVIDENCE_STATUS = "INSUFFICIENT_EVIDENCE"
+ACTIVE_CONTEXT_SHIFT_STATUSES = frozenset({
+    WATCH_STATUS,
+    SUSPECTED_CONTEXT_SHIFT_STATUS,
+    STRONG_CONTEXT_SHIFT_STATUS,
+})
 
 
 @dataclass(frozen=True)
@@ -45,7 +64,7 @@ class RobustHistogramConfig:
             <= self.suspect_relative_shift
             <= self.strong_relative_shift
         ):
-            raise ValueError("drift thresholds must be monotonic")
+            raise ValueError("context-shift thresholds must be monotonic")
 
     @property
     def bin_count(self) -> int:
@@ -257,6 +276,12 @@ def classify_distribution_shift(
     *,
     independent_days: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Classify liquid/gas distribution change as operating-context evidence.
+
+    The returned status intentionally avoids the term ``process drift``. A
+    context shift can later become corroborating evidence for process drift,
+    but only after independent physical/dynamic evidence is available.
+    """
     baseline = summarize_histogram(baseline_histogram, config)
     batch = summarize_histogram(batch_histogram, config)
     d50 = _relative_shift(batch["p50"], baseline["p50"])
@@ -271,15 +296,15 @@ def classify_distribution_shift(
         and batch["in_range_count"] >= config.min_batch_samples
     )
     if not enough_samples or not enough_days or d50 is None:
-        status = "INSUFFICIENT_EVIDENCE"
+        status = INSUFFICIENT_EVIDENCE_STATUS
     elif d50 <= config.watch_relative_shift:
-        status = "STABLE"
+        status = STABLE_STATUS
     elif d50 <= config.suspect_relative_shift:
-        status = "WATCH"
+        status = WATCH_STATUS
     elif d50 <= config.strong_relative_shift:
-        status = "SUSPECTED_DRIFT"
+        status = SUSPECTED_CONTEXT_SHIFT_STATUS
     else:
-        status = "STRONG_SHIFT"
+        status = STRONG_CONTEXT_SHIFT_STATUS
 
     direction = "UNKNOWN"
     if baseline["p50"] is not None and batch["p50"] is not None:
@@ -292,6 +317,8 @@ def classify_distribution_shift(
 
     return {
         "status": status,
+        "evidence_type": OPERATING_CONTEXT_EVIDENCE_TYPE,
+        "structural_evidence": False,
         "direction": direction,
         "independent_days": independent_days,
         "median_relative_shift": d50,
