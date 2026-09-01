@@ -9,6 +9,16 @@ from system.model.map_control.condition_model.seeded_region_manager import (
 )
 
 
+REGION_LABELS = {
+    "EDGE_LOW": "10001",
+    "C1": "10002",
+    "C2": "10003",
+    "C3": "10004",
+    "C4": "10005",
+    "EDGE_HIGH": "10006",
+}
+
+
 def _region(snapshot, label):
     return next(
         region
@@ -27,13 +37,29 @@ def test_steel_seed_regions_cover_all_100mg_base_cells():
     )
 
     assert len(snapshot.grid_catalog) == 45
-    assert len(_region(snapshot, "EDGE_LOW").member_grid_ids) == 4
-    assert len(_region(snapshot, "C1").member_grid_ids) == 7
-    assert len(_region(snapshot, "C2").member_grid_ids) == 3
-    assert len(_region(snapshot, "C3").member_grid_ids) == 3
-    assert len(_region(snapshot, "C4").member_grid_ids) == 8
-    assert len(_region(snapshot, "EDGE_HIGH").member_grid_ids) == 20
+    assert len(_region(snapshot, REGION_LABELS["EDGE_LOW"]).member_grid_ids) == 4
+    assert len(_region(snapshot, REGION_LABELS["C1"]).member_grid_ids) == 7
+    assert len(_region(snapshot, REGION_LABELS["C2"]).member_grid_ids) == 3
+    assert len(_region(snapshot, REGION_LABELS["C3"]).member_grid_ids) == 3
+    assert len(_region(snapshot, REGION_LABELS["C4"]).member_grid_ids) == 8
+    assert len(_region(snapshot, REGION_LABELS["EDGE_HIGH"]).member_grid_ids) == 20
     assert report["automatic_boundary_change_enabled"] is False
+
+
+def test_seeded_region_labels_do_not_overlap_base_condition_ids():
+    config = default_config()
+    snapshot = InitialConditionBuilder(config).build([], "v001")
+    snapshot, _ = SeededRegionManager.from_path().initialize(snapshot, [], config)
+
+    base_labels = {str(index) for index in range(1, len(snapshot.grid_catalog) + 1)}
+    region_labels = {
+        str(region.condition_label)
+        for region in snapshot.policy_regions.values()
+    }
+
+    assert region_labels == set(REGION_LABELS.values())
+    assert region_labels.isdisjoint(base_labels)
+    assert all(label.isdigit() for label in region_labels)
 
 
 def test_incremental_update_keeps_previous_published_regions():
