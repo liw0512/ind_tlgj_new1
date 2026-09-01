@@ -5,13 +5,22 @@ This file deliberately does not replace the production initial/incremental
 entrypoints yet. It reuses the existing base-grid builders and snapshot format,
 then applies the new seeded-region layer. After CSV replay validates the
 migration, the production entrypoints can be switched with a very small diff.
+
+The module supports both package execution (``python -m ...``) and direct script
+execution from the repository root.  Direct execution needs the project root on
+``sys.path`` before importing the top-level ``system`` package.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 
