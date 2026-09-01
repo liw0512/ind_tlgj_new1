@@ -9,9 +9,51 @@ import pandas as pd
 from system.model.map_control.mfac_model import historical_response_window_diagnostic as diag
 
 
-def _frame(start: str = "2026-01-01 00:00:00", points: int = 121) -> pd.DataFrame:
+def _frame(start: str = "2026-01-01 00:00:00", points: int = 181) -> pd.DataFrame:
     timestamps = pd.date_range(start, periods=points, freq="10s")
     return pd.DataFrame({"date": timestamps})
+
+
+class _Event:
+    def __init__(
+        self,
+        *,
+        baseline_flow: float,
+        final_flow: float,
+        start: str = "2026-01-01 00:05:00",
+        end: str = "2026-01-01 00:06:00",
+        complete: bool = True,
+        transition_count: int = 1,
+        duration_minutes: float = 1.0,
+    ) -> None:
+        self.start_time = pd.Timestamp(start)
+        self.end_time = pd.Timestamp(end)
+        self.baseline_flow = float(baseline_flow)
+        self.final_flow = float(final_flow)
+        self.final_delta_flow = float(final_flow - baseline_flow)
+        self.active_duration_minutes = float(duration_minutes)
+        self.transition_count = int(transition_count)
+        self.complete = bool(complete)
+
+        # Optional detector-classifier fields. They make this fixture a valid
+        # SupplyFlowEvent-like object for classify_supply_flow_event().
+        self.peak_flow = max(self.baseline_flow, self.final_flow)
+        self.trough_flow = min(self.baseline_flow, self.final_flow)
+        self.peak_delta_flow = self.peak_flow - self.baseline_flow
+        self.max_abs_delta_flow = abs(self.final_delta_flow)
+        self.extra_slurry_volume = 0.0
+        self.deficit_slurry_volume = 0.0
+        self.signed_slurry_volume = 0.0
+        self.time_to_extreme_minutes = self.active_duration_minutes
+        self.time_from_extreme_to_end_minutes = 0.0
+        self.baseline_noise_sigma = 0.01
+        self.trigger_deadband = 0.1
+
+
+def _audit_frame() -> pd.DataFrame:
+    frame = _frame()
+    frame["yyq_SO2"] = 1500.0
+    return frame
 
 
 class TestScheme2HistoricalResponseWindowDiagnostic(unittest.TestCase):
@@ -71,9 +113,7 @@ class TestScheme2HistoricalResponseWindowDiagnostic(unittest.TestCase):
 
         self.assertLess(float(result["raw_delta"]), 0.0)
         self.assertGreater(float(result["corrected_delta"]), 0.0)
-        self.assertIs(
-            diag.physical_direction_ok("PH", result["corrected_phi"]), True
-        )
+        self.assertIs(diag.physical_direction_ok("PH", result["corrected_phi"]), True)
 
     def test_pretrend_correction_recovers_negative_so2_effect_from_rising_process(self):
         frame = _frame(points=121)
@@ -95,45 +135,62 @@ class TestScheme2HistoricalResponseWindowDiagnostic(unittest.TestCase):
         )
 
         self.assertLess(float(result["corrected_delta"]), 0.0)
-        self.assertIs(
-            diag.physical_direction_ok("SO2", result["corrected_phi"]), True
-        )
+        self.assertIs(diag.physical_direction_ok("SO2", result["corrected_phi"]), True)
 
-    def test_yyq_ll_is_not_used_as_formal_feature_in_event_audit(self):
-        class Event:
-            start_time = pd.Timestamp("2026-01-01 00:05:00")
-            end_time = pd.Timestamp("2026-01-01 00:06:00")
-            final_delta_flow = 3.0
-            baseline_flow = 20.0
-            final_flow = 23.0
-            active_duration_minutes = 1.0
-            transition_count = 1
-            complete = True
-
-        frame = pd.DataFrame(
-            {
-                "date": pd.date_range(
-                    "2026-01-01 00:00:00", periods=121, freq="10s"
-                ),
-                "yyq_SO2": 1500.0,
-                # Intentionally no yyq_LL column.
-            }
-        )
-
+    def _audit_one(self, event: _Event) -> pd.Series:
         audit = diag.build_event_audit(
-            frame,
-            [Event()],
+            _audit_frame(),
+            [event],
             timestamp_column="date",
             baseline_minutes=5.0,
             max_response_end_minutes=13.0,
             min_abs_delta_q=2.0,
             min_operating_flow=5.0,
+            max_timing_action_duration_minutes=20.0,
+            max_timing_transition_count=3,
         )
-
         self.assertEqual(len(audit), 1)
-        self.assertIs(
-            bool(audit.iloc[0]["yyq_ll_used_as_formal_feature"]), False
+        return audit.iloc[0]
+
+    def test_startup_step_is_timing_evidence_but_not_local_gain(self):
+        row = self._audit_one(_Event(baseline_flow=0.0, final_flow=60.0))
+        self.assertEqual(row["flow_evidence_class"], "STARTUP_STEP")
+        self.assertIs(bool(row["timing_eligible"]), True)
+        self.assertIs(bool(row["local_gain_eligible"]), False)
+
+    def test_shutdown_step_is_timing_evidence_but_not_local_gain(self):
+        row = self._audit_one(_Event(baseline_flow=60.0, final_flow=0.0))
+        self.assertEqual(row["flow_evidence_class"], "SHUTDOWN_STEP")
+        self.assertIs(bool(row["timing_eligible"]), True)
+        self.assertIs(bool(row["local_gain_eligible"]), False)
+
+    def test_operating_to_operating_step_can_be_local_gain_candidate(self):
+        row = self._audit_one(_Event(baseline_flow=20.0, final_flow=23.0))
+        self.assertEqual(row["flow_evidence_class"], "LOCAL_STEP")
+        self.assertIs(bool(row["timing_eligible"]), True)
+        self.assertIs(bool(row["local_gain_eligible"]), True)
+
+    def test_low_flow_noise_is_not_timing_evidence(self):
+        row = self._audit_one(_Event(baseline_flow=0.0, final_flow=3.0))
+        self.assertEqual(row["flow_evidence_class"], "LOW_FLOW_TRANSITION")
+        self.assertIs(bool(row["timing_eligible"]), False)
+
+    def test_long_multistage_action_is_not_timing_evidence(self):
+        row = self._audit_one(
+            _Event(
+                baseline_flow=60.0,
+                final_flow=0.0,
+                transition_count=6,
+                duration_minutes=50.0,
+            )
         )
+        self.assertIs(bool(row["timing_eligible"]), False)
+        self.assertIn("ACTION_DURATION_TOO_LONG_FOR_TIMING", row["timing_reasons"])
+        self.assertIn("TOO_MANY_TRANSITIONS_FOR_TIMING", row["timing_reasons"])
+
+    def test_yyq_ll_is_not_used_as_formal_feature_in_event_audit(self):
+        row = self._audit_one(_Event(baseline_flow=20.0, final_flow=23.0))
+        self.assertIs(bool(row["yyq_ll_used_as_formal_feature"]), False)
 
 
 if __name__ == "__main__":
