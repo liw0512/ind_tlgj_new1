@@ -2,7 +2,7 @@
 """Lock Scheme2's full first module to the reviewed Scheme1 source baseline.
 
 The first module is canonical from:
-  liw0512/ind_tlgj_new@0d99e18262dc2b1bf9fb03464de5eb4eb4166d44
+  liw0512/ind_tlgj_new@c78378c3ec18fe08d002141165d8ea6a59f54bfb
 
 Only the module1 -> module2 integration boundary is allowed to differ because
 Scheme2 uses MFAC instead of the retired Scheme1 slurry-policy backend.
@@ -32,10 +32,10 @@ from system.model.map_control.condition_model.condition_config import (
 
 
 SCHEME1_SOURCE_REPOSITORY = "liw0512/ind_tlgj_new"
-SCHEME1_BASELINE_COMMIT = "0d99e18262dc2b1bf9fb03464de5eb4eb4166d44"
+SCHEME1_BASELINE_COMMIT = "c78378c3ec18fe08d002141165d8ea6a59f54bfb"
 
 SCHEME1_PURE_CONDITION_BLOBS = {
-    "auto_merge_manager.py": "44b4a6e065818650d4440e5e1ef8f6e43776bbd5",
+    "auto_merge_manager.py": "c15412cceca6aff2a461cf87e559421ae7622a86",
     "condition_merger.py": "79ccff0a66816fe9ff870fd087ec0904b2c0e62e",
     "condition_schema.py": "c9102fd9ab8fafbb8d047b8319c24ad183d74f22",
     "grid_definition.py": "11c303c9ebce1f411a0197a38ba95d2fa9c0ff47",
