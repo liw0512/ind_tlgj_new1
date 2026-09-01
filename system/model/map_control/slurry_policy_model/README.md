@@ -1,79 +1,143 @@
-# 第二模块：供浆流量动作学习与在线策略
+# 第二模块：物理基准供浆 + 非预测自适应反馈
 
-`slurry_policy_model` 读取第一模块已经标注工况的历史数据，学习实际供浆流量变化与净烟气 SO2、吸收塔 pH 响应之间的关系。第二模块的规范动作是塔级目标供浆流量，不是阀门开度。
-
-## 模块边界
+第二模块当前规范方向已经从 DMC/MPC/未来轨迹预测切换为：
 
 ```text
-第一模块标注后的 10 秒数据
+物料衡算 Qbase
++
+FAST 当前扰动前馈
++
+SO2 自适应反馈
++
+pH 储备反馈/约束
++
+Pending Action 延迟管理
++
+Q_actual -> SO2 / pH 双响应学习
     ↓
-识别实际供浆流量 STEP / PULSE / BOOST_STEP 事件
-    ↓
-过滤泵切换、循环泵变化、工况切换等不可归因片段
-    ↓
-统计峰值、最终流量、持续时间及 SO2 / pH 效果
-    ↓
-生成 supply_flow_prototypes.pkl
-    ↓
-按当前工况、控制需求、安全状态选择流量原型
-    ↓
-输出 TARGET_SUPPLY_FLOW
+TARGET_SUPPLY_FLOW
 ```
 
-本模块不划分工况、不直接写 DCS，也不输出阀门增量。阀位和泵状态可以作为现场状态或监测量保留，但不会成为推荐动作或目标流量不可用时的回退控制量。
+在线控制核心不训练或调用未来 SO2/pH 轨迹预测模型，也不以预测 R2 作为控制验收指标。
 
-## 离线训练
+详细设计见：
 
-输入为第一模块输出的带工况标签 CSV。历史数据中的实际供浆流量用于识别三类动作：
+`BASELINE_ADAPTIVE_FEEDBACK_CONTROL_PLAN.md`
 
-- `STEP`：流量变化后保持在新平台；
-- `PULSE`：流量达到峰值后回到原平台附近；
-- `BOOST_STEP`：先达到强化峰值，再稳定在新的最终平台。
+## 1. 模块边界
 
-只有动作形态可学习、上下文干净、效果窗口完整、工况有效且满足越界规则的片段，才以 `FLOW_ACTION / FLOW_POLICY` 进入原型统计。离线训练不再提取阀门 ACTION/HOLD，也不再生成局部阀门策略、邻近阀门策略或全厂阀门先验。
-
-主要产物：
+第一模块继续提供稳定工况上下文：
 
 ```text
-policy snapshot v###/
-  global/supply_flow_prototypes.pkl
-  valid_episodes.csv
-  invalid_episodes.csv
-  training_summary.json
-  manifest.json
+condition_label / region
+condition_valid
+EDGE / CORE / OOD
+context shift / review state
 ```
 
-初次训练与增量训练均使用同一套 `ACTUAL_SUPPLY_FLOW_V1` 语义。增量版本继承并去重历史流量事件，再与新数据一起重建供浆流量原型。
+第二模块不重新划分工况，只消费这些状态。
 
-## 在线推理
+FAST 模块继续负责当前入口扰动的 level/rate/severity 识别；它在第二模块中用于有限时前馈补偿，而不是用于预测未来轨迹。
 
-在线链路按当前稳定工况、SO2 目标偏差、塔 pH 安全状态和供浆流量原型可靠性选择动作。唯一规范输出为：
+规范动作仍然是塔级：
 
 ```text
 recommendation_type = TARGET_SUPPLY_FLOW
-tower_id
-action_direction
-flow_shape
-current_flow
-target_peak_flow
-target_final_flow
-target_peak_flow_range
-target_final_flow_range
 ```
 
-没有合格原型、流量计不完整、pH 不安全或状态机要求等待时，输出 `HOLD`，不会退回旧阀门建议。
+不直接输出阀门增量，不绕过 Safety Envelope，不直接写 DCS。
 
-## 执行与反馈
+## 2. Qbase
 
-当前 `TargetFlowExecutionAdapter` 为 `DRY_RUN`：它只生成目标流量执行预览并校验方向、目标区间和反馈契约，不执行任何 DCS 写操作。现场执行层完成工程限幅和联锁后，应通过 `record_execution()` 回传真实执行结果。状态机会继续跟踪流量是否到达峰值/最终值，并在响应窗口内评估 SO2 和 pH 效果。
+单位严格的物料衡算实现位于：
 
-## 配置
+`adaptive_feedback/qbase.py`
 
-- 厂级测点与塔结构：`system/model/config/plant_config.py`
-- 第二模块离线/在线参数：`slurry_policy_config.py`
-- 当前规范输出：`ONLINE_POLICY_CONFIG["control_output"]["type"] = "TARGET_SUPPLY_FLOW"`
-- 当前执行边界：`ONLINE_POLICY_CONFIG["target_flow_execution"]["adapter_mode"] = "DRY_RUN"`
+核心：
 
-## 10 秒数据语义
+```text
+removed_SO2_kg_h = (c_in - c_out_target) * G / 1e6
+stoich_CaCO3_kg_h = removed_SO2_kg_h * 100 / 64
+q0 = stoich_CaCO3_kg_h / (purity * solids_fraction * density)
+Qbase = CaS_ref * q0
+```
 
-在线每 10 秒决策一次。第 10 秒输入使用第 8、9、10 秒连续量的均值；0/1 状态量取第 10 秒当前值。离线训练使用基于原始 1 秒 CSV 按同一规则得到的 10 秒语义数据，保证训练与在线一致。
+其中：
+
+- `c_in`：入口 SO2，mg/Nm3；
+- `c_out_target`：目标/设计出口 SO2，不使用当前出口反馈值；
+- `G`：烟气量，Nm3/h；
+- `density`：浆液密度，kg/m3；
+- `solids_fraction`：0..1 质量分数，例如 20% 必须写 0.20；
+- `purity`：石灰石纯度，默认工程值 0.90；
+- `CaS_ref`：基准钙硫比，初版优先固定工程参考值；
+- pH 单独进入反馈/约束层。
+
+SO2 浓度与烟气量必须处在相互一致的标态/干基/O2 基准，代码不会进行只有一侧的隐式 O2 修正。
+
+## 3. 双响应自适应
+
+历史与在线都学习实际执行反馈：
+
+```text
+phi_so2 = Delta(jyq_SO2) / Delta(Q_actual)
+phi_ph  = Delta(pH)      / Delta(Q_actual)
+```
+
+两条响应分别维护 delay、观察窗口、置信度与支持样本。
+
+控制层不要求精确预测未来值，只要求：
+
+- 响应方向可信；
+- 动作增量可解释；
+- 延迟期不重复追加；
+- 响应不足时小步 increment；
+- 过响应时 rollback；
+- 不确定时 HOLD。
+
+## 4. Pending Action
+
+每次有效实际 Q 变化都进入 pending ledger。等待对应 SO2/pH 响应窗口完成前，默认 HOLD；入口扰动继续明显恶化时才允许受限补充动作。
+
+这部分用状态机解决装置延迟，而不是靠未来轨迹预测解决延迟。
+
+## 5. pH
+
+pH 是化学储备状态和安全约束，而不是与 SO2 并列的自由预测目标。
+
+初版建议：
+
+```text
+Q_nominal = Qbase + DeltaQ_FAST
+Q_feedback = Q_nominal + DeltaQ_SO2
+Q_ph_guarded = apply_pH_guard(Q_feedback)
+Q_pending = apply_pending_state(Q_ph_guarded)
+TARGET_SUPPLY_FLOW = SafetyEnvelope(Q_pending)
+```
+
+pH 偏低时提高供浆下限/禁止减浆；pH 偏高且 SO2 已低时促进减浆/rollback。
+
+## 6. 历史原型逻辑
+
+仓库中原有 `STEP / PULSE / BOOST_STEP` 事件检测和历史 `supply_flow_prototypes` 训练路径暂时保留为历史审计/数据提取工具，但它不再代表新的控制核心，也不应被理解为“复制历史人工动作作为最优动作”。
+
+后续可复用其中的事件窗口、执行反馈和效果统计能力来 bootstrap `phi_so2 / phi_ph`，而不是用于 DMC/MPC。
+
+## 7. 执行边界
+
+当前执行层继续保持 DRY_RUN / DCS write off。新的非预测控制器必须先通过长周期 shadow replay，重点验收：
+
+```text
+SO2 超目标时间
+pH 越界时间
+浆液总消耗
+动作次数和 DeltaQ 总变差
+pending 期间重复追加率
+响应有效率
+rollback 命中率
+phi 方向稳定性和置信度
+```
+
+## 8. 10 秒数据语义
+
+在线仍每 10 秒决策一次。连续量采用当前既定的 10 秒语义，离散状态使用当前状态；离线 bootstrap 与在线必须保持同样的数据定义。
