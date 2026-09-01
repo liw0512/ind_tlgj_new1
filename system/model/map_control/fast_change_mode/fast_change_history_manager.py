@@ -31,8 +31,8 @@ from .fast_change_mode_detector import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "system" / "model" / "map_control" / "slurry_policy_model" / "slurry_policy_model_output"
-DEFAULT_RUNTIME_ROOT = PROJECT_ROOT  / "system" / "model" / "map_control" / "slurry_policy_model" / "fast_change_mode_runtime"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "files" / "fast_change_mode_output"
+DEFAULT_RUNTIME_ROOT = PROJECT_ROOT / "files" / "fast_change_mode_runtime"
 
 FAST_CONTEXT_COLUMNS = (
     "fast_change_mode",
