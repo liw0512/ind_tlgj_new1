@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from system.model.config.standard_fields import LIQUID_GAS_RATIO_COLUMN
 from system.model.map_control.condition_model.condition_config import (
     ConditionModelConfig,
 )
@@ -374,7 +375,11 @@ class AutoMergeManager:
         try:
             liquid_gas_count = max(
                 0,
-                int((numeric.get("liquid_gas") or {}).get("count", 0)),
+                int(
+                    (numeric.get(LIQUID_GAS_RATIO_COLUMN) or {}).get(
+                        "count", 0
+                    )
+                ),
             )
         except (TypeError, ValueError):
             liquid_gas_count = 0
