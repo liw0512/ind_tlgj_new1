@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Lock Scheme2's pure first module to the reviewed Scheme1 source baseline.
+"""Lock Scheme2's full first module to the reviewed Scheme1 source baseline.
 
 The first module is canonical from:
   liw0512/ind_tlgj_new@0d99e18262dc2b1bf9fb03464de5eb4eb4166d44
@@ -29,10 +29,8 @@ SCHEME1_SOURCE_REPOSITORY = "liw0512/ind_tlgj_new"
 SCHEME1_BASELINE_COMMIT = "0d99e18262dc2b1bf9fb03464de5eb4eb4166d44"
 
 # Exact Git blob ids from Scheme1's condition_model tree at the baseline commit.
-# These files are pure first-module implementation and therefore must not drift
-# independently inside Scheme2.
-SCHEME1_PURE_MODULE1_BLOBS = {
-    "__init__.py": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+SCHEME1_PURE_CONDITION_BLOBS = {
+    "__init__.py": "e69de29bb2d1d643b8b29ae775ad8c2e48c5391",
     "auto_merge_manager.py": "44b4a6e065818650d4440e5e1ef8f6e43776bbd5",
     "condition_merger.py": "79ccff0a66816fe9ff870fd087ec0904b2c0e62e",
     "condition_schema.py": "c9102fd9ab8fafbb8d047b8319c24ad183d74f22",
@@ -44,8 +42,16 @@ SCHEME1_PURE_MODULE1_BLOBS = {
     "snapshot_io.py": "64200b8ba0270b21fc1d1707ee0d1a455e65500d",
 }
 
-# These source files intentionally require a Scheme2 adapter rather than a
-# byte-for-byte copy because they cross the second-module boundary.
+# FAST_CHANGE is a direct dependency owned by OnlineConditionPolicyPipeline and
+# therefore belongs to the canonical first-module runtime semantics as well.
+SCHEME1_FAST_BLOBS = {
+    "README.md": "b3a427b4ecef9b1c500f1d2b4cb2121cd819a7c2",
+    "__init__.py": "191d659216e01facd400a952994ea592c462264f",
+    "fast_change_config.py": "d46ba12e456379c774130d7cc301ba47b4f3b84d",
+    "fast_change_history_manager.py": "1a0d72746097e5b0efecd7498ac5145b9e4a4ece",
+    "fast_change_mode_detector.py": "f87e98a55150ceb9d44f5232c239bcd934a71a14",
+}
+
 SCHEME2_ADAPTED_BOUNDARY_FILES = {
     "condition_config.py",
     "integrated_online_example.py",
@@ -61,29 +67,43 @@ def _git_blob_sha(path: Path) -> str:
     return hashlib.sha1(header + payload).hexdigest()
 
 
+def _assert_blob_map(testcase, root: Path, expected_map, label: str):
+    mismatches = {}
+    for relative_path, expected_sha in expected_map.items():
+        path = root / relative_path
+        testcase.assertTrue(path.is_file(), f"missing canonical {label} file: {path}")
+        actual_sha = _git_blob_sha(path)
+        if actual_sha != expected_sha:
+            mismatches[relative_path] = (expected_sha, actual_sha)
+    testcase.assertEqual(mismatches, {}, f"Scheme2 {label} drifted from Scheme1 baseline")
+
+
 class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.module_dir = (
+        map_control_root = (
             Path(__file__).resolve().parents[1]
             / "system"
             / "model"
             / "map_control"
-            / "condition_model"
+        )
+        cls.condition_dir = map_control_root / "condition_model"
+        cls.fast_dir = map_control_root / "fast_change_mode"
+
+    def test_pure_condition_files_are_exact_scheme1_blobs(self):
+        _assert_blob_map(
+            self,
+            self.condition_dir,
+            SCHEME1_PURE_CONDITION_BLOBS,
+            "condition-model source",
         )
 
-    def test_pure_first_module_files_are_exact_scheme1_blobs(self):
-        mismatches = {}
-        for relative_path, expected_sha in SCHEME1_PURE_MODULE1_BLOBS.items():
-            path = self.module_dir / relative_path
-            self.assertTrue(path.is_file(), f"missing canonical module1 file: {path}")
-            actual_sha = _git_blob_sha(path)
-            if actual_sha != expected_sha:
-                mismatches[relative_path] = (expected_sha, actual_sha)
-        self.assertEqual(
-            mismatches,
-            {},
-            "Scheme2 pure first-module code drifted from Scheme1 baseline",
+    def test_fast_dependency_files_are_exact_scheme1_blobs(self):
+        _assert_blob_map(
+            self,
+            self.fast_dir,
+            SCHEME1_FAST_BLOBS,
+            "FAST first-module dependency",
         )
 
     def test_condition_merge_parameters_match_scheme1_baseline(self):
@@ -118,8 +138,6 @@ class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
         )
 
     def test_condition_axes_still_come_from_current_plant_contract(self):
-        # Scheme1's module1 design derives plant facts from central plant_config.
-        # Migration must preserve that design while using Scheme2's actual site.
         self.assertEqual(CONDITION_AXES, PLANT_CONFIG["condition_axes"])
 
     def test_first_module_training_interface_matches_scheme1_contract(self):
@@ -156,8 +174,6 @@ class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
         integrated = ONLINE_CONDITION_CLASSIFY_CONFIG["slurry_policy_online"][
             "integrated_version"
         ]
-        # Reload cadence is owned by Scheme2's integrated manager, not duplicated
-        # inside the migrated first-module config.
         self.assertNotIn("reload_check_interval_seconds", integrated)
         self.assertEqual(
             integrated["active_version_file"], str(MFAC_ACTIVE_VERSION_FILE)
