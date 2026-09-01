@@ -19,10 +19,14 @@ GLOBAL_CONDITION_MODEL_TYPE = "GLOBAL_ARX_PLUS_CONDITION_FLOW_CORRECTION_V1"
 class GlobalConditionResponseConfig:
     """Identification settings for ``G_global + delta_G_condition``.
 
-    The global backbone sees the complete strictly-causal feature set.  The
+    The global backbone sees the complete strictly-causal feature set. The
     condition correction is intentionally narrower: it may only correct the
     actual slurry-flow pathway, not relearn arbitrary output/disturbance
     relationships independently inside every 100 mg grid/region.
+
+    The current steel seeded-region contract is also encoded conservatively:
+    EDGE_LOW/EDGE_HIGH are Global-only, while C4 is allowed a local Q-path
+    correction only with stronger shrinkage than C1-C3.
     """
 
     global_ridge_alpha: float = 10.0
@@ -33,6 +37,9 @@ class GlobalConditionResponseConfig:
     minimum_condition_train_rows: int = 300
     shrinkage_reference_rows: float = 2000.0
     condition_column: str = "condition_label"
+    global_only_conditions: tuple[str, ...] = ("10001", "10006")
+    low_support_conditions: tuple[str, ...] = ("10005",)
+    low_support_shrinkage_multiplier: float = 0.5
 
     def validate(self) -> None:
         if self.global_ridge_alpha < 0 or self.condition_ridge_alpha < 0:
@@ -47,6 +54,8 @@ class GlobalConditionResponseConfig:
             raise ValueError("shrinkage_reference_rows must be non-negative")
         if not str(self.condition_column).strip():
             raise ValueError("condition_column cannot be empty")
+        if not 0.0 < float(self.low_support_shrinkage_multiplier) <= 1.0:
+            raise ValueError("low_support_shrinkage_multiplier must be in (0, 1]")
 
 
 @dataclass(frozen=True)
@@ -108,6 +117,26 @@ def _metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
     }
 
 
+def _normalize_condition(value: Any) -> str:
+    if value is None:
+        return "__UNKNOWN__"
+    try:
+        if pd.isna(value):
+            return "__UNKNOWN__"
+    except TypeError:
+        pass
+    text = str(value).strip()
+    if not text:
+        return "__UNKNOWN__"
+    try:
+        numeric = float(text)
+        if np.isfinite(numeric) and numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError):
+        pass
+    return text
+
+
 def _condition_values(
     source: pd.DataFrame,
     training_frame: pd.DataFrame,
@@ -120,8 +149,7 @@ def _condition_values(
         )
     indices = pd.to_numeric(training_frame["source_index"], errors="raise").astype(int)
     values = source.loc[indices, condition_column]
-    values = values.where(values.notna(), "__UNKNOWN__")
-    return values.astype(str).to_numpy()
+    return np.asarray([_normalize_condition(value) for value in values], dtype=object)
 
 
 def _flow_correction_features(feature_names: Iterable[str]) -> tuple[str, ...]:
@@ -148,8 +176,13 @@ def _fit_condition_models(
     name_to_index = {name: index for index, name in enumerate(feature_names)}
     indices = [name_to_index[name] for name in correction_features]
     result: dict[str, dict[str, Any]] = {}
+    global_only = {_normalize_condition(value) for value in config.global_only_conditions}
+    low_support = {_normalize_condition(value) for value in config.low_support_conditions}
 
     for condition in dict.fromkeys(conditions_train.tolist()):
+        condition = _normalize_condition(condition)
+        if condition in global_only:
+            continue
         mask = conditions_train == condition
         row_count = int(np.sum(mask))
         if row_count < config.minimum_condition_train_rows:
@@ -164,9 +197,13 @@ def _fit_condition_models(
 
         reference = float(config.shrinkage_reference_rows)
         shrinkage = 1.0 if reference <= 0 else row_count / (row_count + reference)
-        result[str(condition)] = {
+        support_policy = "CORE_LOCAL_CORRECTION"
+        if condition in low_support:
+            shrinkage *= float(config.low_support_shrinkage_multiplier)
+            support_policy = "LOW_SUPPORT_STRONG_SHRINKAGE"
+        result[condition] = {
             "model_type": "CONDITION_FLOW_RESIDUAL_RIDGE_V1",
-            "condition": str(condition),
+            "condition": condition,
             "training_row_count": row_count,
             "feature_names": list(correction_features),
             "scaler_mean": scaler.mean_.astype(float).tolist(),
@@ -175,6 +212,7 @@ def _fit_condition_models(
             "intercept": float(model.intercept_),
             "shrinkage_factor": float(shrinkage),
             "ridge_alpha": float(config.condition_ridge_alpha),
+            "support_policy": support_policy,
             "semantics": "DELTA_G_CONDITION_ON_Q_PATH_ONLY",
         }
     return result
@@ -187,8 +225,9 @@ def _predict_condition_correction(
     conditions: np.ndarray,
 ) -> np.ndarray:
     correction = np.zeros(len(feature_frame), dtype=float)
+    normalized = np.asarray([_normalize_condition(value) for value in conditions], dtype=object)
     for condition, payload in condition_models.items():
-        mask = conditions == str(condition)
+        mask = normalized == _normalize_condition(condition)
         if not np.any(mask):
             continue
         names = [str(v) for v in payload.get("feature_names", [])]
@@ -218,11 +257,11 @@ def fit_global_condition_response_channel(
     ``G_global`` is a chronological ARX/Ridge model over output history,
     Q_actual history, measured disturbances and configured operating context.
     ``delta_G_condition`` is fit only on the Q features and on training residuals
-    from the global model, with strong support-dependent shrinkage.
+    from the global model, with support-dependent shrinkage.
 
-    This avoids the rejected design of one independent model per 100 mg cell or
-    region while still allowing supported operating conditions to modify the
-    manipulated-path gain/dynamics.
+    This avoids one independent model per 100 mg cell or region. Seeded edge
+    regions remain Global-only; supported core regions may only modify the
+    manipulated Q pathway, and C4 receives stronger shrinkage.
     """
 
     cfg = response_config or GlobalConditionResponseConfig()
@@ -292,7 +331,8 @@ def fit_global_condition_response_channel(
     combined_valid = global_valid + correction_valid
 
     covered_valid = np.asarray(
-        [condition in condition_models for condition in condition_valid], dtype=bool
+        [_normalize_condition(condition) in condition_models for condition in condition_valid],
+        dtype=bool,
     )
     coverage_ratio = float(np.mean(covered_valid)) if len(covered_valid) else 0.0
 
@@ -319,6 +359,8 @@ def fit_global_condition_response_channel(
         "condition_flow_corrections": condition_models,
         "decomposition": "G_CURRENT = G_GLOBAL + DELTA_G_CONDITION",
         "condition_correction_scope": "Q_PATH_ONLY",
+        "edge_policy": "GLOBAL_ONLY",
+        "low_support_policy": "STRONGER_SHRINKAGE",
     }
     validation = {
         "split_mode": "CHRONOLOGICAL_TIME_BLOCK",
@@ -333,9 +375,15 @@ def fit_global_condition_response_channel(
         "condition_correction_validation_coverage_ratio": coverage_ratio,
         "condition_model_count": len(condition_models),
         "condition_train_rows": {
-            str(condition): int(np.sum(condition_train == condition))
+            _normalize_condition(condition): int(np.sum(condition_train == condition))
             for condition in dict.fromkeys(condition_train.tolist())
         },
+        "global_only_conditions": [
+            _normalize_condition(value) for value in cfg.global_only_conditions
+        ],
+        "low_support_conditions": [
+            _normalize_condition(value) for value in cfg.low_support_conditions
+        ],
     }
     return GlobalConditionFitResult(
         model_payload=payload,
@@ -407,10 +455,10 @@ def predict_global_condition_delta(
     scale = np.asarray(backbone["scaler_scale"], dtype=float)
     scale = np.where(np.abs(scale) < 1e-12, 1.0, scale)
     coefficients = np.asarray(backbone["coefficients"], dtype=float)
-    global_prediction = (x - mean) / scale @ coefficients + float(backbone["intercept"])
+    global_prediction = ((x - mean) / scale) @ coefficients + float(backbone["intercept"])
 
     conditions = np.asarray(
-        ["__UNKNOWN__" if value is None else str(value) for value in condition_labels],
+        [_normalize_condition(value) for value in condition_labels],
         dtype=object,
     )
     if len(conditions) != len(feature_frame):
