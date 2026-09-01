@@ -1,4 +1,4 @@
-# Scheme2 MFAC 历史双响应窗口诊断
+# Scheme2 MFAC 历史双响应窗口诊断 V2
 
 ## 目的
 
@@ -14,6 +14,45 @@ historical prior activation = off
 ```
 
 同时不降低现有离线训练与 blocked validation 门槛。
+
+## V2 关键修正：时延证据与局部增益证据分开
+
+首轮诊断错误地要求 timing cohort 的 baseline flow 和 final flow 都大于 5 m3/h。
+实机 `event_audit.csv` 表明这批历史强供浆动作大量属于：
+
+```text
+STARTUP_STEP : 近 0 -> 正常供浆流量
+SHUTDOWN_STEP: 正常供浆流量 -> 近 0
+```
+
+这些动作不适合直接成为 MFAC 局部增益，但仍然包含很有价值的物理响应时延信息。
+
+因此 V2 拆成两套资格：
+
+```text
+TIMING_ONLY
+  可使用清晰 STARTUP / SHUTDOWN / LOCAL_STEP
+  用于：pH / SO2 时延和 measurement window review
+  禁止：将启停动作 apparent phi 发布成 runtime prior
+
+LOCAL_GAIN
+  仅 operating-flow -> operating-flow 的局部阶跃
+  用于：未来 phi_so2 / phi_ph marginal-gain training
+  仍需经过正式 causal/context/blocked-validation gates
+```
+
+默认 timing cohort 还要求：
+
+```text
+complete event = true
+|delta Q| >= 2 m3/h
+无后续动作覆盖最大 response horizon
+active duration <= 20 min
+transition_count <= 3
+至少动作前或动作后有一侧处于 operating flow >= 5 m3/h
+```
+
+这组限制只属于时延探索，不改变正式 MFAC 训练门槛。
 
 ## 当前 review candidate
 
@@ -37,13 +76,7 @@ SO2:
 
 ## 动作前趋势修正
 
-历史人工操作具有明显内生性：经常是 pH / SO2 已经恶化后，操作员才改变供浆，因此简单：
-
-```text
-after - before
-```
-
-可能把原有过程趋势错误归因给供浆动作。
+历史人工操作具有明显内生性：经常是 pH / SO2 已经恶化后，操作员才改变供浆，因此简单 `after - before` 可能把原有过程趋势错误归因给供浆动作。
 
 诊断同时输出：
 
@@ -58,9 +91,7 @@ raw_phi
 corrected_phi
 ```
 
-其中 corrected response 是将动作前 baseline 趋势外推到响应窗口，形成透明的“无动作继续原趋势”参考，再计算实际响应偏差。
-
-这仍然只是历史诊断 counterfactual，不等于最终因果模型。
+注意：STARTUP / SHUTDOWN 的 `raw_phi` / `corrected_phi` 只是 descriptive apparent ratio，用于方向和时延比较，不能当作局部 MFAC 增益。
 
 ## yyq_LL
 
@@ -75,9 +106,15 @@ yyq_LL diagnostic-only = yes
 
 是否未来加入 MFAC，必须后续通过实机数据质量 QA 和 blocked-date A/B validation 证明。
 
-## 本地执行
+## 本地执行环境
 
-假设训练数据位于：
+统一使用：
+
+```text
+D:\anaconda\envs\py3921\python.exe
+```
+
+训练数据：
 
 ```text
 F:\tlgj\files\new_data_train_10s.csv
@@ -94,39 +131,31 @@ git pull origin codex/scheme2-mfac-v1
 ### 2. 先运行新增语义测试
 
 ```powershell
-python -m pytest -q tests\test_scheme2_historical_response_window_diagnostic.py
+D:\anaconda\envs\py3921\python.exe -m unittest discover `
+  -s tests `
+  -p "test_scheme2_historical_response_window_diagnostic.py" `
+  -v
 ```
 
 测试覆盖：
 
 - pH / SO2 窗口独立；
 - 旧 3~13 min 仅保留为 comparison；
-- pH 物理方向 `phi_ph > 0`；
-- SO2 物理方向 `phi_so2 < 0`；
-- 窗口使用 median，可抵抗单点尖峰；
-- pretrend correction 能识别历史操作内生性；
-- `yyq_LL` 不属于正式 MFAC 诊断输入要求。
+- median 响应统计；
+- pretrend correction；
+- STARTUP/SHUTDOWN 可进入 timing，但不能进入 local gain；
+- operating -> operating 才能成为 local-gain diagnostic candidate；
+- 低流量噪声、长时间多阶段动作不进入 timing；
+- `yyq_LL` 不属于正式 MFAC 输入要求。
 
 ### 3. 运行实机历史扫描
 
-从仓库根目录执行：
-
 ```powershell
-python -m system.model.map_control.mfac_model.historical_response_window_diagnostic `
+D:\anaconda\envs\py3921\python.exe `
+  -m system.model.map_control.mfac_model.historical_response_window_diagnostic `
   --csv files\new_data_train_10s.csv `
   --out files\scheme2_response_window_scan
 ```
-
-默认参数：
-
-```text
-baseline = 5 min
-minimum |delta Q| for diagnostic cohort = 2 m3/h
-minimum baseline/final operating flow = 5 m3/h
-maximum response horizon = 13 min
-```
-
-这些只属于诊断 cohort，不会修改正式 MFAC gate。
 
 ## 输出
 
@@ -136,6 +165,7 @@ maximum response horizon = 13 min
 files\scheme2_response_window_scan\event_audit.csv
 files\scheme2_response_window_scan\window_event_details.csv
 files\scheme2_response_window_scan\window_scan_summary.csv
+files\scheme2_response_window_scan\window_scan_by_evidence_class.csv
 files\scheme2_response_window_scan\response_window_scan_report.md
 ```
 
@@ -143,11 +173,10 @@ files\scheme2_response_window_scan\response_window_scan_report.md
 
 1. `response_window_scan_report.md`
 2. `window_scan_summary.csv`
-3. `event_audit.csv`
+3. `window_scan_by_evidence_class.csv`
+4. `event_audit.csv`
 
-若需要逐事件排查，再补：
-
-4. `window_event_details.csv`
+若需要逐事件排查，再补 `window_event_details.csv`。
 
 ## 结果判读顺序
 
@@ -155,17 +184,20 @@ files\scheme2_response_window_scan\response_window_scan_report.md
 
 1. `date_median_direction_rate`
 2. `corrected_direction_rate`
-3. `corrected_phi_relative_mad`
+3. `apparent_corrected_phi_relative_mad`
 4. `independent_days`
 5. `event_count`
 6. raw 与 corrected 的差异
+7. STARTUP_STEP 与 SHUTDOWN_STEP 是否给出一致的窗口趋势
 
 首先比较：
 
 ```text
-PH candidate 5~8 min  vs PH legacy 3~13 min
-SO2 candidate 10~12 min vs SO2 legacy 3~13 min
+PH candidate 5~8 min       vs PH legacy 3~13 min
+SO2 candidate 10~12 min   vs SO2 legacy 3~13 min
 ```
+
+如果 STARTUP 与 SHUTDOWN 对同一窗口给出明显相反结论，不能直接固定时延，需要继续查 action anchor / confounder / pretrend 语义。
 
 ## 下一步正式代码修改条件
 
