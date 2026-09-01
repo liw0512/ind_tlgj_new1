@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover
 DEFAULT_SAMPLE_SECONDS = 10
 DEFAULT_PREDICTION_HORIZON_MINUTES = 10.0
 DEFAULT_CONTROL_HORIZON_MINUTES = 2.0
+DEFAULT_CONDITION_LABEL_COLUMN = "condition_label"
 
 
 def _unique(values: Iterable[str]) -> tuple[str, ...]:
@@ -27,18 +28,40 @@ def _unique(values: Iterable[str]) -> tuple[str, ...]:
 
 
 def measured_disturbance_columns(plant: dict[str, Any]) -> tuple[str, ...]:
-    """Return the plant-defined causal disturbance axes.
+    """Return the plant-defined hard causal disturbance axes.
 
-    The predictive layer deliberately does not hard-code power-plant ``jzfh``
-    or auto-add noisy ``yyq_LL``.  A steel plant may expose only ``yyq_SO2``;
-    a power plant may expose ``jzfh`` and ``yyq_SO2``.  The same code path is
-    therefore reused and only plant parameters change.
+    These are the first-module ``condition_axes``.  For the current steel plant
+    this remains ``yyq_SO2`` only.  Operating-context predictors such as
+    ``yyq_LL`` are deliberately kept separate so adding them to module 2 never
+    changes the stable condition grid.
     """
 
     return _unique(
         str(axis.get("column", ""))
         for axis in (plant.get("condition_axes", []) or [])
         if axis.get("column")
+    )
+
+
+def operating_context_columns(
+    plant: dict[str, Any],
+    predictive_config: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Return slow/auxiliary predictors used only by the response model.
+
+    Plant-specific context must be explicit.  The caller may provide
+    ``predictive_config['context_columns']``; otherwise the optional
+    ``plant['predictive_context_columns']`` list is used.  No realtime monitor
+    signal is auto-promoted into the model merely because it exists.
+    """
+
+    cfg = dict(predictive_config or {})
+    configured = cfg.get("context_columns")
+    if configured is None:
+        configured = plant.get("predictive_context_columns", []) or []
+    disturbances = set(measured_disturbance_columns(plant))
+    return tuple(
+        column for column in _unique(configured) if column not in disturbances
     )
 
 
@@ -70,6 +93,8 @@ class PredictiveFoundationSpec:
     control_horizon_minutes: float
     outlet_so2_column: str
     disturbance_columns: tuple[str, ...]
+    context_columns: tuple[str, ...]
+    condition_label_column: str
     tower_channels: tuple[dict[str, Any], ...]
     shadow_only: bool
 
@@ -96,6 +121,8 @@ class PredictiveFoundationSpec:
             "control_steps": self.control_steps,
             "outlet_so2_column": self.outlet_so2_column,
             "disturbance_columns": list(self.disturbance_columns),
+            "context_columns": list(self.context_columns),
+            "condition_label_column": self.condition_label_column,
             "tower_channels": [dict(item) for item in self.tower_channels],
             "shadow_only": self.shadow_only,
         }
@@ -113,6 +140,7 @@ def build_foundation_spec(
     disturbances = measured_disturbance_columns(plant)
     if not disturbances:
         raise ValueError("plant_config.condition_axes must define at least one disturbance column")
+    contexts = operating_context_columns(plant, cfg)
 
     towers = enabled_tower_channels(plant)
     if not towers:
@@ -126,6 +154,12 @@ def build_foundation_spec(
                 % tower["tower_id"]
             )
 
+    condition_label_column = str(
+        cfg.get("condition_label_column", DEFAULT_CONDITION_LABEL_COLUMN)
+    ).strip()
+    if not condition_label_column:
+        raise ValueError("condition_label_column cannot be empty")
+
     return PredictiveFoundationSpec(
         sample_seconds=sample_seconds,
         prediction_horizon_minutes=float(
@@ -136,7 +170,10 @@ def build_foundation_spec(
         ),
         outlet_so2_column=str(cfg.get("outlet_so2_column", OUTLET_SO2_COLUMN)),
         disturbance_columns=disturbances,
+        context_columns=contexts,
+        condition_label_column=condition_label_column,
         tower_channels=towers,
-        # The new path is explicitly shadow-only until P5 acceptance.
+        # The new path remains explicitly shadow-only until predictive-control
+        # acceptance gates are completed.
         shadow_only=bool(cfg.get("shadow_only", True)),
     )
