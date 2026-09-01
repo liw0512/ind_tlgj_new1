@@ -46,19 +46,20 @@ DEFAULT_TOWER_PH_COLUMNS: Tuple[str, ...] = tuple(
 DEFAULT_EMISSION_LIMIT = float(SITE_PLANT_CONFIG["outlet_so2_safe_range"][1])
 
 
+# 第一模块算法参数以方案1基准
+# liw0512/ind_tlgj_new@0d99e18262dc2b1bf9fb03464de5eb4eb4166d44 为准。
 DEFAULT_MERGE_CONFIG = {
     "enabled": True,
     "mode": "evidence_only",
-    # 原始训练行已从30秒一条调整为10秒一条；样本门槛乘3以保持原观察时长。
-    "min_observed_samples": 30,
-    "min_mature_samples": 90,
-    "min_auto_merge_samples": 300,
-    "min_auto_confirm_samples": 900,
-    "min_common_state_samples": 30,
-    "min_risk_samples": 90,
+    "min_observed_samples": 10,
+    "min_mature_samples": 30,
+    "min_auto_merge_samples": 100,
+    "min_auto_confirm_samples": 300,
+    "min_common_state_samples": 10,
+    "min_risk_samples": 30,
     "min_metric_coverage_ratio": 0.80,
     "min_consecutive_pass_snapshots": 3,
-    "min_new_samples_per_member_for_confirmation": 30,
+    "min_new_samples_per_member_for_confirmation": 10,
     "max_auto_region_cells": 8,
     "max_liquid_gas_relative_difference": 0.15,
     "max_pump_distribution_distance": 0.25,
@@ -68,8 +69,7 @@ DEFAULT_MERGE_CONFIG = {
 
 DEFAULT_ONLINE_CONFIG = {
     "stability_mode": "MAJORITY",
-    # 18个10秒决策帧仍对应原来的3分钟多数窗口。
-    "stability_window_size": 18,
+    "stability_window_size": 6,
     "majority_tie_policy": "KEEP_LAST_STABLE",
     "allow_provisional_region_fallback": True,
 }
@@ -131,12 +131,11 @@ ONLINE_CONDITION_CLASSIFY_CONFIG = {
         "external_version_management": True,
         "integrated_version": {
             "enabled": True,
-            # Single path source: this is the same MFAC active pointer used by
-            # Process4. No retired slurry_policy_model_output path remains.
+            # 方案2仍使用MFAC canonical active pointer；第一模块算法参数与方案1统一，
+            # 但不能把第二模块版本路径重新指回已删除的 slurry_policy_model。
             "active_version_file": str(MFAC_ACTIVE_VERSION_FILE),
             "hot_reload_enabled": True,
-            # No duplicate reload interval is configured here. The integrated
-            # manager owns its default; Process4 may inject its host cadence.
+            "reload_check_interval_seconds": 30.0,
             "verify_condition_snapshot_hash": True,
             "require_atomic_pair_switch": True,
             "reset_condition_stability_window": True,
