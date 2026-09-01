@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Shadow/offline entrypoints for the first-module seeded-region V2 flow.
+"""Validated seeded-region V2 training entrypoints for the first condition module.
 
-This file deliberately does not replace the production initial/incremental
-entrypoints yet. It reuses the existing base-grid builders and snapshot format,
-then applies the new seeded-region layer. After CSV replay validates the
-migration, the production entrypoints can be switched with a very small diff.
+The base-grid statistics remain owned by InitialConditionBuilder and
+IncrementalConditionUpdater. Region publication and operating-context lifecycle
+are handled by HardenedSeededRegionManager. The hardened path explicitly
+bypasses legacy AutoMerge publication, preserves fixed seeded region boundaries,
+and requires explicit review before a confirmed context shift can replace its
+reference baseline.
 
 The module supports both package execution (``python -m ...``) and direct script
 execution from the repository root. Direct execution needs the project root on
@@ -16,7 +18,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Mapping, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
@@ -42,8 +44,8 @@ from system.model.map_control.condition_model.incremental_condition_updater impo
     IncrementalConditionUpdater,
     resolve_incremental_snapshot_target,
 )
-from system.model.map_control.condition_model.seeded_region_manager import (
-    SeededRegionManager,
+from system.model.map_control.condition_model.seeded_region_hardening import (
+    HardenedSeededRegionManager,
 )
 from system.model.map_control.condition_model.snapshot_io import (
     cleanup_old_snapshot_versions,
@@ -52,7 +54,7 @@ from system.model.map_control.condition_model.snapshot_io import (
 )
 
 
-def _write_json(value, path: Optional[str]) -> None:
+def _write_json(value: Any, path: Optional[str]) -> None:
     if not path:
         return
     target = Path(path)
@@ -61,15 +63,19 @@ def _write_json(value, path: Optional[str]) -> None:
         json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
 
 
-def _mark_v2_compatibility_statistics(statistics):
-    """Make legacy merge-statistics semantics explicit for seeded-region V2.
+def _read_optional_mapping(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return {}
+    target = Path(path)
+    with open(target, "r", encoding="utf-8") as stream:
+        value = json.load(stream)
+    if not isinstance(value, Mapping):
+        raise TypeError(f"expected JSON object in {target}")
+    return dict(value)
 
-    ``liquid_gas_mean`` in this compatibility artifact is the raw arithmetic
-    mean retained for old readers. It must not be used as V2 region-structure
-    evidence. Region membership lives in the condition snapshot; robust
-    liquid/gas histograms are operating-context evidence only and cannot by
-    themselves establish process drift or justify region merge/split.
-    """
+
+def _mark_v2_compatibility_statistics(statistics: Dict[str, Any]) -> Dict[str, Any]:
+    """Make legacy merge-statistics semantics explicit for seeded-region V2."""
     statistics["description"] = (
         "Legacy compatibility statistics for condition-label readers. "
         "Raw liquid_gas_mean is retained for backward compatibility only and "
@@ -81,6 +87,8 @@ def _mark_v2_compatibility_statistics(statistics):
         "robust_structure_evidence": None,
         "raw_liquid_gas_mean_is_structural_evidence": False,
         "liquid_gas_context_shift_is_process_drift": False,
+        "legacy_auto_merge_is_active": False,
+        "context_reference_replacement_is_automatic": False,
         "condition_regions_members": (
             "observed base-condition statistics only; use snapshot policy_regions "
             "for full region membership including zero-sample grids"
@@ -110,7 +118,7 @@ def build_initial_seeded_condition_csv(
     rows = frame.to_dict(orient="records")
 
     snapshot = InitialConditionBuilder(config).build(rows, snapshot_version)
-    snapshot, report = SeededRegionManager.from_path(seed_path).initialize(
+    snapshot, report = HardenedSeededRegionManager.from_path(seed_path).initialize(
         snapshot,
         rows,
         config,
@@ -151,6 +159,7 @@ def build_incremental_seeded_condition_csv(
     snapshot_output_path: str = "auto",
     structure_report_path: Optional[str] = None,
     merge_statistics_json_path: Optional[str] = None,
+    context_resolution_path: Optional[str] = None,
     seed_path: Optional[str] = None,
     snapshot_version: str = "auto",
     encoding: str = "utf-8-sig",
@@ -158,6 +167,13 @@ def build_incremental_seeded_condition_csv(
     base_snapshot, resolved_base_snapshot_path = read_latest_available_snapshot(
         base_snapshot_path
     )
+    base_state = (base_snapshot.metadata or {}).get("condition_region_v2") or {}
+    if not base_state:
+        raise RuntimeError(
+            "seeded V2 incremental training cannot silently upgrade a legacy "
+            "AutoMerge snapshot; rebuild a seeded initial snapshot first"
+        )
+
     config = from_dict(base_snapshot.grid_config)
     resolved_output, resolved_version = resolve_incremental_snapshot_target(
         resolved_base_snapshot_path,
@@ -173,17 +189,21 @@ def build_incremental_seeded_condition_csv(
         context="seeded incremental training",
     )
     rows = frame.to_dict(orient="records")
+    resolutions = _read_optional_mapping(context_resolution_path)
 
+    # Important: use only the additive frozen-grid updater here. The legacy
+    # build_incremental_condition_csv() AutoMerge publication path is not called.
     updated = IncrementalConditionUpdater(config).update(
         base_snapshot,
         rows,
         resolved_version,
     )
-    updated, report = SeededRegionManager.from_path(seed_path).update(
+    updated, report = HardenedSeededRegionManager.from_path(seed_path).update(
         updated,
         base_snapshot,
         rows,
         config,
+        context_resolutions=resolutions,
     )
 
     statistics = update_merge_statistics(
@@ -219,7 +239,7 @@ def build_incremental_seeded_condition_csv(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Offline V2 seeded-region training for the first condition module"
+        description="Hardened seeded-region V2 training for the first condition module"
     )
     sub = parser.add_subparsers(dest="mode", required=True)
 
@@ -240,6 +260,14 @@ def main() -> None:
     incremental.add_argument("--snapshot-output", default="auto")
     incremental.add_argument("--structure-report")
     incremental.add_argument("--merge-statistics-output")
+    incremental.add_argument(
+        "--context-resolutions",
+        help=(
+            "optional JSON object keyed by grid+pump stratum; each value is "
+            "KEEP_REFERENCE, ACCEPT_NEW_CONTEXT_BASELINE, SENSOR_OR_DATA_ISSUE, "
+            "or an object containing decision/reviewer/reason/reviewed_at"
+        ),
+    )
     incremental.add_argument("--seed")
     incremental.add_argument("--snapshot-version", default="auto")
     incremental.add_argument("--encoding", default="utf-8-sig")
@@ -264,6 +292,7 @@ def main() -> None:
             snapshot_output_path=args.snapshot_output,
             structure_report_path=args.structure_report,
             merge_statistics_json_path=args.merge_statistics_output,
+            context_resolution_path=args.context_resolutions,
             seed_path=args.seed,
             snapshot_version=args.snapshot_version,
             encoding=args.encoding,
