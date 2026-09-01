@@ -6,9 +6,15 @@ The first module is canonical from:
 
 Only the module1 -> module2 integration boundary is allowed to differ because
 Scheme2 uses MFAC instead of the retired Scheme1 slurry-policy backend.
+
+The source lock is intentionally cross-platform. Git may materialize tracked
+text files as CRLF in a Windows working tree even though the canonical Git blob
+uses LF. Therefore the parity hash normalizes CRLF -> LF before calculating the
+expected Git blob id. Real source changes still change the hash.
 """
 
 import hashlib
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -59,8 +65,13 @@ SCHEME2_ADAPTED_BOUNDARY_FILES = {
 }
 
 
+def _canonical_git_text_bytes(payload: bytes) -> bytes:
+    """Match Git's canonical LF representation for normal tracked text files."""
+    return payload.replace(b"\r\n", b"\n")
+
+
 def _git_blob_sha(path: Path) -> str:
-    payload = path.read_bytes()
+    payload = _canonical_git_text_bytes(path.read_bytes())
     header = f"blob {len(payload)}\0".encode("ascii")
     return hashlib.sha1(header + payload).hexdigest()
 
@@ -87,6 +98,16 @@ class Scheme2FirstModuleScheme1ParityTests(unittest.TestCase):
         )
         cls.condition_dir = map_control_root / "condition_model"
         cls.fast_dir = map_control_root / "fast_change_mode"
+
+    def test_blob_lock_normalizes_windows_crlf_checkout(self):
+        canonical = b"alpha\nbeta\n"
+        expected = hashlib.sha1(
+            f"blob {len(canonical)}\0".encode("ascii") + canonical
+        ).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "sample.py"
+            path.write_bytes(b"alpha\r\nbeta\r\n")
+            self.assertEqual(_git_blob_sha(path), expected)
 
     def test_condition_package_marker_matches_scheme1_empty_file(self):
         # Scheme1's package marker is an intentionally empty Git blob.  Assert
