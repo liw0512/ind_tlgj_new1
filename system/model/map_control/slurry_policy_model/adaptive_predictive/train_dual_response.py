@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Support both invocation styles:
+#   python path/to/train_dual_response.py ...
+#   python -m system.model.map_control.slurry_policy_model.adaptive_predictive.train_dual_response ...
+# When a deeply nested file is executed directly, Python places only that file's
+# directory on sys.path, so the repository-level ``system`` package is otherwise
+# not importable.
+if __package__ in {None, ""}:
+    project_root = Path(__file__).resolve().parents[5]
+    project_root_text = str(project_root)
+    if project_root_text not in sys.path:
+        sys.path.insert(0, project_root_text)
 
 import pandas as pd
 
