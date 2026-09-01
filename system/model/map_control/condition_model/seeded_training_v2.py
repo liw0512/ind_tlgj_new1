@@ -7,7 +7,7 @@ then applies the new seeded-region layer. After CSV replay validates the
 migration, the production entrypoints can be switched with a very small diff.
 
 The module supports both package execution (``python -m ...``) and direct script
-execution from the repository root.  Direct execution needs the project root on
+execution from the repository root. Direct execution needs the project root on
 ``sys.path`` before importing the top-level ``system`` package.
 """
 from __future__ import annotations
@@ -65,9 +65,10 @@ def _mark_v2_compatibility_statistics(statistics):
     """Make legacy merge-statistics semantics explicit for seeded-region V2.
 
     ``liquid_gas_mean`` in this compatibility artifact is the raw arithmetic
-    mean retained for old readers.  It must not be used as V2 region-structure
-    evidence; the authoritative structure lives in the condition snapshot and
-    robust histogram evidence lives in ``metadata.condition_region_v2``.
+    mean retained for old readers. It must not be used as V2 region-structure
+    evidence. Region membership lives in the condition snapshot; robust
+    liquid/gas histograms are operating-context evidence only and cannot by
+    themselves establish process drift or justify region merge/split.
     """
     statistics["description"] = (
         "Legacy compatibility statistics for condition-label readers. "
@@ -76,8 +77,10 @@ def _mark_v2_compatibility_statistics(statistics):
     )
     statistics["v2_semantics"] = {
         "region_membership_authority": "condition_snapshot.policy_regions",
-        "robust_structure_evidence": "condition_snapshot.metadata.condition_region_v2",
+        "robust_operating_context_evidence": "condition_snapshot.metadata.condition_region_v2",
+        "robust_structure_evidence": None,
         "raw_liquid_gas_mean_is_structural_evidence": False,
+        "liquid_gas_context_shift_is_process_drift": False,
         "condition_regions_members": (
             "observed base-condition statistics only; use snapshot policy_regions "
             "for full region membership including zero-sample grids"
