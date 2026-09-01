@@ -2,6 +2,7 @@
   "schema_version": "1.0",
   "seed_version": "steel-yyq-so2-v001",
   "source": "new_data_train_10s.csv data analysis",
+  "label_namespace": "REGION_V2_10000",
   "axis": {
     "column": "yyq_SO2",
     "minimum": 500.0,
@@ -24,7 +25,8 @@
   },
   "regions": [
     {
-      "condition_label": "EDGE_LOW",
+      "condition_label": "10001",
+      "region_name": "EDGE_LOW",
       "minimum": 500.0,
       "maximum": 900.0,
       "region_type": "EDGE",
@@ -32,7 +34,8 @@
       "local_correction_eligible": false
     },
     {
-      "condition_label": "C1",
+      "condition_label": "10002",
+      "region_name": "C1",
       "minimum": 900.0,
       "maximum": 1600.0,
       "region_type": "CORE",
@@ -40,7 +43,8 @@
       "local_correction_eligible": true
     },
     {
-      "condition_label": "C2",
+      "condition_label": "10003",
+      "region_name": "C2",
       "minimum": 1600.0,
       "maximum": 1900.0,
       "region_type": "CORE",
@@ -48,7 +52,8 @@
       "local_correction_eligible": true
     },
     {
-      "condition_label": "C3",
+      "condition_label": "10004",
+      "region_name": "C3",
       "minimum": 1900.0,
       "maximum": 2200.0,
       "region_type": "CORE",
@@ -56,7 +61,8 @@
       "local_correction_eligible": true
     },
     {
-      "condition_label": "C4",
+      "condition_label": "10005",
+      "region_name": "C4",
       "minimum": 2200.0,
       "maximum": 3000.0,
       "region_type": "CORE_LOW_SUPPORT",
@@ -64,7 +70,8 @@
       "local_correction_eligible": true
     },
     {
-      "condition_label": "EDGE_HIGH",
+      "condition_label": "10006",
+      "region_name": "EDGE_HIGH",
       "minimum": 3000.0,
       "maximum": 5000.0,
       "region_type": "EDGE",
