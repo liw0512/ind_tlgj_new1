@@ -5,7 +5,7 @@
 ```text
 repository : liw0512/ind_tlgj_new
 branch     : codex/adaptive-feedback-slurry-v1
-commit     : 0d99e18262dc2b1bf9fb03464de5eb4eb4166d44
+commit     : c78378c3ec18fe08d002141165d8ea6a59f54bfb
 ```
 
 方案2仓库只允许在“第一模块 -> 第二模块”的集成边界上适配 MFAC；第一模块自身的网格、统计、自动合并、ConditionSnapshot、增量更新和在线稳定判定不得单独演化。
@@ -171,6 +171,8 @@ AUTO_CONFIRMED_MERGE
 - 合并区域保持矩形；
 - 区域大小不超过配置上限。
 
+自动合并确认使用的有效证据计数必须读取标准字段 `LIQUID_GAS_RATIO_COLUMN`（当前即 `liquid_gas_ratio`）以及 SO2 风险有效样本数，不能读取退役别名 `liquid_gas`。该合同由 `tests/test_scheme2_condition_auto_merge_evidence.py` 回归锁定。
+
 pH 在第一模块中用于解释性统计，不作为固定网格坐标。单塔/双塔均由中央拓扑配置决定；缺少未启用塔 pH 不应导致第一模块失败。
 
 ## 6. Initial 训练
@@ -187,11 +189,11 @@ raw training data
 → condition + MFAC 同版本验证/激活
 ```
 
-第一模块独立运行：
+第一模块独立运行时推荐使用模块入口，确保项目根目录位于 Python import path：
 
 ```powershell
-D:\anaconda\envs\py3921\python.exe `
-  system\model\map_control\condition_model\initial_condition_builder.py `
+D:\anaconda\envs\py3921\python.exe -m `
+  system.model.map_control.condition_model.initial_condition_builder `
   --input <input.csv> `
   --output <output.csv> `
   --snapshot-output <condition_snapshot.json> `
@@ -265,6 +267,15 @@ DCS write = off
 D:\anaconda\envs\py3921\python.exe -m unittest discover `
   -s tests `
   -p "test_scheme2_first_module_scheme1_parity.py" `
+  -v
+```
+
+自动合并证据合同：
+
+```powershell
+D:\anaconda\envs\py3921\python.exe -m unittest discover `
+  -s tests `
+  -p "test_scheme2_condition_auto_merge_evidence.py" `
   -v
 ```
 
