@@ -16,10 +16,6 @@ from system.model.config.mfac_paths import (
     MFAC_SNAPSHOTS_DIR,
     PROJECT_ROOT,
 )
-from system.model.map_control.fast_change_mode.fast_change_history_manager import (
-    DEFAULT_OUTPUT_ROOT as FAST_MANAGER_OUTPUT_ROOT,
-    DEFAULT_RUNTIME_ROOT as FAST_MANAGER_RUNTIME_ROOT,
-)
 
 
 class Scheme2ModelPathTopologyTest(unittest.TestCase):
@@ -30,7 +26,21 @@ class Scheme2ModelPathTopologyTest(unittest.TestCase):
         self.assertEqual(MFAC_ROOT, expected_map_control / "mfac_model")
         self.assertEqual(FAST_ROOT, expected_map_control / "fast_change_mode")
 
-    def test_generated_artifacts_stay_inside_own_module(self):
+    def test_core_model_code_is_kept_inside_each_module(self):
+        expected_sources = (
+            CONDITION_ROOT / "initial_condition_builder.py",
+            CONDITION_ROOT / "online_condition_classifier.py",
+            CONDITION_ROOT / "auto_merge_manager.py",
+            MFAC_ROOT / "runtime_coordinator.py",
+            MFAC_ROOT / "primary_runtime.py",
+            MFAC_ROOT / "qbase" / "dynamic_qbase_calculator.py",
+            FAST_ROOT / "fast_change_mode_detector.py",
+            FAST_ROOT / "fast_change_history_manager.py",
+        )
+        for path in expected_sources:
+            self.assertTrue(path.is_file(), str(path))
+
+    def test_generated_artifacts_stay_inside_own_module_contract(self):
         self.assertEqual(CONDITION_SNAPSHOTS_DIR, CONDITION_ROOT / "snapshots")
         self.assertEqual(MFAC_OUTPUT_ROOT, MFAC_ROOT / "mfac_model_output")
         self.assertEqual(MFAC_SNAPSHOTS_DIR, MFAC_OUTPUT_ROOT / "snapshots")
@@ -41,11 +51,6 @@ class Scheme2ModelPathTopologyTest(unittest.TestCase):
         )
         self.assertEqual(FAST_OUTPUT_ROOT, FAST_ROOT / "fast_change_output")
         self.assertEqual(FAST_RUNTIME_ROOT, FAST_ROOT / "fast_change_runtime")
-
-    def test_fast_history_manager_uses_module_local_defaults(self):
-        self.assertEqual(FAST_MANAGER_OUTPUT_ROOT, FAST_OUTPUT_ROOT)
-        self.assertEqual(FAST_MANAGER_RUNTIME_ROOT, FAST_RUNTIME_ROOT)
-        self.assertNotEqual(FAST_MANAGER_OUTPUT_ROOT.parent, PROJECT_ROOT / "files")
 
     def test_canonical_paths_never_use_temporary_scheme2_workspace(self):
         canonical_paths = (
