@@ -11,7 +11,7 @@ import pandas as pd
 from .schema import time_column
 
 
-HISTORICAL_EVIDENCE_SEMANTICS_VERSION = "SCHEME2_HISTORICAL_EVIDENCE_V2"
+HISTORICAL_EVIDENCE_SEMANTICS_VERSION = "SCHEME2_HISTORICAL_EVIDENCE_V2_1"
 LOCAL_GAIN_EVIDENCE = "LOCAL_GAIN"
 DYNAMIC_CLEAN_EVIDENCE = "DYNAMIC_CLEAN"
 DISTURBANCE_COUPLED_DYNAMIC_EVIDENCE = "DISTURBANCE_COUPLED_DYNAMIC"
@@ -154,11 +154,11 @@ def attach_canonical_condition_transition_evidence(
 
     HistoricalEpisodeEngine V1 marked an event transient when the point-level
     condition label changed.  The canonical replay diagnostic subsequently
-    proved that some of those changes are boundary jitter filtered by
-    MAJORITY(6).  V2 therefore refuses to infer disturbance coupling from the
-    old context reason alone.  ``DISTURBANCE_COUPLED_DYNAMIC`` is enabled only
-    when the replay says the majority condition changed and at least one formal
-    online ``SWITCHED`` transition occurred during the event.
+    proved both kinds of legacy mismatch: some raw changes are boundary jitter
+    filtered by MAJORITY(6), while a small number of legacy ``valid/CLEAN``
+    events contain a formal canonical switch during the action window.  V2.1
+    therefore treats replay coverage as mandatory whenever canonical evidence
+    is attached and lets the canonical result override the legacy clean flag.
 
     The word *coupled* here means temporal/confounded overlap.  It does not mean
     same-direction response and it must never be interpreted as a causal MFAC
@@ -188,6 +188,15 @@ def attach_canonical_condition_transition_evidence(
     audit["episode_id"] = audit["episode_id"].astype(str)
     if audit["episode_id"].duplicated().any():
         raise ValueError("replay_detail contains duplicate episode_id")
+    replay_ids = set(audit["episode_id"].tolist())
+    missing_episode_ids = sorted(set(episode_ids.tolist()) - replay_ids)
+    if missing_episode_ids:
+        preview = ", ".join(missing_episode_ids[:5])
+        raise KeyError(
+            "canonical replay detail is missing "
+            f"{len(missing_episode_ids)} episode(s): {preview}"
+        )
+
     audit["mfac_formal_condition_switch_count"] = pd.to_numeric(
         audit["formal_online_switched_count"], errors="coerce"
     ).fillna(0).astype(int)
@@ -236,8 +245,9 @@ class HistoricalEvidenceRoutingConfig:
     Magnitude limits for LOCAL_GAIN intentionally have no defaults. Historical
     pulses and large steps may provide dynamic/safety observation evidence, but
     they cannot seed local MFAC sensitivity until a reviewed small-step envelope
-    is supplied explicitly. Process-transition evidence is separately routed as
-    confounded dynamic observation and is never promoted into local gain.
+    is supplied explicitly. Canonical process-transition evidence is separately
+    routed as confounded dynamic observation and is never promoted into local
+    gain, even when the legacy episode artifact had ``valid=True``.
     """
 
     max_local_abs_delta_q: float | None = None
@@ -336,18 +346,24 @@ def _role_decision(
         ph_operating_violation = min(observed_ph) < operating_min or max(observed_ph) > operating_max
 
     dynamic_shape = shape in {item.upper() for item in config.dynamic_shapes}
-    dynamic_clean_eligible = bool(valid and complete and dynamic_shape)
     canonical_changed = _canonical_condition_changed(row)
     process_transition_only = bool(
         _text(row.get("flow_context_reason")) == PROCESS_STATE_CHANGED_REASON
         and _text(row.get("invalid_reason")) == PROCESS_STATE_ONLY_INVALID_REASON
     )
+    legacy_valid_canonical_conflict = bool(valid and canonical_changed)
+
+    # Canonical condition evidence owns the clean/confounded split.  A legacy
+    # ``valid=True`` episode is not DYNAMIC_CLEAN when the causal replay shows a
+    # formal condition switch inside the action window.
+    dynamic_clean_eligible = bool(
+        valid and complete and dynamic_shape and not canonical_changed
+    )
     disturbance_coupled_dynamic_eligible = bool(
-        (not valid)
-        and complete
+        complete
         and dynamic_shape
-        and process_transition_only
         and canonical_changed
+        and (process_transition_only or valid)
     )
     dynamic_observation_eligible = bool(
         dynamic_clean_eligible or disturbance_coupled_dynamic_eligible
@@ -359,11 +375,16 @@ def _role_decision(
         reasons.append("HISTORICAL_EPISODE_NOT_VALID")
     if not complete:
         reasons.append("HISTORICAL_EFFECT_INCOMPLETE")
+    if legacy_valid_canonical_conflict:
+        reasons.append("CANONICAL_CONDITION_TRANSITION_OVERRIDES_LEGACY_CLEAN")
     if process_transition_only and not canonical_changed:
         reasons.append("PROCESS_TRANSITION_NOT_CANONICAL_FORMAL_SWITCH")
     if disturbance_coupled_dynamic_eligible:
         reasons.append("DISTURBANCE_COUPLED_TEMPORAL_CONFOUNDING")
-        reasons.append("LOCAL_GAIN_BLOCKED_BY_PROCESS_TRANSITION")
+        if legacy_valid_canonical_conflict:
+            reasons.append("LOCAL_GAIN_BLOCKED_BY_CANONICAL_CONDITION_TRANSITION")
+        else:
+            reasons.append("LOCAL_GAIN_BLOCKED_BY_PROCESS_TRANSITION")
     if safety_evidence:
         reasons.append("PH_OUTSIDE_OPERATING_ENVELOPE")
     if ph_safe_violation:
@@ -372,8 +393,11 @@ def _role_decision(
     local_gain_eligible = bool(
         valid
         and complete
+        and not canonical_changed
         and shape in {item.upper() for item in config.local_shapes}
     )
+    if canonical_changed:
+        reasons.append("LOCAL_GAIN_BLOCKED_BY_CANONICAL_CONDITION_TRANSITION")
     if config.max_local_abs_delta_q is None or config.max_local_extra_slurry_volume is None:
         local_gain_eligible = False
         reasons.append("LOCAL_GAIN_MAGNITUDE_LIMITS_UNCALIBRATED")
@@ -413,8 +437,9 @@ def _role_decision(
             reasons.append("LOCAL_GAIN_PH_DIRECTION_INVALID")
 
     # A phi is published only after the independent LOCAL_GAIN gate passes.
-    # Dynamic-only evidence, especially process-transition evidence, may never
-    # leak an observational ratio into bootstrap/runtime local-gain priors.
+    # Dynamic-only evidence, especially canonical condition-transition evidence,
+    # may never leak an observational ratio into bootstrap/runtime local-gain
+    # priors.
     phi_so2 = candidate_phi_so2 if local_gain_eligible else None
     phi_ph = candidate_phi_ph if local_gain_eligible else None
 
@@ -447,6 +472,7 @@ def _role_decision(
             "extra_slurry_volume_m3": total_extra,
             "canonical_condition_changed": canonical_changed,
             "process_transition_only": process_transition_only,
+            "legacy_valid_canonical_conflict": legacy_valid_canonical_conflict,
             "dynamic_clean_eligible": dynamic_clean_eligible,
             "disturbance_coupled_dynamic_eligible": disturbance_coupled_dynamic_eligible,
             "dynamic_observation_eligible": dynamic_observation_eligible,
@@ -545,7 +571,7 @@ def enrich_historical_episode_frame(
     plant: Mapping[str, Any],
     routing_config: HistoricalEvidenceRoutingConfig | Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Add dose/safety metrics and non-exclusive MFAC Evidence Role V2."""
+    """Add dose/safety metrics and non-exclusive MFAC Evidence Role V2.1."""
     if episodes.empty:
         return episodes.copy()
     config = (
