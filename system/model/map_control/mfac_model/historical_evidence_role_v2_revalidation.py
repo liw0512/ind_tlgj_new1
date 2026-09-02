@@ -70,9 +70,30 @@ def _read_episode_files(paths: Sequence[str | Path]) -> pd.DataFrame:
     return result
 
 
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "on"}
+
+
+def _truth_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(False, index=frame.index, dtype=bool)
+    return frame[column].map(_bool_value).astype(bool)
+
+
 def _process_transition_only_mask(frame: pd.DataFrame) -> pd.Series:
     if frame.empty:
-        return pd.Series(dtype=bool)
+        return pd.Series(False, index=frame.index, dtype=bool)
     context = frame.get("flow_context_reason", pd.Series("", index=frame.index)).fillna("").astype(str)
     invalid = frame.get("invalid_reason", pd.Series("", index=frame.index)).fillna("").astype(str)
     return context.eq(PROCESS_STATE_CHANGED_REASON) & invalid.eq(
@@ -153,9 +174,9 @@ def revalidate_historical_evidence_roles(
 
 
 def _sum_bool(frame: pd.DataFrame, column: str) -> int:
-    if frame.empty or column not in frame.columns:
+    if frame.empty:
         return 0
-    return int(frame[column].fillna(False).astype(bool).sum())
+    return int(_truth_series(frame, column).sum())
 
 
 def _count_role(frame: pd.DataFrame, role: str) -> int:
@@ -173,10 +194,7 @@ def _count_role(frame: pd.DataFrame, role: str) -> int:
 
 def build_role_v2_summary(frame: pd.DataFrame) -> dict[str, Any]:
     process_mask = _process_transition_only_mask(frame)
-    non_local_mask = ~frame.get(
-        "mfac_independent_local_gain_eligible",
-        pd.Series(False, index=frame.index),
-    ).fillna(False).astype(bool)
+    non_local_mask = ~_truth_series(frame, "mfac_independent_local_gain_eligible")
     phi_so2 = pd.to_numeric(
         frame.get("mfac_phi_so2_event", pd.Series(index=frame.index, dtype=float)),
         errors="coerce",
@@ -185,16 +203,16 @@ def build_role_v2_summary(frame: pd.DataFrame) -> dict[str, Any]:
         frame.get("mfac_phi_ph_event", pd.Series(index=frame.index, dtype=float)),
         errors="coerce",
     )
-    disturbance_mask = frame.get(
-        "mfac_disturbance_coupled_dynamic_eligible",
-        pd.Series(False, index=frame.index),
-    ).fillna(False).astype(bool)
+    disturbance_mask = _truth_series(
+        frame, "mfac_disturbance_coupled_dynamic_eligible"
+    )
+    valid_count = _sum_bool(frame, "valid")
 
     return {
         "semantics_version": HISTORICAL_EVIDENCE_SEMANTICS_VERSION,
         "input_episode_count": int(len(frame)),
-        "original_valid_count": _sum_bool(frame, "valid"),
-        "original_invalid_count": int(len(frame) - _sum_bool(frame, "valid")),
+        "original_valid_count": valid_count,
+        "original_invalid_count": int(len(frame) - valid_count),
         "canonical_condition_changed_count": _sum_bool(
             frame, "mfac_canonical_condition_changed"
         ),
