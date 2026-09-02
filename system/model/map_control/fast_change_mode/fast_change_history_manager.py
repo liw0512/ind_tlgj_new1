@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 
 import pandas as pd
 
+from system.model.config.mfac_paths import FAST_OUTPUT_ROOT, FAST_RUNTIME_ROOT
 from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG
 from system.model.config.standard_fields import TARGET_SO2_COLUMN, TIME_COLUMN
 
@@ -30,9 +31,8 @@ from .fast_change_mode_detector import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "files" / "fast_change_mode_output"
-DEFAULT_RUNTIME_ROOT = PROJECT_ROOT / "files" / "fast_change_mode_runtime"
+DEFAULT_OUTPUT_ROOT = FAST_OUTPUT_ROOT
+DEFAULT_RUNTIME_ROOT = FAST_RUNTIME_ROOT
 
 FAST_CONTEXT_COLUMNS = (
     "fast_change_mode",
