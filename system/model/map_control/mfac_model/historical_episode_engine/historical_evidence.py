@@ -11,12 +11,20 @@ import pandas as pd
 from .schema import time_column
 
 
-HISTORICAL_EVIDENCE_SEMANTICS_VERSION = "SCHEME2_HISTORICAL_EVIDENCE_V1"
+HISTORICAL_EVIDENCE_SEMANTICS_VERSION = "SCHEME2_HISTORICAL_EVIDENCE_V2"
 LOCAL_GAIN_EVIDENCE = "LOCAL_GAIN"
-DYNAMIC_EVIDENCE = "DYNAMIC"
+DYNAMIC_CLEAN_EVIDENCE = "DYNAMIC_CLEAN"
+DISTURBANCE_COUPLED_DYNAMIC_EVIDENCE = "DISTURBANCE_COUPLED_DYNAMIC"
+# Source-compatibility alias for callers that imported the V1 symbol.  In V2 the
+# old generic DYNAMIC role is intentionally replaced by DYNAMIC_CLEAN.
+DYNAMIC_EVIDENCE = DYNAMIC_CLEAN_EVIDENCE
 SAFETY_EVIDENCE = "SAFETY"
 DEFAULT_DOSE_HORIZONS_MINUTES = (3, 5, 10, 20, 30)
 DEFAULT_RESPONSE_HORIZON_MINUTES = 60
+PROCESS_STATE_CHANGED_REASON = "PROCESS_STATE_CHANGED_DURING_EVENT"
+PROCESS_STATE_ONLY_INVALID_REASON = (
+    "FLOW_CONTEXT_NOT_CLEAN:PROCESS_STATE_CHANGED_DURING_EVENT"
+)
 
 
 def _finite(value: Any) -> float | None:
@@ -138,14 +146,98 @@ def _duration_above(
     return float(np.sum(dt_seconds[active]) / 60.0)
 
 
+def attach_canonical_condition_transition_evidence(
+    episodes: pd.DataFrame,
+    replay_detail: pd.DataFrame,
+) -> pd.DataFrame:
+    """Attach canonical MAJORITY/formal-switch evidence by ``episode_id``.
+
+    HistoricalEpisodeEngine V1 marked an event transient when the point-level
+    condition label changed.  The canonical replay diagnostic subsequently
+    proved that some of those changes are boundary jitter filtered by
+    MAJORITY(6).  V2 therefore refuses to infer disturbance coupling from the
+    old context reason alone.  ``DISTURBANCE_COUPLED_DYNAMIC`` is enabled only
+    when the replay says the majority condition changed and at least one formal
+    online ``SWITCHED`` transition occurred during the event.
+
+    The word *coupled* here means temporal/confounded overlap.  It does not mean
+    same-direction response and it must never be interpreted as a causal MFAC
+    local gain.
+    """
+    if episodes.empty:
+        result = episodes.copy()
+        result["mfac_canonical_condition_changed"] = pd.Series(dtype=bool)
+        result["mfac_formal_condition_switch_count"] = pd.Series(dtype=int)
+        return result
+    if "episode_id" not in episodes.columns:
+        raise KeyError("episodes is missing required column 'episode_id'")
+    required = {
+        "episode_id",
+        "majority_condition_changed",
+        "formal_online_switched_count",
+    }
+    missing = sorted(required - set(replay_detail.columns))
+    if missing:
+        raise KeyError("replay_detail is missing required columns: " + ", ".join(missing))
+
+    episode_ids = episodes["episode_id"].dropna().astype(str)
+    if episode_ids.duplicated().any():
+        raise ValueError("episodes contains duplicate episode_id")
+
+    audit = replay_detail[list(required)].copy()
+    audit["episode_id"] = audit["episode_id"].astype(str)
+    if audit["episode_id"].duplicated().any():
+        raise ValueError("replay_detail contains duplicate episode_id")
+    audit["mfac_formal_condition_switch_count"] = pd.to_numeric(
+        audit["formal_online_switched_count"], errors="coerce"
+    ).fillna(0).astype(int)
+    audit["mfac_majority_condition_changed"] = audit[
+        "majority_condition_changed"
+    ].fillna(False).astype(bool)
+    audit["mfac_canonical_condition_changed"] = (
+        audit["mfac_majority_condition_changed"]
+        & (audit["mfac_formal_condition_switch_count"] > 0)
+    )
+    audit = audit[
+        [
+            "episode_id",
+            "mfac_majority_condition_changed",
+            "mfac_formal_condition_switch_count",
+            "mfac_canonical_condition_changed",
+        ]
+    ]
+
+    result = episodes.copy()
+    result["episode_id"] = result["episode_id"].astype(str)
+    for column in (
+        "mfac_majority_condition_changed",
+        "mfac_formal_condition_switch_count",
+        "mfac_canonical_condition_changed",
+    ):
+        if column in result.columns:
+            result.drop(columns=[column], inplace=True)
+    result = result.merge(audit, on="episode_id", how="left", validate="one_to_one")
+    result["mfac_majority_condition_changed"] = result[
+        "mfac_majority_condition_changed"
+    ].fillna(False).astype(bool)
+    result["mfac_formal_condition_switch_count"] = pd.to_numeric(
+        result["mfac_formal_condition_switch_count"], errors="coerce"
+    ).fillna(0).astype(int)
+    result["mfac_canonical_condition_changed"] = result[
+        "mfac_canonical_condition_changed"
+    ].fillna(False).astype(bool)
+    return result
+
+
 @dataclass(frozen=True)
 class HistoricalEvidenceRoutingConfig:
     """Offline-only routing policy for historical actual-flow events.
 
-    Magnitude limits for LOCAL_GAIN intentionally have no defaults.  Historical
-    pulses and large steps can still provide DYNAMIC/SAFETY evidence, but they
-    cannot seed local MFAC sensitivity until a reviewed small-step envelope is
-    supplied explicitly.
+    Magnitude limits for LOCAL_GAIN intentionally have no defaults. Historical
+    pulses and large steps may provide dynamic/safety observation evidence, but
+    they cannot seed local MFAC sensitivity until a reviewed small-step envelope
+    is supplied explicitly. Process-transition evidence is separately routed as
+    confounded dynamic observation and is never promoted into local gain.
     """
 
     max_local_abs_delta_q: float | None = None
@@ -178,17 +270,33 @@ class HistoricalEvidenceRoutingConfig:
 class HistoricalEvidenceDecision:
     roles: tuple[str, ...]
     local_gain_eligible: bool
-    dynamic_eligible: bool
+    dynamic_clean_eligible: bool
+    disturbance_coupled_dynamic_eligible: bool
+    dynamic_observation_eligible: bool
     safety_evidence: bool
     reasons: tuple[str, ...] = ()
     metrics: dict[str, Any] = field(default_factory=dict)
     semantics_version: str = HISTORICAL_EVIDENCE_SEMANTICS_VERSION
 
+    @property
+    def dynamic_eligible(self) -> bool:
+        """Backward-compatible V1 view of any usable dynamic observation."""
+        return self.dynamic_observation_eligible
+
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["roles"] = list(self.roles)
         value["reasons"] = list(self.reasons)
+        value["dynamic_eligible"] = self.dynamic_eligible
         return value
+
+
+def _canonical_condition_changed(row: Mapping[str, Any]) -> bool:
+    if "mfac_canonical_condition_changed" in row:
+        return _bool(row.get("mfac_canonical_condition_changed"), False)
+    majority = _bool(row.get("majority_condition_changed"), False)
+    formal_count = _finite(row.get("formal_online_switched_count"))
+    return bool(majority and formal_count is not None and formal_count > 0.0)
 
 
 def _role_decision(
@@ -227,7 +335,23 @@ def _role_decision(
     if observed_ph:
         ph_operating_violation = min(observed_ph) < operating_min or max(observed_ph) > operating_max
 
-    dynamic_eligible = bool(valid and complete and shape in {item.upper() for item in config.dynamic_shapes})
+    dynamic_shape = shape in {item.upper() for item in config.dynamic_shapes}
+    dynamic_clean_eligible = bool(valid and complete and dynamic_shape)
+    canonical_changed = _canonical_condition_changed(row)
+    process_transition_only = bool(
+        _text(row.get("flow_context_reason")) == PROCESS_STATE_CHANGED_REASON
+        and _text(row.get("invalid_reason")) == PROCESS_STATE_ONLY_INVALID_REASON
+    )
+    disturbance_coupled_dynamic_eligible = bool(
+        (not valid)
+        and complete
+        and dynamic_shape
+        and process_transition_only
+        and canonical_changed
+    )
+    dynamic_observation_eligible = bool(
+        dynamic_clean_eligible or disturbance_coupled_dynamic_eligible
+    )
     safety_evidence = bool(ph_operating_violation or ph_safe_violation)
 
     reasons: list[str] = []
@@ -235,6 +359,11 @@ def _role_decision(
         reasons.append("HISTORICAL_EPISODE_NOT_VALID")
     if not complete:
         reasons.append("HISTORICAL_EFFECT_INCOMPLETE")
+    if process_transition_only and not canonical_changed:
+        reasons.append("PROCESS_TRANSITION_NOT_CANONICAL_FORMAL_SWITCH")
+    if disturbance_coupled_dynamic_eligible:
+        reasons.append("DISTURBANCE_COUPLED_TEMPORAL_CONFOUNDING")
+        reasons.append("LOCAL_GAIN_BLOCKED_BY_PROCESS_TRANSITION")
     if safety_evidence:
         reasons.append("PH_OUTSIDE_OPERATING_ENVELOPE")
     if ph_safe_violation:
@@ -260,33 +389,51 @@ def _role_decision(
         local_gain_eligible = False
         reasons.append("LOCAL_GAIN_PH_NOT_IN_OPERATING_ENVELOPE")
 
-    phi_so2 = None
-    phi_ph = None
+    candidate_phi_so2 = None
+    candidate_phi_ph = None
     if delta_q is not None and abs(delta_q) > 1e-12:
         if delta_so2 is not None:
-            phi_so2 = delta_so2 / delta_q
+            candidate_phi_so2 = delta_so2 / delta_q
         if delta_ph is not None:
-            phi_ph = delta_ph / delta_q
+            candidate_phi_ph = delta_ph / delta_q
     if config.require_dual_physical_direction:
-        if phi_so2 is None or not math.isfinite(phi_so2) or phi_so2 >= 0.0:
+        if (
+            candidate_phi_so2 is None
+            or not math.isfinite(candidate_phi_so2)
+            or candidate_phi_so2 >= 0.0
+        ):
             local_gain_eligible = False
             reasons.append("LOCAL_GAIN_SO2_DIRECTION_INVALID")
-        if phi_ph is None or not math.isfinite(phi_ph) or phi_ph <= 0.0:
+        if (
+            candidate_phi_ph is None
+            or not math.isfinite(candidate_phi_ph)
+            or candidate_phi_ph <= 0.0
+        ):
             local_gain_eligible = False
             reasons.append("LOCAL_GAIN_PH_DIRECTION_INVALID")
+
+    # A phi is published only after the independent LOCAL_GAIN gate passes.
+    # Dynamic-only evidence, especially process-transition evidence, may never
+    # leak an observational ratio into bootstrap/runtime local-gain priors.
+    phi_so2 = candidate_phi_so2 if local_gain_eligible else None
+    phi_ph = candidate_phi_ph if local_gain_eligible else None
 
     roles: list[str] = []
     if local_gain_eligible:
         roles.append(LOCAL_GAIN_EVIDENCE)
-    if dynamic_eligible:
-        roles.append(DYNAMIC_EVIDENCE)
+    if dynamic_clean_eligible:
+        roles.append(DYNAMIC_CLEAN_EVIDENCE)
+    if disturbance_coupled_dynamic_eligible:
+        roles.append(DISTURBANCE_COUPLED_DYNAMIC_EVIDENCE)
     if safety_evidence:
         roles.append(SAFETY_EVIDENCE)
 
     return HistoricalEvidenceDecision(
         roles=tuple(roles),
         local_gain_eligible=local_gain_eligible,
-        dynamic_eligible=dynamic_eligible,
+        dynamic_clean_eligible=dynamic_clean_eligible,
+        disturbance_coupled_dynamic_eligible=disturbance_coupled_dynamic_eligible,
+        dynamic_observation_eligible=dynamic_observation_eligible,
         safety_evidence=safety_evidence,
         reasons=tuple(dict.fromkeys(reasons)),
         metrics={
@@ -298,6 +445,11 @@ def _role_decision(
             "phi_so2_event": phi_so2,
             "phi_ph_event": phi_ph,
             "extra_slurry_volume_m3": total_extra,
+            "canonical_condition_changed": canonical_changed,
+            "process_transition_only": process_transition_only,
+            "dynamic_clean_eligible": dynamic_clean_eligible,
+            "disturbance_coupled_dynamic_eligible": disturbance_coupled_dynamic_eligible,
+            "dynamic_observation_eligible": dynamic_observation_eligible,
             "ph_before": ph_before,
             "ph_after": ph_after,
             "ph_response_min": ph_response_min,
@@ -393,7 +545,7 @@ def enrich_historical_episode_frame(
     plant: Mapping[str, Any],
     routing_config: HistoricalEvidenceRoutingConfig | Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Add dose/safety metrics and non-exclusive MFAC evidence roles."""
+    """Add dose/safety metrics and non-exclusive MFAC Evidence Role V2."""
     if episodes.empty:
         return episodes.copy()
     config = (
@@ -407,8 +559,25 @@ def enrich_historical_episode_frame(
         enriched.update(_trajectory_metrics(record, history, plant))
         decision = _role_decision(enriched, plant, config)
         enriched["mfac_evidence_roles"] = "|".join(decision.roles)
+        # V1 compatibility field: still means independent local-gain eligibility.
         enriched["mfac_local_gain_eligible"] = bool(decision.local_gain_eligible)
-        enriched["mfac_dynamic_evidence_eligible"] = bool(decision.dynamic_eligible)
+        enriched["mfac_independent_local_gain_eligible"] = bool(
+            decision.local_gain_eligible
+        )
+        # V1 compatibility field now means any usable dynamic observation, not
+        # an independent local-gain sample.
+        enriched["mfac_dynamic_evidence_eligible"] = bool(
+            decision.dynamic_observation_eligible
+        )
+        enriched["mfac_dynamic_observation_eligible"] = bool(
+            decision.dynamic_observation_eligible
+        )
+        enriched["mfac_dynamic_clean_eligible"] = bool(
+            decision.dynamic_clean_eligible
+        )
+        enriched["mfac_disturbance_coupled_dynamic_eligible"] = bool(
+            decision.disturbance_coupled_dynamic_eligible
+        )
         enriched["mfac_safety_evidence"] = bool(decision.safety_evidence)
         enriched["mfac_evidence_reasons"] = "|".join(decision.reasons)
         enriched["mfac_evidence_metrics"] = json.dumps(
@@ -425,9 +594,12 @@ __all__ = [
     "HISTORICAL_EVIDENCE_SEMANTICS_VERSION",
     "LOCAL_GAIN_EVIDENCE",
     "DYNAMIC_EVIDENCE",
+    "DYNAMIC_CLEAN_EVIDENCE",
+    "DISTURBANCE_COUPLED_DYNAMIC_EVIDENCE",
     "SAFETY_EVIDENCE",
     "DEFAULT_DOSE_HORIZONS_MINUTES",
     "HistoricalEvidenceRoutingConfig",
     "HistoricalEvidenceDecision",
+    "attach_canonical_condition_transition_evidence",
     "enrich_historical_episode_frame",
 ]
