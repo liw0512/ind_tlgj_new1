@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from system.model.Process4MapControlMFAC import ProcessForMapConsole
+from system.model.Process4MapControl import ProcessForMapConsole
 from system.model.config.mfac_plant_contract import ph_arbitration_plant_values
 from system.model.config.process4map_config import PROCESS4MAP_CONFIG
 from system.model.map_control.condition_model.online_condition_policy_bridge import (

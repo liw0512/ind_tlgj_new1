@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from system.model.Process4MapControlMFAC import ProcessForMapConsole
+from system.model.Process4MapControl import ProcessForMapConsole
 from system.model.map_control.mfac_model.online_adaptation import (
     MFACOnlineAdaptationConfig,
 )

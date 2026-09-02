@@ -3,7 +3,7 @@ import traceback
 
 from system.base.LogUntil import setup_log
 from system.base.config.SysConfig import config
-from system.model.Process4MapControlMFAC import ProcessForMapConsole
+from system.model.Process4MapControl import ProcessForMapConsole
 
 logging = setup_log("data_client_main")
 
@@ -14,9 +14,9 @@ class DataClientMain:
     P4PC 自己从 GLOBAL_DATA['data'] 消费最新帧并负责过滤表/模型结果表写库。
     旧 DataClientMain.insert_data -> t_data1_rt_* 链已删除，避免重复存储同一份实时数据。
 
-    当前正式实例使用 ``Process4MapControlMFAC.ProcessForMapConsole``：复用原 P4PC
-    数据/训练/数据库外壳，但第二模块只执行统一 MFAC runtime，不再额外运行
-    ``_run_scheme2_shadow`` 的第二套 Qbase/target 计算。
+    当前正式实例只使用 ``Process4MapControl.ProcessForMapConsole``。该唯一入口
+    统一编排 condition_model、MFAC 与 FAST，不再存在独立的
+    ``Process4MapControlMFAC`` 生产入口，也不再额外运行第二套 Qbase/target 计算。
     """
 
     def __init__(self, GLOBAL_DATA):
