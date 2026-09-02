@@ -44,10 +44,13 @@ class Scheme2HistoricalEvidenceRoleV2RevalidationTest(unittest.TestCase):
 
     def _episodes(self):
         clean = self._base_episode("CLEAN", valid=True)
+        legacy_clean_switch = self._base_episode("LEGACY_CLEAN_SWITCH", valid=True)
         disturbance = self._base_episode("DIST", valid=False)
         incomplete = self._base_episode("INCOMPLETE", valid=False, complete=False)
         filtered = self._base_episode("FILTERED", valid=False)
-        return pd.DataFrame([clean, disturbance, incomplete, filtered])
+        return pd.DataFrame(
+            [clean, legacy_clean_switch, disturbance, incomplete, filtered]
+        )
 
     @staticmethod
     def _replay():
@@ -57,6 +60,11 @@ class Scheme2HistoricalEvidenceRoleV2RevalidationTest(unittest.TestCase):
                     "episode_id": "CLEAN",
                     "majority_condition_changed": False,
                     "formal_online_switched_count": 0,
+                },
+                {
+                    "episode_id": "LEGACY_CLEAN_SWITCH",
+                    "majority_condition_changed": True,
+                    "formal_online_switched_count": 1,
                 },
                 {
                     "episode_id": "DIST",
@@ -90,6 +98,23 @@ class Scheme2HistoricalEvidenceRoleV2RevalidationTest(unittest.TestCase):
         self.assertTrue(pd.isna(clean["mfac_phi_so2_event"]))
         self.assertTrue(pd.isna(clean["mfac_phi_ph_event"]))
 
+        legacy_clean_switch = result.loc["LEGACY_CLEAN_SWITCH"]
+        self.assertTrue(bool(legacy_clean_switch["mfac_canonical_condition_changed"]))
+        self.assertFalse(bool(legacy_clean_switch["mfac_dynamic_clean_eligible"]))
+        self.assertTrue(
+            bool(legacy_clean_switch["mfac_disturbance_coupled_dynamic_eligible"])
+        )
+        self.assertTrue(bool(legacy_clean_switch["mfac_dynamic_observation_eligible"]))
+        self.assertFalse(
+            bool(legacy_clean_switch["mfac_independent_local_gain_eligible"])
+        )
+        self.assertTrue(pd.isna(legacy_clean_switch["mfac_phi_so2_event"]))
+        self.assertTrue(pd.isna(legacy_clean_switch["mfac_phi_ph_event"]))
+        self.assertIn(
+            "CANONICAL_CONDITION_TRANSITION_OVERRIDES_LEGACY_CLEAN",
+            legacy_clean_switch["mfac_evidence_reasons"],
+        )
+
         disturbance = result.loc["DIST"]
         self.assertFalse(bool(disturbance["mfac_dynamic_clean_eligible"]))
         self.assertTrue(bool(disturbance["mfac_disturbance_coupled_dynamic_eligible"]))
@@ -110,12 +135,18 @@ class Scheme2HistoricalEvidenceRoleV2RevalidationTest(unittest.TestCase):
             self._episodes(), self._replay(), plant=PLANT_CONFIG, routing_config={}
         )
         summary = build_role_v2_summary(result)
-        self.assertEqual(summary["input_episode_count"], 4)
-        self.assertEqual(summary["original_valid_count"], 1)
+        self.assertEqual(summary["input_episode_count"], 5)
+        self.assertEqual(summary["original_valid_count"], 2)
         self.assertEqual(summary["original_invalid_count"], 3)
+        self.assertEqual(summary["canonical_transition_on_original_valid_count"], 1)
+        self.assertEqual(
+            summary["canonical_valid_reclassified_to_disturbance_count"], 1
+        )
+        self.assertEqual(summary["dynamic_clean_canonical_transition_count"], 0)
+        self.assertEqual(summary["local_gain_canonical_transition_count"], 0)
         self.assertEqual(summary["dynamic_clean_count"], 1)
-        self.assertEqual(summary["disturbance_coupled_dynamic_count"], 1)
-        self.assertEqual(summary["dynamic_observation_count"], 2)
+        self.assertEqual(summary["disturbance_coupled_dynamic_count"], 2)
+        self.assertEqual(summary["dynamic_observation_count"], 3)
         self.assertEqual(summary["local_gain_count"], 0)
         self.assertEqual(summary["disturbance_coupled_phi_non_null_count"], 0)
         self.assertEqual(summary["non_local_gain_phi_non_null_count"], 0)
@@ -124,8 +155,8 @@ class Scheme2HistoricalEvidenceRoleV2RevalidationTest(unittest.TestCase):
             "TEMPORAL_CONFOUNDED_OVERLAP_NOT_CAUSAL_GAIN",
         )
 
-    def test_missing_process_transition_replay_evidence_fails_closed(self):
-        replay = self._replay().loc[lambda frame: frame["episode_id"] != "DIST"]
+    def test_missing_any_replay_evidence_fails_closed(self):
+        replay = self._replay().loc[lambda frame: frame["episode_id"] != "CLEAN"]
         with self.assertRaises(KeyError):
             revalidate_historical_evidence_roles(
                 self._episodes(), replay, plant=PLANT_CONFIG, routing_config={}
