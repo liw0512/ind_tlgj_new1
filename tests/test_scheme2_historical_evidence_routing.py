@@ -122,6 +122,41 @@ class HistoricalEvidenceRoutingTest(unittest.TestCase):
         self.assertLess(float(metrics["phi_so2_event"]), 0.0)
         self.assertGreater(float(metrics["phi_ph_event"]), 0.0)
 
+    def test_canonical_transition_overrides_legacy_valid_clean_and_blocks_phi(self):
+        config = HistoricalEvidenceRoutingConfig(
+            max_local_abs_delta_q=5.0,
+            max_local_extra_slurry_volume=2.0,
+        )
+        result = enrich_historical_episode_frame(
+            pd.DataFrame([self.episode(canonical_changed=True)]),
+            self.history(),
+            PLANT_CONFIG,
+            config,
+        ).iloc[0]
+        self.assertFalse(bool(result["mfac_local_gain_eligible"]))
+        self.assertFalse(bool(result["mfac_independent_local_gain_eligible"]))
+        self.assertFalse(bool(result["mfac_dynamic_clean_eligible"]))
+        self.assertTrue(bool(result["mfac_disturbance_coupled_dynamic_eligible"]))
+        self.assertTrue(bool(result["mfac_dynamic_observation_eligible"]))
+        self.assertNotIn(DYNAMIC_CLEAN_EVIDENCE, result["mfac_evidence_roles"])
+        self.assertIn(
+            DISTURBANCE_COUPLED_DYNAMIC_EVIDENCE,
+            result["mfac_evidence_roles"],
+        )
+        self.assertNotIn(LOCAL_GAIN_EVIDENCE, result["mfac_evidence_roles"])
+        self.assertIn(
+            "CANONICAL_CONDITION_TRANSITION_OVERRIDES_LEGACY_CLEAN",
+            result["mfac_evidence_reasons"],
+        )
+        self.assertIn(
+            "LOCAL_GAIN_BLOCKED_BY_CANONICAL_CONDITION_TRANSITION",
+            result["mfac_evidence_reasons"],
+        )
+        metrics = json.loads(result["mfac_evidence_metrics"])
+        self.assertTrue(bool(metrics["legacy_valid_canonical_conflict"]))
+        self.assertIsNone(metrics["phi_so2_event"])
+        self.assertIsNone(metrics["phi_ph_event"])
+
     def test_pulse_stays_clean_dynamic_and_never_local_gain(self):
         config = HistoricalEvidenceRoutingConfig(
             max_local_abs_delta_q=100.0,
@@ -228,6 +263,25 @@ class HistoricalEvidenceRoutingTest(unittest.TestCase):
         attached = attach_canonical_condition_transition_evidence(episodes, replay)
         flags = attached.set_index("episode_id")["mfac_canonical_condition_changed"].to_dict()
         self.assertEqual(flags, {"FORMAL": True, "FILTERED": False, "NO_FORMAL": False})
+
+    def test_canonical_replay_attachment_fails_closed_on_any_missing_episode(self):
+        episodes = pd.DataFrame(
+            [
+                dict(self.episode(), episode_id="CLEAN"),
+                dict(self.process_transition_episode(), episode_id="DIST"),
+            ]
+        ).drop(columns=["mfac_canonical_condition_changed"])
+        replay = pd.DataFrame(
+            [
+                {
+                    "episode_id": "DIST",
+                    "majority_condition_changed": True,
+                    "formal_online_switched_count": 1,
+                }
+            ]
+        )
+        with self.assertRaises(KeyError):
+            attach_canonical_condition_transition_evidence(episodes, replay)
 
     def test_operating_ph_excursion_becomes_safety_evidence_and_blocks_local_gain(self):
         config = HistoricalEvidenceRoutingConfig(
