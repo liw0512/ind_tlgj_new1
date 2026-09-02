@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Offline Evidence Role V2 revalidation overlay.
+"""Offline Evidence Role V2.1 revalidation overlay.
 
 This module intentionally does not modify HistoricalEpisodeEngine extraction or
 ConditionSnapshot generation.  It consumes already-produced episode artifacts
 plus the canonical MAJORITY/formal-switch replay audit and reroutes evidence
-under ``SCHEME2_HISTORICAL_EVIDENCE_V2``.
+under ``SCHEME2_HISTORICAL_EVIDENCE_V2_1``.
 
 The overlay is read-only with respect to runtime authority: it cannot enable
 online LEARN, Residual control, or DCS write.  In particular,
 ``DISTURBANCE_COUPLED_DYNAMIC`` means temporal/confounded overlap with a
 canonical process transition.  It is never a causal local-gain sample and never
-publishes ``phi_so2``/``phi_ph``.
+publishes ``phi_so2``/``phi_ph``.  Canonical replay owns the clean/confounded
+split and may therefore override a legacy ``valid/CLEAN`` episode classification.
 """
 
 from __future__ import annotations
@@ -109,14 +110,13 @@ def _require_replay_coverage(
         return
     if "episode_id" not in replay_detail.columns:
         raise KeyError("replay detail is missing required column 'episode_id'")
-    process_mask = _process_transition_only_mask(episodes)
-    target_ids = set(episodes.loc[process_mask, "episode_id"].dropna().astype(str))
+    target_ids = set(episodes["episode_id"].dropna().astype(str))
     replay_ids = set(replay_detail["episode_id"].dropna().astype(str))
     missing = sorted(target_ids - replay_ids)
     if missing:
         preview = ", ".join(missing[:5])
         raise KeyError(
-            f"canonical replay detail is missing {len(missing)} process-transition episodes: {preview}"
+            f"canonical replay detail is missing {len(missing)} episode(s): {preview}"
         )
 
 
@@ -127,7 +127,7 @@ def revalidate_historical_evidence_roles(
     plant: Mapping[str, Any] = PLANT_CONFIG,
     routing_config: HistoricalEvidenceRoutingConfig | Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Apply Evidence Role V2 to existing episode artifacts without re-extraction."""
+    """Apply Evidence Role V2.1 to existing episode artifacts without re-extraction."""
     if episodes.empty:
         return episodes.copy()
     _require_replay_coverage(episodes, replay_detail)
@@ -194,7 +194,11 @@ def _count_role(frame: pd.DataFrame, role: str) -> int:
 
 def build_role_v2_summary(frame: pd.DataFrame) -> dict[str, Any]:
     process_mask = _process_transition_only_mask(frame)
-    non_local_mask = ~_truth_series(frame, "mfac_independent_local_gain_eligible")
+    valid_mask = _truth_series(frame, "valid")
+    canonical_mask = _truth_series(frame, "mfac_canonical_condition_changed")
+    local_gain_mask = _truth_series(frame, "mfac_independent_local_gain_eligible")
+    dynamic_clean_mask = _truth_series(frame, "mfac_dynamic_clean_eligible")
+    non_local_mask = ~local_gain_mask
     phi_so2 = pd.to_numeric(
         frame.get("mfac_phi_so2_event", pd.Series(index=frame.index, dtype=float)),
         errors="coerce",
@@ -206,15 +210,25 @@ def build_role_v2_summary(frame: pd.DataFrame) -> dict[str, Any]:
     disturbance_mask = _truth_series(
         frame, "mfac_disturbance_coupled_dynamic_eligible"
     )
-    valid_count = _sum_bool(frame, "valid")
+    valid_count = int(valid_mask.sum())
 
     return {
         "semantics_version": HISTORICAL_EVIDENCE_SEMANTICS_VERSION,
         "input_episode_count": int(len(frame)),
         "original_valid_count": valid_count,
         "original_invalid_count": int(len(frame) - valid_count),
-        "canonical_condition_changed_count": _sum_bool(
-            frame, "mfac_canonical_condition_changed"
+        "canonical_condition_changed_count": int(canonical_mask.sum()),
+        "canonical_transition_on_original_valid_count": int(
+            (canonical_mask & valid_mask).sum()
+        ),
+        "canonical_valid_reclassified_to_disturbance_count": int(
+            (canonical_mask & valid_mask & disturbance_mask).sum()
+        ),
+        "dynamic_clean_canonical_transition_count": int(
+            (canonical_mask & dynamic_clean_mask).sum()
+        ),
+        "local_gain_canonical_transition_count": int(
+            (canonical_mask & local_gain_mask).sum()
         ),
         "process_transition_only_count": int(process_mask.sum()),
         "local_gain_count": _count_role(frame, LOCAL_GAIN_EVIDENCE),
@@ -281,7 +295,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Revalidate existing historical episode artifacts under canonical-aware "
-            "Scheme-2 MFAC Evidence Role V2."
+            "Scheme-2 MFAC Evidence Role V2.1."
         )
     )
     parser.add_argument(
@@ -299,7 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         replay_detail_csv=args.replay_detail,
         output_dir=args.output_dir,
     )
-    print("========== HISTORICAL EVIDENCE ROLE V2 REVALIDATION ==========")
+    print("========== HISTORICAL EVIDENCE ROLE V2.1 REVALIDATION ==========")
     for key, value in result.items():
         print(f"{key}: {value}")
     return 0
