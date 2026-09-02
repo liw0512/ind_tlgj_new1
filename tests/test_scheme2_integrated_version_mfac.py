@@ -36,7 +36,7 @@ class Scheme2IntegratedVersionMFACPointerTest(unittest.TestCase):
         self.assertEqual(pointer.mfac_version, "v007")
         self.assertEqual(pointer.mfac_source_condition_version, "v007")
         self.assertEqual(
-            str(pointer.mfac_snapshot_path),
+            pointer.mfac_snapshot_path.as_posix(),
             "/tmp/mfac-v007-manifest.json",
         )
         self.assertEqual(pointer.mfac_manifest_sha256, "def")
@@ -61,7 +61,7 @@ class Scheme2IntegratedVersionMFACPointerTest(unittest.TestCase):
         pointer = normalize_pointer(legacy)
         self.assertEqual(pointer.mfac_version, "v003")
         self.assertEqual(
-            str(pointer.mfac_snapshot_path),
+            pointer.mfac_snapshot_path.as_posix(),
             "/tmp/mfac-v003-manifest.json",
         )
 
