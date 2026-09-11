@@ -38,6 +38,9 @@ from .historical_episode_engine.condition_snapshot_bridge import (
     remap_episode_conditions,
     validate_input_frame_alignment,
 )
+from .historical_episode_engine.historical_evidence import (
+    HISTORICAL_EVIDENCE_SEMANTICS_VERSION,
+)
 from .historical_episode_engine.pipeline import prepare_raw_data, run_episode_pipeline
 from .historical_episode_engine.schema import condition_axis_columns, time_column
 from .historical_sensitivity_training_pipeline import (
@@ -59,6 +62,14 @@ from .offline_training_config import (
 
 MFAC_OFFLINE_VERSION_TRAINING_VERSION = (
     "SCHEME2_MFAC_OFFLINE_VERSION_TRAINING_V2_CANONICAL_MAJORITY_REPLAY"
+)
+
+_PREVIOUS_EVIDENCE_REQUIRED_COLUMNS = (
+    "mfac_evidence_semantics_version",
+    "mfac_canonical_condition_changed",
+    "mfac_dynamic_clean_eligible",
+    "mfac_disturbance_coupled_dynamic_eligible",
+    "mfac_dynamic_observation_eligible",
 )
 
 
@@ -220,6 +231,44 @@ def _previous_version_from_snapshot(previous_snapshot: Optional[str]) -> str:
         return ""
 
 
+def _validate_previous_episode_evidence_semantics(previous: pd.DataFrame) -> None:
+    """Fail closed when incremental carry-forward predates Evidence Role V2.1.
+
+    Incremental training must never inherit a cumulative episode store that was
+    produced before canonical MAJORITY replay owned the clean/confounded split.
+    Otherwise a legacy ``valid=True`` row could bypass the disturbance firewall
+    simply because its artifact lacks the canonical evidence columns.
+    """
+    if previous.empty:
+        return
+
+    missing = [
+        column
+        for column in _PREVIOUS_EVIDENCE_REQUIRED_COLUMNS
+        if column not in previous.columns
+    ]
+    if missing:
+        raise ValueError(
+            "previous MFAC cumulative episode store predates canonical Evidence "
+            "Role V2.1; missing columns=%s. Rebuild one full INITIAL baseline "
+            "before incremental training."
+            % ",".join(missing)
+        )
+
+    versions = {
+        str(value).strip()
+        for value in previous["mfac_evidence_semantics_version"].dropna().tolist()
+        if str(value).strip()
+    }
+    if versions != {HISTORICAL_EVIDENCE_SEMANTICS_VERSION}:
+        raise ValueError(
+            "previous MFAC cumulative episode store has unsupported/mixed "
+            "evidence semantics=%s; expected only %s. Rebuild one full INITIAL "
+            "baseline before incremental training."
+            % (sorted(versions), HISTORICAL_EVIDENCE_SEMANTICS_VERSION)
+        )
+
+
 def _load_previous_cumulative_episodes(
     output_root: Path,
     previous_version: str,
@@ -240,6 +289,7 @@ def _load_previous_cumulative_episodes(
             "previous_episode_count": 0,
         }
     previous = pd.read_csv(previous_path, low_memory=False)
+    _validate_previous_episode_evidence_semantics(previous)
     remapped, summary, unresolved = remap_episode_conditions(
         previous,
         current_index,
@@ -252,6 +302,7 @@ def _load_previous_cumulative_episodes(
         "status": "PREVIOUS_EPISODES_REMAPPED",
         "previous_version": previous_version,
         "previous_episode_count": int(len(previous)),
+        "evidence_semantics_version": HISTORICAL_EVIDENCE_SEMANTICS_VERSION,
         "remap_summary": summary,
     }
 
