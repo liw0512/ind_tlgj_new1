@@ -5,16 +5,12 @@ Large operator pulses are never reclassified as direct LOCAL_GAIN.  This adapter
 selects clean DYNAMIC evidence and converts it into the event-level training
 frame consumed by the robust marginal-gain trainer.
 
-V2 separates two very different ideas that used to share one rejection flag:
-
-* offline snapshot remap: an old, already-completed episode is reassigned by its
-  immutable grid_id when ConditionSnapshot vN changes to vN+1;
-* within-event drift: grid/condition changed while the physical action/response
-  was happening.
-
-The first may be explicitly accepted by the periodic offline lifecycle so
-historical evidence can accumulate across versions.  The second remains a
-causal-contamination blocker.
+V3 keeps the V2 distinction between offline snapshot remap and within-event
+condition drift, and adds an explicit fail-closed firewall for canonical
+condition-transition evidence.  ``DISTURBANCE_COUPLED_DYNAMIC`` may remain
+useful as confounded dynamic/safety evidence, but it must never enter the
+model-based local-gain route even when a legacy artifact still says
+``valid=True`` or exposes the generic dynamic-eligibility compatibility flag.
 """
 
 from __future__ import annotations
@@ -28,7 +24,7 @@ from .context_resolver import MFACContextResolver
 
 
 HISTORICAL_MODEL_BASED_GAIN_ADAPTER_VERSION = (
-    "SCHEME2_HISTORICAL_MODEL_BASED_GAIN_ADAPTER_V2_REMAP_SEPARATED"
+    "SCHEME2_HISTORICAL_MODEL_BASED_GAIN_ADAPTER_V3_DISTURBANCE_FIREWALL"
 )
 
 
@@ -98,6 +94,15 @@ def _reject_reason(
     row: Mapping[str, Any],
     config: HistoricalModelBasedGainAdapterConfig,
 ) -> str:
+    # V2.1 canonical condition-transition evidence is a hard causal firewall.
+    # Check it before legacy ``valid`` / generic dynamic flags so an old
+    # ``valid=True`` row can never slip into a local-gain model merely because
+    # it still carries the backward-compatible dynamic eligibility bit.
+    if (
+        _bool(row.get("mfac_disturbance_coupled_dynamic_eligible"), False)
+        or _bool(row.get("mfac_canonical_condition_changed"), False)
+    ):
+        return "DISTURBANCE_COUPLED_DYNAMIC_EXCLUDED_FROM_LOCAL_GAIN_MODEL"
     if not _bool(row.get("valid"), False):
         return "EPISODE_INVALID"
     if not _bool(row.get("flow_effect_complete"), False):
