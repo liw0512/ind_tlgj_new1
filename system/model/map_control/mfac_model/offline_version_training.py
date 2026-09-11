@@ -6,7 +6,8 @@ module fills the missing second-module work:
 
 first-module labelled CSV + exact ConditionSnapshot
     -> strict snapshot/grid/condition alignment check
-    -> canonical HistoricalEpisodeEngine
+    -> canonical online-MAJORITY replay over the same ConditionSnapshot
+    -> canonical HistoricalEpisodeEngine + V2.1 evidence routing
     -> cumulative historical episode store (old episodes remapped by grid_id)
     -> scalar dual-response historical sensitivity candidates
     -> date-blocked validation
@@ -30,6 +31,7 @@ import pandas as pd
 
 from system.model.config.plant_config import PLANT_CONFIG as SITE_PLANT_CONFIG
 from system.model.config.standard_fields import OUTLET_SO2_COLUMN
+from system.model.map_control.condition_model.snapshot_io import read_snapshot
 
 from .historical_episode_engine.condition_snapshot_bridge import (
     load_condition_snapshot_index,
@@ -56,7 +58,7 @@ from .offline_training_config import (
 
 
 MFAC_OFFLINE_VERSION_TRAINING_VERSION = (
-    "SCHEME2_MFAC_OFFLINE_VERSION_TRAINING_V1_CUMULATIVE_EPISODES"
+    "SCHEME2_MFAC_OFFLINE_VERSION_TRAINING_V2_CANONICAL_MAJORITY_REPLAY"
 )
 
 
@@ -305,6 +307,12 @@ def train_mfac_offline_version(
     if not input_path.is_file():
         raise FileNotFoundError("MFAC offline input not found: %s" % input_path)
     current_index = load_condition_snapshot_index(condition_snapshot)
+    canonical_snapshot = read_snapshot(condition_snapshot)
+    if canonical_snapshot.snapshot_version != current_index.snapshot_version:
+        raise ValueError(
+            "condition snapshot parser/version index disagree: %s != %s"
+            % (canonical_snapshot.snapshot_version, current_index.snapshot_version)
+        )
     version = current_index.snapshot_version
     root = Path(output_root).resolve()
     snapshot_dir = root / "snapshots" / version
@@ -338,7 +346,14 @@ def train_mfac_offline_version(
         ),
         recalibrate=False,
         aggregate_results=False,
+        condition_snapshot=canonical_snapshot,
     )
+    canonical_replay = dict(effective.get("canonical_condition_replay") or {})
+    if canonical_replay.get("status") != "ATTACHED":
+        raise RuntimeError(
+            "formal MFAC offline training requires canonical condition replay"
+        )
+
     current_valid = enrich_episode_model_features(
         current_valid,
         raw_history,
@@ -426,6 +441,7 @@ def train_mfac_offline_version(
         "status": status,
         "condition_alignment": alignment,
         "condition_snapshot": current_index.to_metadata(),
+        "canonical_condition_replay": canonical_replay,
         "input_csv": str(input_path),
         "input_warnings": list(input_warnings),
         "current_valid_episode_count": int(len(current_valid)),
