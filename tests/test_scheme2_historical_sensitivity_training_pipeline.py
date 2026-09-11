@@ -123,6 +123,47 @@ class Scheme2HistoricalSensitivityTrainingPipelineTest(unittest.TestCase):
         self.assertEqual(set(frame["mfac_context_id"]), {"MFAC-COND-C12", "MFAC-COND-C13"})
         self.assertEqual(set(frame["grid_id"]), {"P12-S1", "P13-S1"})
 
+    def test_legacy_valid_disturbance_is_hard_blocked_from_model_based_gain(self):
+        base = self.episodes().iloc[0].to_dict()
+
+        explicit_disturbance = dict(base)
+        explicit_disturbance["episode_id"] = "DISTURBANCE-LEGACY-VALID"
+        explicit_disturbance["valid"] = True
+        explicit_disturbance["mfac_dynamic_evidence_eligible"] = True
+        explicit_disturbance[
+            "mfac_disturbance_coupled_dynamic_eligible"
+        ] = True
+
+        canonical_switch_without_role_flag = dict(base)
+        canonical_switch_without_role_flag["episode_id"] = "CANONICAL-SWITCH-FAILSAFE"
+        canonical_switch_without_role_flag["valid"] = True
+        canonical_switch_without_role_flag["mfac_dynamic_evidence_eligible"] = True
+        canonical_switch_without_role_flag[
+            "mfac_disturbance_coupled_dynamic_eligible"
+        ] = False
+        canonical_switch_without_role_flag[
+            "mfac_canonical_condition_changed"
+        ] = True
+
+        episodes = pd.DataFrame(
+            [explicit_disturbance, canonical_switch_without_role_flag]
+        )
+        frame, summary = adapt_historical_episodes_for_model_based_gain(
+            episodes,
+            self.adapter_config(),
+        )
+
+        self.assertTrue(frame.empty)
+        self.assertEqual(summary.input_episode_count, 2)
+        self.assertEqual(summary.accepted_event_count, 0)
+        self.assertEqual(summary.rejected_event_count, 2)
+        self.assertEqual(
+            summary.rejection_counts[
+                "DISTURBANCE_COUPLED_DYNAMIC_EXCLUDED_FROM_LOCAL_GAIN_MODEL"
+            ],
+            2,
+        )
+
     def test_pipeline_keeps_good_grid_and_rejects_wrong_direction_grid(self):
         report = build_historical_sensitivity_training_report(
             self.episodes(),
