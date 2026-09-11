@@ -26,36 +26,70 @@ from system.model.map_control.mfac_model.version_artifacts import (
 class Scheme2VersionArtifactPlantContractTest(unittest.TestCase):
     @staticmethod
     def _build(root: str):
-        """Build through the real first-module -> MFAC artifact contract.
+        """Build through the formal first-module -> MFAC artifact contract.
 
-        ``build_mfac_version_artifact`` now intentionally executes the real
-        historical MFAC offline pipeline.  These plant-contract tests therefore
-        must use the same minimum valid ConditionSnapshot/labeled-CSV contract as
-        Process4MapControl instead of the old ``{"snapshot_version": ...}``
-        stub.  The data can remain dynamically uninformative; the tests here are
-        about artifact/plant-contract validation, not gain quality.
+        ``build_mfac_version_artifact`` executes the real MFAC offline pipeline,
+        including the canonical online-MAJORITY replay.  These plant-contract
+        tests therefore use a complete, readable ConditionSnapshot instead of a
+        pointer-only test stub.  The synthetic history is deliberately steady;
+        these tests exercise artifact/plant-contract integrity, not gain quality.
         """
         root_path = Path(root)
         condition = root_path / "condition_snapshot.json"
+        ph_columns = [
+            str(item.get("ph_column") or "").strip()
+            for item in PLANT_CONFIG.get("towers", [])
+            if item.get("enabled", True)
+            and str(item.get("ph_column") or "").strip()
+        ]
         condition.write_text(
             json.dumps(
                 {
                     "snapshot_version": "v001",
+                    "build_time": "2026-08-27T10:00:00",
                     "previous_snapshot_version": None,
+                    "grid_config": {
+                        "condition_axes": [
+                            {
+                                "column": "yyq_SO2",
+                                "min": 1000.0,
+                                "max": 2000.0,
+                                "step": 1000.0,
+                            }
+                        ],
+                        "tower_ph_columns": ph_columns,
+                        "emission_limit": 35.0,
+                        "out_of_range_policy": "clip",
+                        "online": {
+                            "stability_mode": "MAJORITY",
+                            "stability_window_size": 6,
+                            "majority_tie_policy": "KEEP_LAST_STABLE",
+                            "allow_provisional_region_fallback": True,
+                        },
+                    },
                     "grid_catalog": {
                         "P1-S1": {
+                            "grid_id": "P1-S1",
+                            "axis_1_level": 1,
+                            "axis_2_level": 1,
+                            "axis_1_range": [1000.0, 2000.0],
+                            "axis_2_range": [-1.0e100, 1.0e100],
+                            "validity": "VALID",
+                            "coverage_status": "MATURE",
                             "policy_region_id": "R1",
-                            "load_level": 1,
-                            "inlet_so2_level": 1,
+                            "sample_count": 100,
                         }
                     },
+                    "grid_adjacency": {"P1-S1": []},
                     "policy_regions": {
                         "R1": {
+                            "region_id": "R1",
                             "condition_label": "C1",
                             "status": "INDEPENDENT",
                             "member_grid_ids": ["P1-S1"],
                         }
                     },
+                    "metadata": {},
                 },
                 ensure_ascii=False,
             ),
@@ -111,6 +145,10 @@ class Scheme2VersionArtifactPlantContractTest(unittest.TestCase):
             target = target_supply_flow_contract()
             self.assertEqual(manifest["primary_mode"], MFAC_PRIMARY_MODE)
             self.assertEqual(manifest["plant_contract_snapshot"], current)
+            self.assertEqual(
+                manifest["canonical_condition_replay"]["status"],
+                "ATTACHED",
+            )
             self.assertIn(str(float(target["minimum"])), manifest["runtime_semantics"])
             self.assertIn(str(float(target["maximum"])), manifest["runtime_semantics"])
             self.assertEqual(
