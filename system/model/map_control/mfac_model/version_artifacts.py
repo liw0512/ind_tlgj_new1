@@ -136,6 +136,9 @@ def build_mfac_version_artifact(
         candidate_sha = str(candidate_artifact["artifact_sha256"])
 
     offline_report_path = offline_training["offline_training_report_path"]
+    canonical_replay = dict(
+        offline_training.get("canonical_condition_replay") or {}
+    )
     summary = {
         "artifact_type": "MFAC_SECOND_MODULE_VERSION",
         "version": version,
@@ -150,6 +153,7 @@ def build_mfac_version_artifact(
         "offline_training_status": offline_training["status"],
         "offline_training_report_path": str(offline_report_path),
         "offline_training_report_sha256": _existing_sha(offline_report_path),
+        "canonical_condition_replay": canonical_replay,
         "current_valid_episode_count": int(
             offline_training["current_valid_episode_count"]
         ),
@@ -190,6 +194,7 @@ def build_mfac_version_artifact(
         "training_summary_sha256": sha256_file(summary_path),
         "offline_training_report_path": str(offline_report_path),
         "offline_training_report_sha256": summary["offline_training_report_sha256"],
+        "canonical_condition_replay": canonical_replay,
         "historical_valid_episodes_path": offline_training[
             "historical_valid_episodes_path"
         ],
