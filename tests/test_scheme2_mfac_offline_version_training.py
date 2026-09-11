@@ -24,23 +24,57 @@ from system.model.map_control.mfac_model.version_artifacts import (
 class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
     @staticmethod
     def _snapshot(path: Path, version: str, label: str, previous=None):
+        ph_columns = [
+            str(item.get("ph_column") or "").strip()
+            for item in PLANT_CONFIG.get("towers", [])
+            if item.get("enabled", True) and str(item.get("ph_column") or "").strip()
+        ]
         value = {
             "snapshot_version": version,
+            "build_time": "2026-07-01T00:00:00",
             "previous_snapshot_version": previous,
+            "grid_config": {
+                "condition_axes": [
+                    {
+                        "column": "yyq_SO2",
+                        "min": 1000.0,
+                        "max": 2000.0,
+                        "step": 1000.0,
+                    }
+                ],
+                "tower_ph_columns": ph_columns,
+                "emission_limit": 35.0,
+                "out_of_range_policy": "clip",
+                "online": {
+                    "stability_mode": "MAJORITY",
+                    "stability_window_size": 6,
+                    "majority_tie_policy": "KEEP_LAST_STABLE",
+                    "allow_provisional_region_fallback": True,
+                },
+            },
             "grid_catalog": {
                 "P1-S1": {
+                    "grid_id": "P1-S1",
+                    "axis_1_level": 1,
+                    "axis_2_level": 1,
+                    "axis_1_range": [1000.0, 2000.0],
+                    "axis_2_range": [-1.0e100, 1.0e100],
+                    "validity": "VALID",
+                    "coverage_status": "MATURE",
                     "policy_region_id": "R1",
-                    "load_level": 1,
-                    "inlet_so2_level": 1,
+                    "sample_count": 100,
                 }
             },
+            "grid_adjacency": {"P1-S1": []},
             "policy_regions": {
                 "R1": {
+                    "region_id": "R1",
                     "condition_label": label,
                     "status": "INDEPENDENT",
                     "member_grid_ids": ["P1-S1"],
                 }
             },
+            "metadata": {},
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
@@ -103,6 +137,10 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
                     "valid": True,
                     "flow_effect_complete": True,
                     "mfac_dynamic_evidence_eligible": True,
+                    "mfac_dynamic_observation_eligible": True,
+                    "mfac_dynamic_clean_eligible": True,
+                    "mfac_disturbance_coupled_dynamic_eligible": False,
+                    "mfac_canonical_condition_changed": False,
                     "mfac_safety_evidence": False,
                     "condition_valid": True,
                     "followup_action_in_response": False,
@@ -119,6 +157,9 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
                     "before_ph__xst": 6.2,
                     "delta_ph__xst": 0.2,
                     "evidence_weight": 1.0,
+                    "mfac_evidence_semantics_version": (
+                        "SCHEME2_HISTORICAL_EVIDENCE_V2_1"
+                    ),
                 }
             ]
         )
@@ -216,6 +257,15 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
                 mode="INITIAL",
             )
             summary = manifest["training_summary"]
+            replay = summary["canonical_condition_replay"]
+            self.assertEqual(replay["status"], "ATTACHED")
+            self.assertEqual(
+                replay["semantics_version"],
+                "SCHEME2_CANONICAL_CONDITION_REPLAY_V1_ONLINE_MAJORITY",
+            )
+            self.assertEqual(replay["history_row_count"], 240)
+            self.assertEqual(replay["episode_count"], 0)
+            self.assertFalse(replay["changes_historical_episode_validity"])
             self.assertNotEqual(
                 summary["bootstrap_status"],
                 "NOT_ACTIVATED_IN_PRIMARY_REPLACEMENT",
@@ -227,6 +277,15 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
             self.assertTrue(Path(manifest["offline_training_report_path"]).is_file())
             self.assertTrue(Path(manifest["historical_valid_episodes_path"]).is_file())
             self.assertTrue(Path(manifest["offline_effective_config_path"]).is_file())
+            effective = json.loads(
+                Path(manifest["offline_effective_config_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                effective["canonical_condition_replay"]["status"],
+                "ATTACHED",
+            )
             self.assertFalse(manifest["runtime_prior_reviewed"])
             self.assertFalse(manifest["runtime_prior_allowed"])
             self.assertTrue(manifest["persisted_online_state_precedence"])
@@ -276,6 +335,10 @@ class Scheme2MFACOfflineVersionTrainingTest(unittest.TestCase):
                 condition_snapshot=str(current_snapshot),
                 mode="INCREMENTAL",
                 previous_snapshot=str(previous_snapshot),
+            )
+            self.assertEqual(
+                report["canonical_condition_replay"]["status"],
+                "ATTACHED",
             )
             self.assertEqual(report["cumulative_valid_episode_count"], 1)
             self.assertEqual(
