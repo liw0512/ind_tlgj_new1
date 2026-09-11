@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 
 from system.model._process4_runtime_shell import ProcessForMapConsole as _RuntimeShell
 from system.model.config.database_schema import ensure_filter_table
+from system.model.config.fast_change_path_binding import bind_fast_change_artifact_paths
 from system.model.config.mfac_core_bridge_config import MFAC_CORE_BRIDGE_CONFIG
 from system.model.config.mfac_database_schema import (
     ensure_mfac_model_result_table,
@@ -61,6 +62,9 @@ class ProcessForMapConsole(_RuntimeShell):
     }
 
     def __init__(self, GLOBAL_DATA):
+        # FAST source remains exact Scheme1.  Scheme2 owns only the integration
+        # path binding so formal runtime artifacts stay inside fast_change_mode.
+        self._fast_path_binding = bind_fast_change_artifact_paths()
         try:
             runtime_build = build_mfac_runtime(
                 MFAC_PRIMARY_ARTIFACT_CONFIG.get("runtime") or {}
