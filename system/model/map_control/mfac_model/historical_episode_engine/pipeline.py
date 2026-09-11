@@ -5,15 +5,26 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from ..historical_condition_stability_replay_diagnostic import (
+    build_replay_summary,
+    diagnose_episode_condition_transitions,
+    replay_canonical_condition_history,
+)
 from .data_loader import assign_continuous_segments, load_input_data
 from .episode_extractor import extract_decision_episodes
-from .historical_evidence import enrich_historical_episode_frame
+from .historical_evidence import (
+    attach_canonical_condition_transition_evidence,
+    enrich_historical_episode_frame,
+)
 from .schema import freeze_condition_axes
 from .signal_processing import add_clean_supply_flow_columns, clean_supply_flow_column
 
 
 ProgressCallback = Callable[[float, str], None]
 POLICY_SEMANTICS_VERSION = "ACTUAL_SUPPLY_FLOW_V1"
+CANONICAL_REPLAY_SEMANTICS_VERSION = (
+    "SCHEME2_CANONICAL_CONDITION_REPLAY_V1_ONLINE_MAJORITY"
+)
 
 
 def _emit_range(progress: ProgressCallback | None, start: float, end: float) -> ProgressCallback | None:
@@ -102,6 +113,31 @@ def _evidence_history_with_clean_flow(
     return result
 
 
+def _attach_canonical_replay_evidence(
+    raw_df: pd.DataFrame,
+    episodes: pd.DataFrame,
+    condition_snapshot: Any,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Replay the exact online classifier and attach formal-switch evidence.
+
+    Historical ``valid`` remains provenance and is never rewritten here.
+    Canonical replay only owns the V2.1 clean-vs-disturbance evidence split.
+    """
+    replay = replay_canonical_condition_history(raw_df, condition_snapshot)
+    detail = diagnose_episode_condition_transitions(replay, episodes)
+    attached = attach_canonical_condition_transition_evidence(episodes, detail)
+    summary = build_replay_summary(replay, detail)
+    summary.update(
+        {
+            "status": "ATTACHED",
+            "semantics_version": CANONICAL_REPLAY_SEMANTICS_VERSION,
+            "changes_historical_episode_validity": False,
+            "evidence_role_owner": "SCHEME2_HISTORICAL_EVIDENCE_V2_1",
+        }
+    )
+    return attached, summary
+
+
 def prepare_raw_data(input_specs: list[str] | str, plant: dict[str, Any], training: dict[str, Any], progress: ProgressCallback | None = None) -> tuple[pd.DataFrame, list[str]]:
     training = freeze_condition_axes(training)
     df, warnings = load_input_data(input_specs, plant, training, progress=_emit_range(progress, 0.00, 0.72))
@@ -126,6 +162,7 @@ def run_episode_pipeline(
     recalibrate: bool = False,
     aggregate_results: bool = True,
     progress: ProgressCallback | None = None,
+    condition_snapshot: Any | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[str, Any]]:
     training = _normalized_training_semantics(training)
     _validate_previous_semantics(previous_effective_config, plant, training)
@@ -133,11 +170,26 @@ def run_episode_pipeline(
         progress(0.02, "读取上游 fast_change_mode 因果标签")
 
     episodes, _actions = extract_decision_episodes(
-        raw_df, plant, training, progress=_emit_range(progress, 0.02, 0.62)
+        raw_df, plant, training, progress=_emit_range(progress, 0.02, 0.60)
     )
+
+    canonical_replay = {
+        "status": "NOT_REQUESTED",
+        "semantics_version": CANONICAL_REPLAY_SEMANTICS_VERSION,
+        "changes_historical_episode_validity": False,
+    }
+    if condition_snapshot is not None:
+        if progress:
+            progress(0.62, "按在线 MAJORITY 语义回放第一模块工况并附加 canonical switch 证据")
+        episodes, canonical_replay = _attach_canonical_replay_evidence(
+            raw_df,
+            episodes,
+            condition_snapshot,
+        )
+
     if not episodes.empty:
         if progress:
-            progress(0.64, "生成MFAC历史剂量指标并执行LOCAL/DYNAMIC/SAFETY证据分流")
+            progress(0.68, "生成MFAC历史剂量指标并执行V2.1 LOCAL/DYNAMIC/SAFETY证据分流")
         episodes = enrich_historical_episode_frame(
             episodes,
             _evidence_history_with_clean_flow(raw_df, plant),
@@ -146,7 +198,7 @@ def run_episode_pipeline(
         )
 
     if progress:
-        progress(0.70, "准备供浆流量动作响应参数")
+        progress(0.74, "准备供浆流量动作响应参数")
     if previous_effective_config and not recalibrate:
         effective_action = copy.deepcopy(
             previous_effective_config.get("action_magnitude", {})
@@ -181,7 +233,7 @@ def run_episode_pipeline(
             else 0
         )
         progress(
-            0.84,
+            0.86,
             "决策片段校验完成：VALID=%d，INVALID=%d，LOCAL_GAIN=%d，DYNAMIC=%d，SAFETY=%d"
             % (len(valid), len(invalid), local_gain_count, dynamic_count, safety_count),
         )
@@ -198,5 +250,6 @@ def run_episode_pipeline(
         "mfac_historical_evidence": copy.deepcopy(
             training.get("mfac_historical_evidence", {})
         ),
+        "canonical_condition_replay": copy.deepcopy(canonical_replay),
     }
     return valid, invalid, effective, aggregated
